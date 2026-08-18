@@ -37,6 +37,8 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
     ports:
       - "8405:6379"
     healthcheck:
@@ -59,6 +61,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       CAMOFOX_URL: http://camofox:9377
       ENVIRONMENT: prod
+    volumes:
+      - braindata:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,4 +100,8 @@ services:
 
 volumes:
   pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  braindata:
     driver: local

@@ -16,6 +16,7 @@ from app.agents import REGISTRY
 from app.agents.memory import MemoryAgent
 from app.agents.schemas import TravelerProfile, TripRequest
 from app.brain import gnosion_client, trip_store
+from app.brain.demo_trip import get_demo_trip
 from app.core import cache, db, llm_providers, sse
 from app.core.settings import settings
 from app.graph.supervisor import run_plan, cancel_run as _cancel_plan_run
@@ -35,6 +36,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info("Journava API starting (%s)", settings.environment)
     await db.init_schema()
     await cache.get_redis()
+    # Seed demo trip so the My Trip page has data on first load
+    if trip_store.load_trip() is None:
+        trip_store.save_trip(get_demo_trip())
+        logger.info("Demo trip seeded (Venice 7-day)")
     yield
     await cache.close_redis()
     await db.close_pool()
@@ -413,10 +418,11 @@ async def brain_graph() -> dict[str, object]:
     # Try to get real graph from Gnosion
     if gnosion_client.available():
         try:
-            return _build_live_brain_graph()
+            return gnosion_client.graph()
         except Exception:  # noqa: BLE001
             pass
-    return _build_demo_brain_graph()
+    # Use fallback graph from enhanced store
+    return gnosion_client.graph()
 
 
 def _build_live_brain_graph() -> dict[str, object]:

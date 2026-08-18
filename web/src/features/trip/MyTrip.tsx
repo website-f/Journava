@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2, ShieldAlert, ShieldCheck } from "lucide-react";
-import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, confirm } from "@/components/ui";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2, ShieldAlert, ShieldCheck, Newspaper } from "lucide-react";
+import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, TripMap, confirm } from "@/components/ui";
 import { api } from "@/lib/api";
 import { usePlanStore } from "@/stores/planStore";
 import type { AgentPlanResult, DisruptionRecovery, ItineraryItem } from "@/stores/planStore";
@@ -83,6 +83,7 @@ export function MyTrip() {
       <TripHeader />
       <TripSummary results={results} />
       <RiskBanner results={results} />
+      <TripMap className="mb-6" />
       <BudgetCard results={results} />
       <WeatherCard results={results} />
       <ItinerarySection results={results} />
@@ -261,6 +262,7 @@ function WeatherCard({ results }: { results: Record<string, AgentPlanResult> }) 
   const data = weather.data;
   const riskLevel = data.risk_level as string | undefined;
   const forecast = data.forecast as Array<{ date: string; high_c: number; low_c: number; precipitation_pct: number; description: string }> | undefined;
+  const gdeltData = data.gdelt as { active_threats?: string[]; recent_events?: Array<{ title: string; source: string }> } | undefined;
 
   const riskVariant = riskLevel === "high" ? "danger" : riskLevel === "medium" ? "warning" : "success";
 
@@ -268,7 +270,7 @@ function WeatherCard({ results }: { results: Record<string, AgentPlanResult> }) 
     <section className="mb-6">
       <h3 className="flex items-center gap-2 text-lg font-semibold mb-3">
         <Cloud className="h-5 w-5 text-[var(--brand-500)]" />
-        Weather
+        Weather & Risk
         {riskLevel && <Badge variant={riskVariant as "success" | "warning" | "danger"}>{riskLevel} risk</Badge>}
       </h3>
       <div className="surface-card p-4">
@@ -285,6 +287,30 @@ function WeatherCard({ results }: { results: Record<string, AgentPlanResult> }) 
                 )}
               </div>
             ))}
+          </div>
+        )}
+        {/* GDELT events section */}
+        {gdeltData && (
+          <div className="mt-3 pt-3 border-t border-[var(--border)]">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Newspaper className="h-3.5 w-3.5 text-[var(--muted)]" />
+              <span className="text-xs font-medium text-[var(--muted)]">Global Events (GDELT)</span>
+            </div>
+            {gdeltData.active_threats && gdeltData.active_threats.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {gdeltData.active_threats.map((t) => (
+                  <Badge key={t} variant="danger">{t}</Badge>
+                ))}
+              </div>
+            )}
+            {gdeltData.recent_events?.slice(0, 3).map((ev, i) => (
+              <p key={i} className="text-[0.65rem] text-[var(--muted)] leading-relaxed">
+                • {ev.title} <span className="italic">({ev.source})</span>
+              </p>
+            ))}
+            {(!gdeltData.active_threats || gdeltData.active_threats.length === 0) && (!gdeltData.recent_events || gdeltData.recent_events.length === 0) && (
+              <p className="text-[0.65rem] text-[var(--success)]">No active threats detected</p>
+            )}
           </div>
         )}
       </div>

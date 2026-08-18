@@ -1,10 +1,10 @@
 """Weather / Risk Agent — Open-Meteo + GDELT; triggers replanning (spec §4.5).
 
-Phase 2: wires the existing Open-Meteo tool (geocode + forecast) to produce a
-real weather summary with a risk level. GDELT events remain Phase 3.
+Phase 2: wires Open-Meteo (geocode + forecast) AND GDELT (global events/news)
+to produce a real weather + risk summary with threat detection.
 
-When rain days exceed the threshold (4+), publishes a "monitoring" SSE event
-so the UI can warn the traveler proactively.
+When rain days exceed the threshold (4+) or GDELT detects active threats,
+publishes a "monitoring" SSE event so the UI can warn the traveler proactively.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any
 from app.agents.base import BaseAgent
 from app.agents.schemas import AgentResult, TravelerProfile, TripRequest
 from app.tools.open_meteo import forecast, geocode
+from app.tools import gdelt
 
 logger = logging.getLogger(__name__)
 
@@ -56,25 +57,71 @@ class WeatherRiskAgent(BaseAgent):
         lat = geo.get("latitude", 0.0)
         lng = geo.get("longitude", 0.0)
 
-        # 2. Get the forecast
+        # 2. Get the weather forecast
         forecast_data = await forecast(lat, lng, days=days)
         if forecast_data is None:
             self.emit("monitoring", "Open-Meteo forecast unavailable")
-            return AgentResult(
-                agent=self.slug,
-                summary="Weather forecast service temporarily unavailable",
-                warnings=["Open-Meteo forecast failed"],
-                data={"destination": destination, "risk_level": "unknown", "forecast": None, "coordinates": {"lat": lat, "lng": lng}},
-            )
-
-        # 3. Summarize the forecast
-        summary, risk_level, daily_breakdown, rain_days = self._summarize(forecast_data, destination)
-
-        # 4. If high risk, publish monitoring event
-        if risk_level == "high":
-            self.emit("monitoring", f"Weather alert: {rain_days} rain days expected in {destination}")
+            weather_summary = "Weather forecast service temporarily unavailable"
+            risk_level = "unknown"
+            daily_breakdown: list[dict[str, Any]] = []
+            rain_days = 0
         else:
-            self.emit("active", f"Weather OK — {risk_level} risk for {destination}")
+            weather_summary, risk_level, daily_breakdown, rain_days = self._summarize(forecast_data, destination)
+
+        # 3. GDELT global events & threat detection
+        self.emit("working", f"GDELT: scanning global events for {destination}")
+        events_data = await gdelt.events(destination, days=14, max_records=15)
+        threats = await gdelt.threat_keywords(destination, days=14)
+        tone = await gdelt.tone_analysis(destination, days=14)
+
+        # Build event risk summary
+        event_risk = "low"
+        active_threats: list[str] = []
+        if threats:
+            active_threats = threats
+            if len(threats) >= 3:
+                event_risk = "high"
+            elif len(threats) >= 1:
+                event_risk = "medium"
+
+        avg_tone = tone.get("avg_tone", 0)
+        if avg_tone < -5:
+            event_risk = "high"
+        elif avg_tone < -2 and event_risk == "low":
+            event_risk = "medium"
+
+        recent_events = [
+            {
+                "title": a.get("title", ""),
+                "source": a.get("source", ""),
+                "url": a.get("url", ""),
+                "tone": a.get("tone", 0),
+            }
+            for a in events_data[:10]
+        ]
+
+        # 4. Combine weather risk + event risk
+        risk_priority = {"low": 0, "medium": 1, "high": 2, "unknown": -1}
+        combined_risk = max(risk_level, event_risk, key=lambda r: risk_priority.get(r, -1))
+
+        # 5. Publish SSE event
+        if combined_risk == "high":
+            alerts = []
+            if rain_days >= RAIN_THRESHOLD:
+                alerts.append(f"{rain_days} rain days expected")
+            if active_threats:
+                alerts.append(f"threats detected: {', '.join(active_threats[:3])}")
+            self.emit("monitoring", f"Risk alert for {destination}: {'; '.join(alerts)}")
+        else:
+            self.emit("active", f"Weather & risk OK — {combined_risk} risk for {destination}")
+
+        # 6. Build final summary
+        summary_parts = [weather_summary]
+        if active_threats:
+            summary_parts.append(f"GDELT threats: {', '.join(active_threats[:3])}")
+        if recent_events:
+            summary_parts.append(f"{len(events_data)} recent events scanned")
+        summary = " | ".join(summary_parts)
 
         return AgentResult(
             agent=self.slug,
@@ -82,9 +129,17 @@ class WeatherRiskAgent(BaseAgent):
             data={
                 "destination": destination,
                 "coordinates": {"lat": lat, "lng": lng},
-                "risk_level": risk_level,
+                "risk_level": combined_risk,
+                "weather_risk": risk_level,
+                "event_risk": event_risk,
                 "rain_days": rain_days,
                 "forecast": daily_breakdown,
+                "gdelt": {
+                    "active_threats": active_threats,
+                    "avg_tone": avg_tone,
+                    "num_articles": tone.get("num_articles", 0),
+                    "recent_events": recent_events,
+                },
             },
         )
 

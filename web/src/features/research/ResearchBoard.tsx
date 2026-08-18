@@ -1,4 +1,4 @@
-import { Compass } from "lucide-react";
+import { Compass, Globe, ShieldAlert, Newspaper, ThumbsUp, ThumbsDown } from "lucide-react";
 import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge } from "@/components/ui";
 import { usePlanStore } from "@/stores/planStore";
 import type { ItineraryItem } from "@/stores/planStore";
@@ -98,21 +98,128 @@ export function ResearchBoard() {
 
         <TabsContent value="intelligence">
           <div className="space-y-4 py-4">
-            {weatherSummary && (
-              <div className="surface-card p-4">
-                <h4 className="text-sm font-semibold mb-1">Weather / Risk</h4>
-                <p className="text-xs text-[var(--muted)]">{weatherSummary}</p>
-              </div>
-            )}
+            {/* Research Summary */}
             {researchSummary && (
               <div className="surface-card p-4">
-                <h4 className="text-sm font-semibold mb-1">Research</h4>
-                <p className="text-xs text-[var(--muted)]">{researchSummary}</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <Globe className="h-4 w-4 text-[var(--brand-500)]" />
+                  <h4 className="text-sm font-semibold">Research Intelligence</h4>
+                </div>
+                <p className="text-xs text-[var(--muted)] leading-relaxed">{researchSummary}</p>
+                {/* Sources crawled */}
+                {Boolean(results?.research?.data?.sources_crawled) && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {((results.research.data.sources_crawled as string[]) ?? []).map((src: string) => (
+                      <Badge key={src} variant="brand">{src}</Badge>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-            {!weatherSummary && !researchSummary && (
-              <p className="text-sm text-[var(--muted)]">
-                Intelligence data (weather, YouTube, Reddit) arrives in Phase 2.
+
+            {/* Weather & Risk with GDELT */}
+            {results?.weather_risk && (
+              <div className="surface-card p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />
+                  <h4 className="text-sm font-semibold">Weather & Risk</h4>
+                  {Boolean(results.weather_risk.data?.risk_level) && (
+                    <Badge variant={String(results.weather_risk.data.risk_level) === "high" ? "danger" : String(results.weather_risk.data.risk_level) === "medium" ? "warning" : "success"}>
+                      {String(results.weather_risk.data.risk_level)} risk
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-[var(--muted)] mb-2">{weatherSummary}</p>
+                {/* GDELT events */}
+                {Boolean(results.weather_risk.data?.gdelt) && (
+                  <div className="mt-3 pt-3 border-t border-[var(--border)]">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Newspaper className="h-3.5 w-3.5 text-[var(--muted)]" />
+                      <span className="text-xs font-medium text-[var(--muted)]">GDELT Global Events</span>
+                    </div>
+                    {((results.weather_risk.data.gdelt as Record<string, unknown>).active_threats as string[])?.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {((results.weather_risk.data.gdelt as Record<string, unknown>).active_threats as string[]).map((t: string) => (
+                          <Badge key={t} variant="danger">{t}</Badge>
+                        ))}
+                      </div>
+                    )}
+                    {((results.weather_risk.data.gdelt as Record<string, unknown>).recent_events as Array<{ title: string; source: string }>)?.slice(0, 3).map((ev: { title: string; source: string }, i: number) => (
+                      <p key={i} className="text-[0.65rem] text-[var(--muted)] leading-relaxed">
+                        • {ev.title} <span className="italic">({ev.source})</span>
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Dining — Halal verification */}
+            {results?.research?.options?.filter(o => o.kind === "restaurant").length > 0 && (
+              <div className="surface-card p-4">
+                <h4 className="text-sm font-semibold mb-3">Dining — Halal Verification</h4>
+                <div className="space-y-2">
+                  {results.research.options.filter(o => o.kind === "restaurant").map((opt) => (
+                    <div key={opt.id} className="flex items-start gap-2 py-1.5 border-b border-[var(--border)]/50 last:border-0">
+                      <Badge variant={
+                        opt.halal_confidence === "certified" ? "success" :
+                        opt.halal_confidence === "muslim_friendly" ? "info" : "warning"
+                      }>
+                        {opt.halal_confidence === "certified" ? "Certified" :
+                         opt.halal_confidence === "muslim_friendly" ? "Muslim Friendly" : "Unverified"}
+                      </Badge>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium">{opt.title}</p>
+                        {opt.reasoning && <p className="text-[0.65rem] text-[var(--muted)] italic">{opt.reasoning}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Attractions with reasoning */}
+            {results?.research?.options?.filter(o => o.kind === "activity").length > 0 && (
+              <div className="surface-card p-4">
+                <h4 className="text-sm font-semibold mb-3">Attractions — Why Journava Chose These</h4>
+                <div className="space-y-2">
+                  {results.research.options.filter(o => o.kind === "activity").map((opt) => (
+                    <div key={opt.id} className="py-1.5 border-b border-[var(--border)]/50 last:border-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-medium">{opt.title}</p>
+                        {opt.price_amount != null && (
+                          <span className="text-xs text-[var(--brand-500)] font-semibold shrink-0">
+                            {opt.price_currency ?? "MYR"} {Number(opt.price_amount).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      {opt.reasoning && (
+                        <p className="text-[0.65rem] text-[var(--muted)] italic mt-0.5">&ldquo;{opt.reasoning}&rdquo;</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Outcome feedback */}
+            {(researchSummary || results?.research?.options?.length) && (
+              <div className="surface-card p-4 text-center">
+                <p className="text-xs text-[var(--muted)] mb-2">Was this research helpful?</p>
+                <div className="flex justify-center gap-3">
+                  <button className="flex items-center gap-1 text-xs text-[var(--success)] hover:underline">
+                    <ThumbsUp className="h-3.5 w-3.5" /> Yes
+                  </button>
+                  <button className="flex items-center gap-1 text-xs text-[var(--muted)] hover:underline">
+                    <ThumbsDown className="h-3.5 w-3.5" /> No
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!weatherSummary && !researchSummary && !results?.research?.options?.length && (
+              <p className="text-sm text-[var(--muted)] py-6">
+                Kick off a trip from the Command Center — intelligence data arrives automatically.
               </p>
             )}
           </div>

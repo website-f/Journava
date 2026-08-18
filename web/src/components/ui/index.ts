@@ -12,3 +12,4 @@ export { AgentPulse } from "./AgentPulse";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 export { Badge } from "./Badge";
 export { OptionCard } from "./OptionCard";
+export { TripMap } from "./TripMap";

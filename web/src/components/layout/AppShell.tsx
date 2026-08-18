@@ -10,10 +10,12 @@ import {
   Moon,
   Sun,
   Cpu,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useTheme } from "@/lib/theme";
 import { useIsDesktop, useIsMobile } from "@/hooks/useMediaQuery";
+import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Button } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
 
@@ -37,6 +39,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggle } = useTheme();
   const location = useLocation();
   const { events } = useAgentStream();
+  const { canInstall, install } = useInstallPrompt();
 
   // Global toast when any agent emits an "error" status
   const lastErrorId = useRef<string | null>(null);
@@ -84,7 +87,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               </NavLink>
             ))}
           </nav>
-          <div className="mt-auto">
+          <div className="mt-auto flex flex-col gap-1">
+            {canInstall && (
+              <Button variant="ghost" size="sm" onClick={install} className="text-xs">
+                <Download className="h-4 w-4" /> Install App
+              </Button>
+            )}
             <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
               {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
