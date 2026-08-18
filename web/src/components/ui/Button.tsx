@@ -55,30 +55,42 @@ export function Button({
   children,
   ...props
 }: ButtonProps) {
-  const Comp = asChild ? Slot : "button";
+  const classes = cn(
+    "inline-flex items-center justify-center gap-2 rounded-[var(--r-pill)]",
+    "font-medium select-none whitespace-nowrap",
+    "transition-[transform,background,box-shadow,border-color]",
+    "duration-[var(--dur)] ease-[var(--ease)]",
+    "active:scale-[.98]",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+    "disabled:opacity-60 disabled:pointer-events-none",
+    VARIANTS[variant],
+    SIZES[size],
+    className,
+  );
+
+  // asChild: Radix Slot requires EXACTLY one element child. The spinner/span
+  // wrapper (and a `false` from `loading && …`) would make that two children and
+  // trip `Children.only` → "Slot failed to slot onto its children". A link also
+  // has no use for `disabled`/`loading`, so pass the child straight through.
+  if (asChild) {
+    return (
+      <Slot {...props} className={classes}>
+        {children}
+      </Slot>
+    );
+  }
 
   return (
-    <Comp
+    <button
       {...props}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-[var(--r-pill)]",
-        "font-medium select-none whitespace-nowrap",
-        "transition-[transform,background,box-shadow,border-color]",
-        "duration-[var(--dur)] ease-[var(--ease)]",
-        "active:scale-[.98]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
-        "disabled:opacity-60 disabled:pointer-events-none",
-        VARIANTS[variant],
-        SIZES[size],
-        className,
-      )}
+      className={classes}
     >
       {loading && <Spinner className="h-4 w-4" />}
       <span className={cn("inline-flex items-center gap-2", loading && "opacity-90")}>
         {children}
       </span>
-    </Comp>
+    </button>
   );
 }

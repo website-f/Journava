@@ -13,10 +13,12 @@ A failing crawl degrades the result (returns None); it never breaks the run.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
 from typing import Any
+from urllib.parse import quote_plus
 
 import httpx
 
@@ -30,6 +32,19 @@ YOUTUBE_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
 #: Consistent user identity for Camofox session isolation.
 USER_ID = "journava"
+
+#: The installed camofox-browser build does not navigate macro tabs (a `macro`
+#: tab lands on about:blank with an empty snapshot). Direct-URL tabs DO navigate
+#: and return real snapshots, so every "macro" is translated to the equivalent
+#: public search URL and driven through the URL path instead.
+_MACRO_URLS = {
+    "@google_search": "https://www.google.com/search?hl=en&gl=my&q={q}",
+    "@youtube_search": "https://www.youtube.com/results?search_query={q}",
+    "@reddit_search": "https://www.reddit.com/search/?q={q}",
+    "@wikipedia_search": "https://en.wikipedia.org/w/index.php?search={q}",
+    "@yelp_search": "https://www.yelp.com/search?find_desc={q}",
+    "@bing_search": "https://www.bing.com/search?q={q}",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -96,39 +111,23 @@ async def search_with_sources(
 
 
 async def search(query: str, macro: str = "@google_search") -> str | None:
-    """Run a search macro and return the accessibility snapshot text.
+    """Run a search and return the accessibility snapshot text.
+
+    The `macro` selects which public search engine/site to use; it is translated
+    to a real URL and driven through the (working) direct-URL path, because the
+    installed camofox-browser build leaves macro tabs on about:blank.
 
     Args:
         query: The search query (e.g. "Tokyo halal travel guide").
         macro: One of @google_search, @youtube_search, @reddit_search,
-               @wikipedia_search, @yelp_search, etc.
+               @wikipedia_search, @yelp_search, @bing_search.
 
     Returns:
         The accessibility snapshot as plain text, or None on failure.
     """
-
-    async def fetch() -> str | None:
-        base = settings.camofox_url.rstrip("/")
-        session_key = f"research-{uuid.uuid4().hex[:8]}"
-
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            # Create a tab with the search macro
-            tab = await _create_tab(client, base, session_key, macro=macro, query=query)
-            if tab is None:
-                return None
-
-            tab_id = tab["tabId"]
-            try:
-                snapshot = await _snapshot(client, base, tab_id)
-                return snapshot
-            finally:
-                await _close_tab(client, base, tab_id)
-
-    try:
-        return await cached(f"camofox:search:{macro}:{query}", fetch, ttl=6 * 3600)
-    except Exception:  # noqa: BLE001
-        logger.warning("Camofox search failed: macro=%s query=%s", macro, query)
-        return None
+    template = _MACRO_URLS.get(macro, _MACRO_URLS["@google_search"])
+    url = template.format(q=quote_plus(query))
+    return await browse(url)
 
 
 async def youtube_transcript(url: str, languages: list[str] | None = None) -> dict[str, Any] | None:
@@ -164,30 +163,44 @@ async def youtube_transcript(url: str, languages: list[str] | None = None) -> di
         return None
 
 
-async def browse(url: str) -> str | None:
+async def browse(
+    url: str,
+    *,
+    ready: str | None = None,
+    attempts: int = 6,
+    delay: float = 1.5,
+) -> str | None:
     """Navigate to a URL and return the accessibility snapshot.
 
-    Returns the snapshot text, or None on failure.
+    `ready` is an optional regex: the poll keeps going until the snapshot matches
+    it (e.g. a price token on a results page that shows "Fetching results…"
+    first). Returns the snapshot text, or None on failure.
     """
 
     async def fetch() -> str | None:
         base = settings.camofox_url.rstrip("/")
         session_key = f"browse-{uuid.uuid4().hex[:8]}"
 
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        client_timeout = httpx.Timeout(max(30.0, attempts * delay + 15.0), connect=10.0)
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
             tab = await _create_tab(client, base, session_key, url=url)
             if tab is None:
                 return None
 
             tab_id = tab["tabId"]
             try:
-                snapshot = await _snapshot(client, base, tab_id)
-                return snapshot
+                # A tab returns as soon as navigation is *committed*, not when the
+                # page is painted — snapshotting immediately yields an empty tree.
+                # Poll until content lands (and, if given, until `ready` matches).
+                return await _wait_and_snapshot(
+                    client, base, tab_id, ready=ready, attempts=attempts, delay=delay
+                )
             finally:
                 await _close_tab(client, base, tab_id)
 
+    cache_key = f"camofox:browse:{url}:{ready or ''}"
     try:
-        return await cached(f"camofox:browse:{url}", fetch, ttl=6 * 3600)
+        return await cached(cache_key, fetch, ttl=6 * 3600)
     except Exception:  # noqa: BLE001
         logger.warning("Camofox browse failed: %s", url)
         return None
@@ -238,6 +251,35 @@ async def _create_tab(
         return {"tabId": data.get("tabId") or data.get("id")}
     except Exception:  # noqa: BLE001
         return None
+
+
+async def _wait_and_snapshot(
+    client: httpx.AsyncClient,
+    base: str,
+    tab_id: str,
+    *,
+    ready: str | None = None,
+    min_len: int = 200,
+    attempts: int = 6,
+    delay: float = 1.5,
+) -> str | None:
+    """Poll the snapshot until the page has rendered content (or attempts run out).
+
+    Returns the best snapshot seen. `min_len` guards against returning the empty
+    tree of a page that has navigated but not yet painted. When `ready` is given,
+    polling continues until that regex is found — for results pages that render a
+    "Fetching results…" shell before the data arrives.
+    """
+    ready_re = re.compile(ready, re.IGNORECASE) if ready else None
+    snapshot = ""
+    for _ in range(attempts):
+        await asyncio.sleep(delay)
+        current = await _snapshot(client, base, tab_id) or ""
+        if len(current) > len(snapshot):
+            snapshot = current
+        if len(snapshot) >= min_len and (ready_re is None or ready_re.search(snapshot)):
+            break
+    return snapshot or None
 
 
 async def _snapshot(

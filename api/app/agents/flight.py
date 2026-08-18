@@ -31,6 +31,7 @@ import logging
 import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import quote_plus
 
 from app.agents.base import BaseAgent
 from app.agents.prompts import flight_messages
@@ -47,11 +48,26 @@ logger = logging.getLogger(__name__)
 #: Price deviation from the median beyond which an option is flagged an outlier.
 OUTLIER_THRESHOLD = 0.20
 
-#: Fare pages worth reading when Atlas has nothing. Aggregators only — never a
-#: login, never a paywall (§8).
-_RESEARCH_QUERIES = (
-    "{origin} to {destination} flight {date} cheapest fare",
-    "{origin} {destination} flight price {date} site:skyscanner.net OR site:kayak.com",
+#: Travel domains whose links are worth surfacing as clickable fare pages. The
+#: browser reads a public results page; these hosts become "open live fares"
+#: cards. Aggregators/airlines only — never a login, never a paywall (§8).
+_FARE_HOSTS = (
+    "google.com/travel/flights",
+    "skyscanner",
+    "kayak",
+    "momondo",
+    "kiwi.com",
+    "expedia",
+    "trip.com",
+    "wego",
+    "agoda",
+    "airasia",
+    "malaysiaairlines",
+    "batikair",
+    "firefly",
+    "cathaypacific",
+    "singaporeair",
+    "scoot",
 )
 
 #: "RM 1,234" / "MYR 1234.50" / "$421" — enough to read an advertised fare.
@@ -114,6 +130,9 @@ class FlightAgent(BaseAgent):
 
         # --- Verification pass (spec §5 reconciliation pattern) ---
         options = await self._verify(options)
+
+        # --- Time-of-day window from the request ("night", "morning", …) ---
+        options = self._filter_time_window(options, request)
 
         # --- Preference-aware ranking (§7.5 soft signals only) ---
         options = self._apply_preferences(options, profile, request)
@@ -298,67 +317,190 @@ class FlightAgent(BaseAgent):
         destination: str,
         depart: str,
     ) -> dict[str, Any]:
-        """Read public fare pages and extract advertised prices, with citations.
+        """Crawl the live Google Flights results and read each flight.
 
-        This is discovery, not truth: the numbers are whatever the page showed,
-        so each option keeps the URL it came from and is never marked verified.
+        This is the real crawl: it opens the results page for the exact route and
+        date, waits for the fares to render, and parses per-flight rows — airline,
+        departure/arrival, stops, and price. Only if the page can't be parsed does
+        it fall back to surfacing fare-page links. Nothing is bookable/verified
+        (that stays Atlas's job), but the prices and times are read live.
         """
         empty: dict[str, Any] = {"options": [], "sources": [], "status": "unavailable"}
         if not await camofox.available():
             return empty
+        if depart == "flexible":
+            return await self._camofox_links(origin, destination, depart)
 
-        date_label = depart if depart != "flexible" else "next month"
-        self.emit("working", f"Camofox: reading fare pages for {origin}→{destination}")
+        url = _google_flights_results_url(origin, destination, depart)
+        self.emit("working", f"Camofox: crawling live flights {origin}→{destination} on {depart}")
+        snapshot = await camofox.browse(url, ready=r"ringgit|MYR|\$", attempts=12, delay=2.0)
+        flights = _parse_google_flights(snapshot or "")
 
-        results = await asyncio.gather(
-            *(
-                camofox.search_with_sources(
-                    query.format(origin=origin, destination=destination, date=date_label)
-                )
-                for query in _RESEARCH_QUERIES
-            )
-        )
+        if not flights:
+            self.emit("active", "Camofox: results page not parseable — surfacing fare-page links")
+            return await self._camofox_links(origin, destination, depart)
 
         options: list[dict[str, Any]] = []
-        pages: list[str] = []
-        for result in results:
-            if not result:
-                continue
-            pages.extend(result["sources"])
-            options.extend(
-                self._parse_researched_fares(
-                    result["snapshot"], result["sources"], origin, destination, len(options)
-                )
+        for index, fl in enumerate(flights, start=1):
+            options.append(
+                {
+                    "id": f"CFX-{index:03d}",
+                    "title": f"{fl['airline']} · {fl['dep']}–{fl['arr']} · {fl['stops_label']}",
+                    "price_amount": fl["price"],
+                    "price_currency": fl["currency"],
+                    "provider": "Camofox · Google Flights (live)",
+                    "source": "camofox",
+                    "source_url": url,
+                    "booking_url": url,
+                    "reasoning": (
+                        f"Read live from Google Flights for {depart} — "
+                        f"{fl['airline']} departing {fl['dep']}. Open to book."
+                    ),
+                    "verified": False,
+                    "bookable": False,
+                    "raw": {
+                        "source": "camofox",
+                        "kind": "live_flight",
+                        "stops": fl["stops"],
+                        "departure_time": fl["dep24"],
+                        "arrival_time": fl["arr"],
+                        "duration_hours": fl.get("duration_hours"),
+                        "airline": fl["airline"],
+                    },
+                }
             )
 
-        unique_pages = list(dict.fromkeys(pages))[:8]
-        if not options and not unique_pages:
-            return {"options": [], "sources": [], "status": "no_results"}
+        self.emit("active", f"Camofox: read {len(options)} live flight(s) from Google Flights")
+        return {"options": options, "sources": [url], "status": "ok"}
 
-        self.emit(
-            "active",
-            f"Camofox: {len(options)} advertised fare(s) across {len(unique_pages)} page(s)",
-        )
+    async def _camofox_links(
+        self,
+        origin: str,
+        destination: str,
+        depart: str,
+    ) -> dict[str, Any]:
+        """Fallback — surface clickable fare-page links when the live results
+        page can't be parsed (no concrete date, or a consent/bot wall)."""
+        date_label = depart if depart != "flexible" else "next month"
+        query = f"flights from {origin} to {destination} {date_label}"
+        result = await camofox.search_with_sources(query)
+        snapshot = result["snapshot"] if result else ""
+        sources = result["sources"] if result else []
+        options = self._options_from_research(snapshot, sources, origin, destination, depart)
+        unique_pages = list(dict.fromkeys(sources))[:8]
+        if not options:
+            return {"options": [], "sources": unique_pages, "status": "no_results"}
         return {"options": options, "sources": unique_pages, "status": "ok"}
 
-    @staticmethod
-    def _parse_researched_fares(
+    def _filter_time_window(
+        self,
+        options: list[Option],
+        request: TripRequest,
+    ) -> list[Option]:
+        """Keep only flights departing inside a requested time-of-day window.
+
+        The window is read from the goal ("night", "morning", …). Options with no
+        known departure time (e.g. a fare-page link card) are always kept, and if
+        nothing matches the window we keep everything rather than show an empty
+        result.
+        """
+        window = _time_window_from_goal(request.goal or "")
+        if not window:
+            return options
+        lo, hi = window
+
+        def in_window(option: Option) -> bool:
+            hour = _hour_of(option.raw.get("departure_time"))
+            if hour is None:
+                return True
+            return (hour >= lo or hour < hi) if lo > hi else (lo <= hour < hi)
+
+        timed = [o for o in options if _hour_of(o.raw.get("departure_time")) is not None]
+        kept = [o for o in options if in_window(o)]
+        kept_timed = [o for o in kept if _hour_of(o.raw.get("departure_time")) is not None]
+        if timed and not kept_timed:
+            self.emit("active", "No flights in the requested time window — showing all times")
+            return options
+        if timed:
+            self.emit("active", f"Filtered to your time window ({lo:02d}:00–{hi:02d}:00)")
+        return kept
+
+    @classmethod
+    def _options_from_research(
+        cls,
         snapshot: str,
         sources: list[str],
         origin: str,
         destination: str,
-        offset: int,
+        depart: str,
     ) -> list[dict[str, Any]]:
-        """Extract advertised fares from a crawled page snapshot.
+        """Turn a crawled results page into clickable fare-link options.
 
-        Deliberately conservative: at most three fares per page, deduplicated,
-        and anything implausible is dropped rather than guessed at. A wrong price
-        presented confidently is worse than no price.
+        Always includes a Google Flights link for the exact route/date (so there
+        is at least one live-price link), adds the aggregator/airline links the
+        page surfaced, and attaches any advertised price we can read. Conservative
+        on prices: a confidently-shown wrong price is worse than none.
         """
-        found: list[dict[str, Any]] = []
-        seen: set[float] = set()
-        citation = sources[0] if sources else None
+        gf_url = _google_flights_url(origin, destination, depart)
+        options: list[dict[str, Any]] = [
+            {
+                "id": "CFX-GF",
+                "title": f"Google Flights — {origin}→{destination} (live fares)",
+                "price_amount": None,
+                "price_currency": "MYR",
+                "provider": "Camofox research · Google Flights",
+                "source": "camofox",
+                "source_url": gf_url,
+                "booking_url": gf_url,
+                "reasoning": "Opens the live Google Flights results for your exact route and date.",
+                "verified": False,
+                "bookable": False,
+                "raw": {"source": "camofox", "kind": "live_link"},
+            }
+        ]
 
+        seen_hosts: set[str] = {"google.com/travel/flights"}
+        for url in sources:
+            host = next((h for h in _FARE_HOSTS if h in url), None)
+            if not host or host in seen_hosts:
+                continue
+            seen_hosts.add(host)
+            label = _host_label(host)
+            options.append(
+                {
+                    "id": f"CFX-{len(options):02d}",
+                    "title": f"{label} — {origin}→{destination}",
+                    "price_amount": None,
+                    "price_currency": "MYR",
+                    "provider": f"Camofox research · {label}",
+                    "source": "camofox",
+                    "source_url": url,
+                    "booking_url": url,
+                    "reasoning": "Advertised fares on a public page — open to see live prices.",
+                    "verified": False,
+                    "bookable": False,
+                    "raw": {"source": "camofox", "kind": "fare_page"},
+                }
+            )
+            if len(options) >= 6:
+                break
+
+        prices = cls._read_prices(snapshot)
+        if prices:
+            currency, amount = prices[0]
+            options[0]["price_amount"] = amount
+            options[0]["price_currency"] = currency
+            options[0]["reasoning"] = (
+                f"Advertised from {currency} {amount:,.0f} on the results page — "
+                "open the link to confirm the live fare."
+            )
+        return options
+
+    @staticmethod
+    def _read_prices(snapshot: str) -> list[tuple[str, float]]:
+        """Read plausible advertised fares out of a page snapshot, cheapest first."""
+        out: list[tuple[str, float]] = []
+        seen: set[float] = set()
         for match in _PRICE_PATTERN.finditer(snapshot or ""):
             raw_currency = match.group("cur").upper()
             currency = _CURRENCY_ALIASES.get(raw_currency, raw_currency)
@@ -366,33 +508,14 @@ class FlightAgent(BaseAgent):
                 amount = float(match.group("amt").replace(",", ""))
             except ValueError:
                 continue
-            # A one-way regional fare below 30 or above 30,000 is almost
-            # certainly a page element that merely looks like a price.
+            # Below 30 or above 30,000 is almost certainly a page element that
+            # merely looks like a fare, not a real one-way regional price.
             if not 30 <= amount <= 30_000 or amount in seen:
                 continue
             seen.add(amount)
-            index = offset + len(found) + 1
-            found.append(
-                {
-                    "id": f"CFX-{index:03d}",
-                    "title": f"Advertised fare {origin}→{destination} · {currency} {amount:,.0f}",
-                    "price_amount": amount,
-                    "price_currency": currency,
-                    "provider": "Camofox research",
-                    "source": "camofox",
-                    "source_url": citation,
-                    "reasoning": (
-                        "Advertised on a public fare page — not a held fare. "
-                        "Open the source link to confirm before relying on it."
-                    ),
-                    "verified": False,
-                    "bookable": False,
-                    "raw": {"source": "camofox", "pages": sources[:4]},
-                }
-            )
-            if len(found) >= 3:
-                break
-        return found
+            out.append((currency, amount))
+        out.sort(key=lambda pair: pair[1])
+        return out
 
     async def _try_llm(
         self,
@@ -628,9 +751,9 @@ class FlightAgent(BaseAgent):
         parts = [f"{len(options)} option(s) {origin} → {destination}"]
         if bookable:
             parts.append(f"{bookable} bookable via Atlas")
-        crawled = report.get("camofox", {}).get("count", 0)
+        crawled = sum(1 for o in options if o.source == "camofox")
         if crawled:
-            parts.append(f"{crawled} advertised from research")
+            parts.append(f"{crawled} read live from Google Flights")
         cheapest = min(
             (o for o in options if o.price_amount is not None),
             key=lambda o: float(o.price_amount),
@@ -742,6 +865,145 @@ def _stops_label(stops: Any) -> str:
     if count == 0:
         return "direct"
     return f"{count} stop" if count == 1 else f"{count} stops"
+
+
+def _google_flights_url(origin: str, destination: str, depart: str) -> str:
+    """A clickable Google Flights link for the exact route (and date, if known)."""
+    query = f"flights from {origin} to {destination}"
+    if depart and depart != "flexible":
+        query += f" on {depart}"
+    return "https://www.google.com/travel/flights?q=" + quote_plus(query)
+
+
+def _google_flights_results_url(origin: str, destination: str, depart: str) -> str:
+    """A one-way Google Flights *results* URL that renders parseable flight rows."""
+    query = f"Flights to {destination} from {origin} on {depart} one way"
+    return "https://www.google.com/travel/flights?hl=en&gl=my&curr=MYR&q=" + quote_plus(query)
+
+
+#: One flight row from the Google Flights accessibility tree. The link's aria
+#: label is a stable sentence: "From 432 Malaysian ringgits. Nonstop flight with
+#: Malaysia Airlines. Leaves … at 6:30 PM on Friday, November 6 and arrives … at
+#: 9:10 PM." — price, stops, airline, departure, arrival, in that order.
+_GF_ROW = re.compile(
+    r"From\s+([\d,]+)\s+Malaysian ringgit\w*\.\s+"
+    r"(Nonstop|1\s+stop|\d+\s+stops?)\s+flights?\s+with\s+(.+?)\.\s+"
+    r"Leaves\b.*?\bat\s+(\d{1,2}:\d{2}\s*[AP]M)\s+on\b.*?\band\s+arrives\b.*?\bat\s+"
+    r"(\d{1,2}:\d{2}\s*[AP]M)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_google_flights(snapshot: str) -> list[dict[str, Any]]:
+    """Read each flight (airline, times, stops, price) from a results snapshot."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, float]] = set()
+    for match in _GF_ROW.finditer(snapshot or ""):
+        try:
+            price = float(match.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        if not 30 <= price <= 30_000:
+            continue
+        stops_label = match.group(2).strip().lower()
+        airline = re.sub(r"\s+", " ", match.group(3)).strip()
+        dep = _norm_ampm(match.group(4))
+        arr = _norm_ampm(match.group(5))
+        key = (airline, dep, price)
+        if key in seen:
+            continue
+        seen.add(key)
+        stops = 0 if "nonstop" in stops_label else _first_int(stops_label)
+        out.append(
+            {
+                "airline": airline,
+                "price": price,
+                "currency": "MYR",
+                "dep": dep,
+                "arr": arr,
+                "dep24": _to_24h(dep),
+                "stops": stops,
+                "stops_label": (
+                    "Nonstop" if stops == 0 else (f"{stops} stop" if stops == 1 else f"{stops} stops")
+                ),
+            }
+        )
+        if len(out) >= 15:
+            break
+    out.sort(key=lambda flight: flight["price"])
+    return out
+
+
+def _norm_ampm(value: str) -> str:
+    """ "6:30 PM" with single-spaced, upper-cased meridiem."""
+    match = re.search(r"(\d{1,2}):(\d{2})\s*([AP]M)", value, re.IGNORECASE)
+    if not match:
+        return value.strip()
+    return f"{int(match.group(1))}:{match.group(2)} {match.group(3).upper()}"
+
+
+def _to_24h(value: str) -> str | None:
+    """ "6:30 PM" → "18:30"."""
+    match = re.search(r"(\d{1,2}):(\d{2})\s*([AP]M)", value, re.IGNORECASE)
+    if not match:
+        return None
+    hour = int(match.group(1)) % 12
+    if match.group(3).upper() == "PM":
+        hour += 12
+    return f"{hour:02d}:{match.group(2)}"
+
+
+def _hour_of(hhmm: str | None) -> int | None:
+    if not hhmm:
+        return None
+    match = re.match(r"(\d{1,2}):(\d{2})", str(hhmm))
+    return int(match.group(1)) if match else None
+
+
+def _first_int(text: str) -> int:
+    match = re.search(r"\d+", text)
+    return int(match.group()) if match else 1
+
+
+def _time_window_from_goal(goal: str) -> tuple[int, int] | None:
+    """Map a phrase in the request to a [start, end) hour window (wraps midnight)."""
+    text = goal.lower()
+    if "red eye" in text or "red-eye" in text:
+        return (22, 6)
+    if "night" in text or "malam" in text:  # 'malam' = night (Malay)
+        return (18, 5)
+    if "evening" in text or "petang" in text:
+        return (17, 22)
+    if "morning" in text or "pagi" in text:
+        return (5, 12)
+    if "afternoon" in text or "tengah hari" in text:
+        return (12, 17)
+    return None
+
+
+#: Pretty names for the fare hosts we surface as clickable cards.
+_HOST_LABELS = {
+    "google.com/travel/flights": "Google Flights",
+    "skyscanner": "Skyscanner",
+    "kayak": "Kayak",
+    "momondo": "Momondo",
+    "kiwi.com": "Kiwi.com",
+    "expedia": "Expedia",
+    "trip.com": "Trip.com",
+    "wego": "Wego",
+    "agoda": "Agoda",
+    "airasia": "AirAsia",
+    "malaysiaairlines": "Malaysia Airlines",
+    "batikair": "Batik Air",
+    "firefly": "Firefly",
+    "cathaypacific": "Cathay Pacific",
+    "singaporeair": "Singapore Airlines",
+    "scoot": "Scoot",
+}
+
+
+def _host_label(host: str) -> str:
+    return _HOST_LABELS.get(host, host)
 
 
 def _is_red_eye(departure_time: str | None) -> bool:

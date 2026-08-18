@@ -23,6 +23,9 @@ dependencies = [
     # Was imported but never declared — a saved provider hit ImportError that the
     # 503 handler reported as "database unavailable".
     "cryptography>=43,<47",
+    # The Atlas Flight Booking CLI (`atlas-flight`) that tools/atlas_skill.py shells
+    # out to. Without it, `atlas-flight: not found` and Atlas is always EMPTY.
+    "atlas-flight-booking>=0.3.12,<1",
 ]
 
 [project.optional-dependencies]
