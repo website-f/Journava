@@ -1,0 +1,45 @@
+# Journava — shared-Caddy registration (spec §13)
+#
+# This is NOT a standalone Caddyfile. Append this block to the shared proxy's
+# Caddyfile at /opt/reverse-proxy/Caddyfile, then reload:
+#
+#   docker compose -f /opt/reverse-proxy/docker-compose.yml \
+#     exec caddy caddy reload --config /etc/caddy/Caddyfile
+#
+# Requirements:
+#   • the `web` and `api` containers must join the external `proxy` network
+#     (they do — see docker-compose.yml), so Caddy resolves them by name.
+#   • replace journava.example.com with the real JOURNAVA_DOMAIN from .env.
+#   • Caddy provisions the TLS cert automatically; do not add certificates here.
+
+journava.example.com {
+	encode zstd gzip
+
+	# API — order matters: match /api/* before the SPA catch-all.
+	handle /api/* {
+		reverse_proxy api:8400 {
+			# SSE stream (/api/v1/events) must never be buffered.
+			flush_interval -1
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Everything else → the PWA. nginx inside `web` already does SPA
+	# history-fallback, so Caddy just forwards.
+	handle {
+		reverse_proxy web:80
+	}
+
+	header {
+		# Journava is installable; let the service worker control the scope.
+		Service-Worker-Allowed "/"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/journava.log
+		format json
+	}
+}

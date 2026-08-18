@@ -1,0 +1,159 @@
+# Journava — Compose stack (spec §11, §13)
+#
+# Services: web · api · gnosion · camofox · postgres · redis
+#
+# Nothing here terminates TLS. The shared Caddy at /opt/reverse-proxy fronts the
+# stack and joins it on the external `proxy` network:
+#     journava.<domain>        -> web:80
+#     journava.<domain>/api/*  -> api:8400
+#
+# ⚠️ TODO(ports): the host-published ports below use the suggested 8400–8409
+# block. VERIFY against the reverse-proxy port table before first deploy —
+# Sejuk Ops already reserves 8300–8309, and nothing guarantees 8400+ is free.
+# In production these `ports:` blocks should be deleted entirely: Caddy reaches
+# the containers over the `proxy` network, so no host port needs publishing.
+# They exist here only so a bare `docker compose up` is debuggable on a laptop.
+
+name: journava
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---------------------------------------------------------------------------
+  # web — Vite PWA build served by nginx
+  # ---------------------------------------------------------------------------
+  web:
+    <<: [*restart, *logging]
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Kuala_Lumpur}
+    ports:
+      - "127.0.0.1:8400:80" # TODO(ports): drop once Caddy fronts this
+    depends_on:
+      api:
+        condition: service_started
+    networks: [internal, proxy]
+
+  # ---------------------------------------------------------------------------
+  # api — FastAPI + LangGraph orchestrator
+  # ---------------------------------------------------------------------------
+  api:
+    <<: [*restart, *logging]
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    env_file: [.env]
+    environment:
+      TZ: ${TZ:-Asia/Kuala_Lumpur}
+      ENVIRONMENT: ${ENVIRONMENT:-prod}
+      # Container-internal DSNs override whatever .env holds for local dev.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-journava}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-journava}
+      REDIS_URL: redis://redis:6379/0
+      CAMOFOX_URL: http://camofox:3000
+      GNOSION_MCP_URL: http://gnosion:8765
+      GNOSION_BRAIN_PATH: /srv/data/journava.gnosion
+    volumes:
+      - api_data:/srv/data
+    ports:
+      - "127.0.0.1:8401:8400" # TODO(ports): drop once Caddy fronts this
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [internal, proxy]
+
+  # ---------------------------------------------------------------------------
+  # gnosion — the brain, MCP mode (library mode runs in-process inside api)
+  # ---------------------------------------------------------------------------
+  gnosion:
+    <<: [*restart, *logging]
+    build:
+      context: ../gnosion
+      dockerfile: Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Kuala_Lumpur}
+      GNOSION_BRAIN_PATH: /srv/data/journava.gnosion
+    volumes:
+      - api_data:/srv/data # same brain file the api opens as a library
+    networks: [internal]
+    profiles: [full] # Phase 2 — `docker compose --profile full up`
+
+  # ---------------------------------------------------------------------------
+  # camofox — hardened-Firefox research service
+  # ---------------------------------------------------------------------------
+  camofox:
+    <<: [*restart, *logging]
+    build:
+      context: ../camofox
+      dockerfile: Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Kuala_Lumpur}
+    # Firefox needs real shared memory or it dies on heavy pages.
+    shm_size: "1gb"
+    networks: [internal]
+    profiles: [full] # Phase 2
+
+  # ---------------------------------------------------------------------------
+  # postgres — trips, itineraries, bookings, agent events, decision outcomes
+  # ---------------------------------------------------------------------------
+  postgres:
+    <<: [*restart, *logging]
+    image: postgres:16-alpine
+    environment:
+      TZ: ${TZ:-Asia/Kuala_Lumpur}
+      POSTGRES_USER: ${POSTGRES_USER:-journava}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-journava}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-journava} -d ${POSTGRES_DB:-journava}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # redis — API response cache; guards the free third-party quotas
+  # ---------------------------------------------------------------------------
+  redis:
+    <<: [*restart, *logging]
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge
+  # Created and owned by the shared reverse proxy. Never define it here.
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-proxy}
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_data: # holds data/journava.gnosion — back this up (§13)

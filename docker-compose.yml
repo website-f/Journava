@@ -1,0 +1,84 @@
+# Journava — Docker Compose (spec §11)
+#
+# Services: postgres, redis, api (FastAPI), web (Nginx + Vite build)
+# Internal ports: 8400–8405 (reserved block per spec)
+#
+# Usage:
+#   cp ops/.env.example .env   # fill in your keys
+#   docker compose up -d --build
+#
+# The web service (port 8401) is what the external Caddy reverse-proxy routes to.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres — structured record (trips, bookings, agent events, LLM providers)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: journava
+      POSTGRES_USER: journava
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "8404:5432"  # exposed for local dev access; remove in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U journava"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis — cache layer (FX rates, weather, session data)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    ports:
+      - "8405:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # API — FastAPI + LangGraph orchestrator
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://journava:${POSTGRES_PASSWORD}@postgres:5432/journava
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8400:8400"
+
+  # ---------------------------------------------------------------------------
+  # Web — Nginx serves the PWA build, proxies /api to the API service
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8401:80"
+
+volumes:
+  pgdata:
+    driver: local

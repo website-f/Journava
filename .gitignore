@@ -1,0 +1,39 @@
+# Environment secrets — NEVER commit real keys
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (dev data)
+data/
+
+# Gnosion brain file (data, not config)
+*.gnosion
+
+# Build caches
+.turbo/
+.next/
