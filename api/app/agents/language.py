@@ -27,18 +27,40 @@ class LanguageAgent(BaseAgent):
     name = "Language"
     role = "Key phrases · cultural etiquette · customs"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
         country = await rest_countries.country_info(destination)
         languages = ", ".join(country.get("languages", [])) if country else "unknown"
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(destination=destination, languages=languages)}],
-                response_format={"type": "json_object"}, agent="language",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": USER.format(destination=destination, languages=languages),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                agent="language",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
-            data = {"languages": [languages], "essential_phrases": [], "cultural_etiquette": ["Be respectful of local customs"], "dress_code": "casual"}
+            data = {
+                "languages": [languages],
+                "essential_phrases": [],
+                "cultural_etiquette": ["Be respectful of local customs"],
+                "dress_code": "casual",
+            }
 
-        return AgentResult(agent=self.slug, summary=f"Language guide for {destination} ({languages})", data={"destination": destination, **data})
+        return AgentResult(
+            agent=self.slug,
+            summary=f"Language guide for {destination} ({languages})",
+            data={"destination": destination, **data},
+        )

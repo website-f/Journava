@@ -26,21 +26,48 @@ class ConciergeAgent(BaseAgent):
     name = "Concierge"
     role = "Reservations · events · special requests"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
         interests = ", ".join(profile.interests) if profile.interests else "general sightseeing"
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(destination=destination, interests=interests)}],
-                response_format={"type": "json_object"}, agent="concierge",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": USER.format(destination=destination, interests=interests),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                agent="concierge",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
-            data = {"reservations": [], "events": [], "special_services": ["Hotel concierge can assist"]}
+            data = {
+                "reservations": [],
+                "events": [],
+                "special_services": ["Hotel concierge can assist"],
+            }
 
         options = [
-            Option(id=f"concierge-{i}", kind="restaurant", title=r.get("name", ""), reasoning=r.get("cuisine", ""))
+            Option(
+                id=f"concierge-{i}",
+                kind="restaurant",
+                title=r.get("name", ""),
+                reasoning=r.get("cuisine", ""),
+            )
             for i, r in enumerate(data.get("reservations", []))
         ]
-        return AgentResult(agent=self.slug, summary=f"Concierge picks for {destination}", options=options, data={"destination": destination, **data})
+        return AgentResult(
+            agent=self.slug,
+            summary=f"Concierge picks for {destination}",
+            options=options,
+            data={"destination": destination, **data},
+        )

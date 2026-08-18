@@ -15,9 +15,12 @@ WORKDIR /app
 # Copy lock + project metadata first (Docker layer cache for deps)
 COPY pyproject.toml uv.lock ./
 
-# Install all dependencies (no dev) into .venv
-# --frozen uses the exact lockfile without updating it
-RUN uv sync --frozen --no-dev --no-install-project
+# Install runtime dependencies into .venv.
+# `--extra brain` pulls in Gnosion: without it the API still boots, but memory
+# silently falls back to an in-process dict and the self-improvement story stops
+# being true. Build with `--build-arg BRAIN_EXTRA=` to opt out deliberately.
+ARG BRAIN_EXTRA="--extra brain"
+RUN uv sync --frozen --no-dev --no-install-project ${BRAIN_EXTRA}
 
 # --------------------------------------------------------------------------- #
 # Stage 2 — runtime

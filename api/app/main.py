@@ -5,22 +5,35 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date
+from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Literal
 
 from app.agents import REGISTRY
 from app.agents.memory import MemoryAgent
 from app.agents.schemas import TravelerProfile, TripRequest
-from app.brain import gnosion_client, trip_store
+from app.brain import bookings, gnosion_client, history, outcomes, trip_store
 from app.brain.demo_trip import get_demo_trip
-from app.core import cache, db, llm_providers, sse
+from app.brain.trip_store import reconstruct_request
+from app.core import (
+    cache,
+    db,
+    llm_discovery,
+    llm_presets,
+    llm_providers,
+    sse,
+    vault,
+    vault_probes,
+)
 from app.core.settings import settings
-from app.graph.supervisor import run_plan, cancel_run as _cancel_plan_run
+from app.graph import booking_flow, scopes
 from app.graph.disruption import handle_disruption
+from app.graph.supervisor import cancel_run as _cancel_plan_run
+from app.graph.supervisor import run_plan
 from app.tools import camofox as camofox_tool
 
 logging.basicConfig(
@@ -36,10 +49,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info("Journava API starting (%s)", settings.environment)
     await db.init_schema()
     await cache.get_redis()
-    # Seed demo trip so the My Trip page has data on first load
-    if trip_store.load_trip() is None:
+    # Restore the last trip from Postgres, or seed the demo trip so My Trip has
+    # something to render on a cold first boot.
+    if await trip_store.load_trip_durable() is None:
         trip_store.save_trip(get_demo_trip())
         logger.info("Demo trip seeded (Venice 7-day)")
+    else:
+        logger.info("Active trip restored from durable storage")
     yield
     await cache.close_redis()
     await db.close_pool()
@@ -77,9 +93,13 @@ async def health() -> dict[str, object]:
         "dependencies": {
             "postgres": await db.healthy(),
             "redis": await cache.get_redis() is not None,
+            # False here means the in-process fallback is serving memory. The
+            # app still works; it just isn't the real brain, and saying so beats
+            # a green tick that hides it.
             "gnosion": gnosion_client.available(),
             "camofox": await camofox_tool.available(),
         },
+        "memory_backend": gnosion_client.snapshot()["backend"],
         "sse_subscribers": sse.subscriber_count(),
     }
 
@@ -115,8 +135,7 @@ async def agent_events() -> StreamingResponse:
 async def list_agents() -> list[dict[str, str]]:
     """The agent roster shown in the control center."""
     return [
-        {"slug": agent.slug, "name": agent.name, "role": agent.role}
-        for agent in REGISTRY.values()
+        {"slug": agent.slug, "name": agent.name, "role": agent.role} for agent in REGISTRY.values()
     ]
 
 
@@ -125,23 +144,60 @@ async def list_agents() -> list[dict[str, str]]:
 # --------------------------------------------------------------------------- #
 
 
+class PlanRequest(TripRequest):
+    """A trip request plus the scope that decides which agents run.
+
+    Scoping is what keeps an answer proportionate to the question: a
+    flights-only ask should not wake the visa, shopping and language agents.
+    """
+
+    scope: str = scopes.DEFAULT_SCOPE
+
+
 class PlanResponse(BaseModel):
     results: dict[str, object]
+    scope: str
+    history_id: str | None = None
+    duration_ms: int
 
 
 @app.post(f"{settings.api_prefix}/plan", response_model=PlanResponse, tags=["planning"])
-async def plan(request: TripRequest) -> PlanResponse:
-    """Run a full planning pass across the agent graph.
+async def plan(request: PlanRequest) -> PlanResponse:
+    """Run a planning pass for one scope.
 
     The profile is read first: a preference narrows scope, its absence means
-    global search (§7.5). The result is also persisted as the active trip
-    so the My Trip page can load it independently.
+    global search (§7.5). The result is persisted as the active trip, and
+    recorded in history so it can be reopened without replaying the agents.
     """
+    import time
+
+    scope = scopes.get(request.scope)
+    trip_request = TripRequest.model_validate(
+        request.model_dump(exclude={"scope"}, exclude_none=True)
+    )
     profile = MemoryAgent.load_profile()
-    results = await run_plan(request, profile)
-    # Persist as active trip for the My Trip page (§3.3)
-    trip_store.save_trip(results)
-    return PlanResponse(results=results)
+
+    started = time.monotonic()
+    results = await run_plan(trip_request, profile, scope=scope)
+    duration_ms = int((time.monotonic() - started) * 1000)
+
+    # A full trip becomes *the* active trip; a narrow lookup should not replace
+    # the itinerary the traveller is actually working from.
+    if scope.slug in ("full_trip", "itinerary_only"):
+        await trip_store.save_trip_durable(results)
+
+    entry = await history.record(
+        scope=scope.slug,
+        goal=trip_request.goal,
+        results=results,
+        duration_ms=duration_ms,
+    )
+    return PlanResponse(
+        results=results,
+        scope=scope.slug,
+        history_id=entry.get("id"),
+        duration_ms=duration_ms,
+    )
 
 
 @app.post(f"{settings.api_prefix}/cancel", tags=["planning"])
@@ -164,10 +220,43 @@ async def cancel_plan() -> dict[str, bool]:
 @app.get(f"{settings.api_prefix}/trip", tags=["trip"])
 async def get_trip() -> dict[str, object]:
     """Return the latest active trip (most recent plan result)."""
-    trip = trip_store.load_trip()
+    trip = await trip_store.load_trip_durable()
     if trip is None:
         return {"trip": None}
     return {"trip": trip}
+
+
+# --------------------------------------------------------------------------- #
+# Outcome learning (§7 ③) — the flywheel the Research Board's feedback drives
+# --------------------------------------------------------------------------- #
+
+
+class OutcomeRequest(BaseModel):
+    domain: str
+    recommendation: dict[str, object] = {}
+    accepted: bool
+    agent: str = "memory"
+    trip_id: str | None = None
+    user_note: str | None = None
+
+
+@app.post(f"{settings.api_prefix}/outcome", tags=["brain"])
+async def record_outcome(request: OutcomeRequest) -> dict[str, object]:
+    """Record an accepted/rejected recommendation so the next plan is smarter."""
+    return await outcomes.record(
+        request.domain,
+        dict(request.recommendation),
+        request.accepted,
+        agent=request.agent,
+        trip_id=request.trip_id,
+        user_note=request.user_note,
+    )
+
+
+@app.get(f"{settings.api_prefix}/outcome/stats", tags=["brain"])
+async def outcome_stats() -> list[dict[str, object]]:
+    """Accepted/rejected tallies per domain."""
+    return await outcomes.stats()
 
 
 # --------------------------------------------------------------------------- #
@@ -177,41 +266,41 @@ async def get_trip() -> dict[str, object]:
 
 class DisruptionRequest(BaseModel):
     trip_id: str | None = None
-    disruption_type: Literal["flight_cancelled", "weather_alert", "budget_exceeded"] = "flight_cancelled"
+    disruption_type: Literal["flight_cancelled", "weather_alert", "budget_exceeded"] = (
+        "flight_cancelled"
+    )
     affected_agent: str = "flight"
 
 
 class DisruptionResponse(BaseModel):
     recovery_plan: dict[str, object]
     additional_cost: str
+    #: Before/after prices and whether the two were actually comparable.
+    cost_detail: dict[str, object]
     agents_activated: list[str]
     summary: str
+    disruption_type: str
 
 
-@app.post(f"{settings.api_prefix}/disruption", response_model=DisruptionResponse, tags=["disruption"])
+@app.post(
+    f"{settings.api_prefix}/disruption", response_model=DisruptionResponse, tags=["disruption"]
+)
 async def disruption(request: DisruptionRequest) -> DisruptionResponse:
     """Simulate a disruption and run the autonomous recovery cascade.
 
     This is the demo "money shot": agents rebuild the trip live.
     """
     # Load the active trip as the baseline
-    original_results = trip_store.load_trip() or {}
+    original_results = await trip_store.load_trip_durable() or {}
     profile = MemoryAgent.load_profile()
 
-    # Reconstruct the original request from the stored results
-    original_request = TripRequest(goal="disruption recovery")
-    chief_data = original_results.get("chief", {})
-    if chief_data:
-        parsed = chief_data.get("data", {})
-        if parsed.get("destination"):
-            original_request = TripRequest(
-                goal=f"Recovery from {request.disruption_type}",
-                destination=parsed.get("destination"),
-                origin=parsed.get("origin"),
-                travellers=parsed.get("travellers", 1),
-                budget_amount=parsed.get("budget_amount"),
-                budget_currency=parsed.get("budget_currency", "MYR"),
-            )
+    # Rebuild the trip request from what the Chief resolved. `resolved_request`
+    # is the canonical mirror the Chief writes for exactly this purpose — reading
+    # `data["destination"]` directly would miss it, and the recovery would then
+    # replan for "unknown".
+    original_request = reconstruct_request(
+        original_results, goal=f"Recovery from {request.disruption_type}"
+    )
 
     recovery = await handle_disruption(
         disruption_type=request.disruption_type,
@@ -222,15 +311,16 @@ async def disruption(request: DisruptionRequest) -> DisruptionResponse:
     )
 
     # Update the active trip with the recovery plan
-    updated_results = {**original_results}
-    updated_results.update(recovery.get("recovery_plan", {}))
-    trip_store.save_trip(updated_results)
+    updated_results = {**original_results, **recovery.get("recovery_plan", {})}
+    await trip_store.save_trip_durable(updated_results)
 
     return DisruptionResponse(
         recovery_plan=recovery["recovery_plan"],
         additional_cost=recovery["additional_cost"],
+        cost_detail=recovery["cost_detail"],
         agents_activated=recovery["agents_activated"],
         summary=recovery["summary"],
+        disruption_type=recovery["disruption_type"],
     )
 
 
@@ -248,7 +338,7 @@ async def save_profile(profile: TravelerProfile) -> TravelerProfile:
 
 
 # --------------------------------------------------------------------------- #
-# Engine — LLM provider management (Phase 3)
+# Engine — AI model providers (rotation pool)
 # --------------------------------------------------------------------------- #
 
 
@@ -259,6 +349,10 @@ class ProviderCreate(BaseModel):
     priority: int = 0
     enabled: bool = True
     max_rpm: int | None = None
+    max_rpd: int | None = None
+    max_tpd: int | None = None
+    #: Refuse to save unless the key passes its probe. The UI defaults this on.
+    require_test: bool = True
 
 
 class ProviderUpdate(BaseModel):
@@ -268,17 +362,84 @@ class ProviderUpdate(BaseModel):
     priority: int | None = None
     enabled: bool | None = None
     max_rpm: int | None = None
+    max_rpd: int | None = None
+    max_tpd: int | None = None
+
+
+class ProviderReorder(BaseModel):
+    ordered_ids: list[str]
+
+
+class ProviderTestRequest(BaseModel):
+    """Test an arbitrary model+key pair *before* it is stored."""
+
+    litellm_model: str
+    api_key: str
 
 
 @app.get(f"{settings.api_prefix}/engine/providers", tags=["engine"])
 async def engine_list_providers() -> list[dict[str, object]]:
-    """List all LLM providers (API key masked)."""
+    """The rotation pool: health, quota usage, priority. Keys always masked."""
     return await llm_providers.list_providers()
+
+
+@app.get(f"{settings.api_prefix}/engine/catalogue", tags=["engine"])
+async def engine_catalogue() -> dict[str, object]:
+    """Known model presets plus the local fallback state, for the add form."""
+    return {
+        "presets": llm_presets.PRESETS,
+        "ollama_fallback": {
+            "enabled": settings.ollama_fallback_enabled,
+            "model": settings.ollama_fallback_model,
+            "note": (
+                "Tried only after every cloud provider fails. Needs no key, but "
+                "Ollama must be running locally."
+            ),
+        },
+    }
+
+
+class ModelDiscoveryRequest(BaseModel):
+    provider: str
+    api_key: str | None = None
+
+
+@app.post(f"{settings.api_prefix}/engine/models", tags=["engine"])
+async def engine_discover_models(request: ModelDiscoveryRequest) -> dict[str, object]:
+    """Ask a provider which models it will serve right now.
+
+    The preset list is a convenience and it goes stale — Groq retired its Llama
+    models while our presets still offered them, which produces a `model_not_found`
+    that looks like a bad key. This endpoint is the source of truth.
+    """
+    try:
+        models = await llm_discovery.list_models(request.provider, request.api_key)
+    except llm_discovery.DiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"provider": request.provider, "count": len(models), "models": models}
+
+
+@app.post(f"{settings.api_prefix}/engine/test", tags=["engine"])
+async def engine_test_candidate(request: ProviderTestRequest) -> dict[str, object]:
+    """Ping a model+key pair without saving it.
+
+    This is the check that makes the add form trustworthy: the operator learns
+    whether a key works while they are still looking at the form, rather than
+    discovering it when an agent run fails.
+    """
+    return await vault_probes.probe_model(request.litellm_model, request.api_key)
 
 
 @app.post(f"{settings.api_prefix}/engine/providers", tags=["engine"])
 async def engine_create_provider(provider: ProviderCreate) -> dict[str, object]:
-    """Add a new LLM provider to the failover chain."""
+    """Add a provider to the rotation pool, testing the key first."""
+    verdict = await vault_probes.probe_model(provider.litellm_model, provider.api_key)
+    if provider.require_test and not verdict["ok"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Key test failed ({verdict['status']}): {verdict['message']}",
+        )
+
     result = await llm_providers.create_provider(
         name=provider.name,
         litellm_model=provider.litellm_model,
@@ -286,26 +447,54 @@ async def engine_create_provider(provider: ProviderCreate) -> dict[str, object]:
         priority=provider.priority,
         enabled=provider.enabled,
         max_rpm=provider.max_rpm,
+        max_rpd=provider.max_rpd,
+        max_tpd=provider.max_tpd,
+        status=verdict["status"],
+        status_detail=verdict["message"],
     )
     if result is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail="Failed to create provider (DB unavailable)")
-    return result
+        raise HTTPException(
+            status_code=503,
+            detail="Provider could not be saved — the database is unavailable.",
+        )
+    return {**result, "test": verdict}
 
 
 @app.patch(f"{settings.api_prefix}/engine/providers/{{provider_id}}", tags=["engine"])
 async def engine_update_provider(provider_id: str, update: ProviderUpdate) -> dict[str, object]:
-    """Update an existing LLM provider."""
-    from fastapi import HTTPException
+    """Update a provider. A rotated key is re-tested before it is trusted."""
+    verdict: dict[str, object] | None = None
+    if update.api_key:
+        model = update.litellm_model
+        if not model:
+            existing = await llm_providers.get_provider_full(provider_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Provider not found")
+            model = existing["litellm_model"]
+        verdict = await vault_probes.probe_model(model, update.api_key)
+
     result = await llm_providers.update_provider(
         provider_id,
-        name=update.name,
-        litellm_model=update.litellm_model,
-        api_key=update.api_key,
-        priority=update.priority,
-        enabled=update.enabled,
-        max_rpm=update.max_rpm,
+        **update.model_dump(exclude_none=True),
+        **({"status": verdict["status"], "status_detail": verdict["message"]} if verdict else {}),
     )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    return {**result, "test": verdict} if verdict else result
+
+
+@app.post(f"{settings.api_prefix}/engine/providers/reorder", tags=["engine"])
+async def engine_reorder_providers(request: ProviderReorder) -> dict[str, object]:
+    """Apply a drag-and-drop rotation order."""
+    if not await llm_providers.reorder_providers(request.ordered_ids):
+        raise HTTPException(status_code=503, detail="Could not reorder providers")
+    return {"reordered": True, "providers": await llm_providers.list_providers()}
+
+
+@app.post(f"{settings.api_prefix}/engine/providers/{{provider_id}}/reset", tags=["engine"])
+async def engine_reset_provider(provider_id: str) -> dict[str, object]:
+    """Clear a provider's status, cooldown and metered usage."""
+    result = await llm_providers.reset_provider(provider_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Provider not found")
     return result
@@ -313,178 +502,336 @@ async def engine_update_provider(provider_id: str, update: ProviderUpdate) -> di
 
 @app.delete(f"{settings.api_prefix}/engine/providers/{{provider_id}}", tags=["engine"])
 async def engine_delete_provider(provider_id: str) -> dict[str, object]:
-    """Remove an LLM provider from the chain."""
-    from fastapi import HTTPException
-    deleted = await llm_providers.delete_provider(provider_id)
-    if not deleted:
+    """Remove a provider from the pool."""
+    if not await llm_providers.delete_provider(provider_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     return {"deleted": True}
 
 
-@app.post(f"{settings.api_prefix}/engine/test/{{provider_id}}", tags=["engine"])
+@app.post(f"{settings.api_prefix}/engine/providers/{{provider_id}}/test", tags=["engine"])
 async def engine_test_provider(provider_id: str) -> dict[str, object]:
-    """Send a tiny prompt through a single provider to verify it works.
-
-    Sets provider-specific env vars so LiteLLM resolves the API key correctly
-    for every provider type (DashScope, Groq, Gemini, OpenRouter, etc.).
-    """
-    import os
-    import time
-    from fastapi import HTTPException
-
+    """Re-test a stored provider and record the verdict."""
     provider = await llm_providers.get_provider_full(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="Provider not found")
 
-    model = provider["litellm_model"]
-    api_key = provider.get("api_key", "")
-
-    # Map provider name → LiteLLM env var so the key is always found.
-    ENV_MAP = {
-        "dashscope": "DASHSCOPE_API_KEY",
-        "groq": "GROQ_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "cerebras": "CEREBRAS_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
-        "cohere": "COHERE_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-    }
-
-    # Determine which env var to set from model prefix or provider name
-    prefix = model.split("/")[0].lower() if "/" in model else provider["name"].lower()
-    env_var = ENV_MAP.get(prefix)
-
-    # Temporarily set the env var so LiteLLM picks it up
-    old_val = os.environ.get(env_var) if env_var else None
-    if env_var and api_key:
-        os.environ[env_var] = api_key
-
-    start = time.monotonic()
-    try:
-        from litellm import acompletion
-        response = await acompletion(
-            model=model,
-            messages=[{"role": "user", "content": "Say hello in one word."}],
-            temperature=0,
-            timeout=30,
-            api_key=api_key,
-        )
-        content = response.choices[0].message.content or ""
-        elapsed = int((time.monotonic() - start) * 1000)
-        return {
-            "success": True,
-            "response": content,
-            "latency_ms": elapsed,
-            "model": model,
-        }
-    except Exception as exc:  # noqa: BLE001
-        elapsed = int((time.monotonic() - start) * 1000)
-        return {
-            "success": False,
-            "error": str(exc)[:500],
-            "latency_ms": elapsed,
-            "model": model,
-        }
-    finally:
-        # Restore original env var
-        if env_var:
-            if old_val is not None:
-                os.environ[env_var] = old_val
-            else:
-                os.environ.pop(env_var, None)
+    verdict = await vault_probes.probe_model(provider["litellm_model"], provider["api_key"])
+    await llm_providers.mark_status(provider_id, verdict["status"], str(verdict["message"]))
+    return {**verdict, "model": provider["litellm_model"]}
 
 
 @app.get(f"{settings.api_prefix}/engine/stats", tags=["engine"])
 async def engine_stats() -> list[dict[str, object]]:
-    """Usage stats per provider (last 7 days)."""
+    """Usage stats per model (last 7 days)."""
     return await llm_providers.get_stats()
 
 
 # --------------------------------------------------------------------------- #
-# Brain graph visualization (spec section 7)
+# Brain graph visualization (spec §7 ①)
 # --------------------------------------------------------------------------- #
 
 
 @app.get(f"{settings.api_prefix}/brain/graph", tags=["brain"])
 async def brain_graph() -> dict[str, object]:
-    """Return the Gnosion knowledge graph as nodes + edges for d3 visualization.
+    """Gnosion knowledge graph as nodes + edges for the Agent Control Center.
 
-    When Gnosion is unavailable, returns a static demo graph showing
-    the brain structure the judges expect to see.
+    `gnosion_client.graph()` builds this from the live memory counts of every
+    declared domain, so the node weights are real and climb as agents learn.
+    It reports which backend produced them, and never fabricates a graph.
     """
-    # Try to get real graph from Gnosion
-    if gnosion_client.available():
-        try:
-            return gnosion_client.graph()
-        except Exception:  # noqa: BLE001
-            pass
-    # Use fallback graph from enhanced store
     return gnosion_client.graph()
 
 
-def _build_live_brain_graph() -> dict[str, object]:
-    """Build graph data from Gnosion's current memory state."""
-    # Domains that Gnosion tracks
-    domains = ["traveler_profile", "flights", "hotels", "destinations",
-                "weather", "budgets", "itinerary", "outcomes"]
-    nodes: list[dict[str, object]] = []
-    edges: list[dict[str, object]] = []
-
-    for domain in domains:
-        try:
-            memories = gnosion_client.recall(domain)
-            weight = len(memories) if memories else 0
-            if weight > 0:
-                nodes.append({
-                    "id": domain,
-                    "label": domain.replace("_", " ").title(),
-                    "domain": domain,
-                    "weight": weight,
-                })
-        except Exception:  # noqa: BLE001
-            continue
-
-    # Add edges between related domains
-    relationships = [
-        ("traveler_profile", "flights"), ("traveler_profile", "hotels"),
-        ("traveler_profile", "destinations"), ("flights", "budgets"),
-        ("hotels", "budgets"), ("destinations", "itinerary"),
-        ("weather", "itinerary"), ("outcomes", "flights"),
-        ("outcomes", "hotels"), ("budgets", "itinerary"),
-    ]
-    node_ids = {n["id"] for n in nodes}
-    for src, tgt in relationships:
-        if src in node_ids and tgt in node_ids:
-            edges.append({"source": src, "target": tgt, "strength": 0.6})
-
-    return {"nodes": nodes, "edges": edges}
+@app.get(f"{settings.api_prefix}/brain/snapshot", tags=["brain"])
+async def brain_snapshot() -> dict[str, object]:
+    """Which memory backend is live, and how much it holds."""
+    return gnosion_client.snapshot()
 
 
-def _build_demo_brain_graph() -> dict[str, object]:
-    """Static demo graph when Gnosion is unavailable."""
-    nodes = [
-        {"id": "traveler_profile", "label": "Traveler Profile", "domain": "traveler_profile", "weight": 3},
-        {"id": "flights", "label": "Flights", "domain": "flights", "weight": 5},
-        {"id": "hotels", "label": "Hotels", "domain": "hotels", "weight": 4},
-        {"id": "destinations", "label": "Destinations", "domain": "destinations", "weight": 6},
-        {"id": "weather", "label": "Weather", "domain": "weather", "weight": 2},
-        {"id": "budgets", "label": "Budgets", "domain": "budgets", "weight": 3},
-        {"id": "itinerary", "label": "Itinerary", "domain": "itinerary", "weight": 4},
-        {"id": "outcomes", "label": "Outcomes", "domain": "outcomes", "weight": 2},
-    ]
-    edges = [
-        {"source": "traveler_profile", "target": "flights", "strength": 0.8},
-        {"source": "traveler_profile", "target": "hotels", "strength": 0.7},
-        {"source": "traveler_profile", "target": "destinations", "strength": 0.9},
-        {"source": "flights", "target": "budgets", "strength": 0.6},
-        {"source": "hotels", "target": "budgets", "strength": 0.6},
-        {"source": "destinations", "target": "itinerary", "strength": 0.8},
-        {"source": "weather", "target": "itinerary", "strength": 0.5},
-        {"source": "outcomes", "target": "flights", "strength": 0.4},
-        {"source": "outcomes", "target": "hotels", "strength": 0.4},
-        {"source": "budgets", "target": "itinerary", "strength": 0.5},
-    ]
-    return {"nodes": nodes, "edges": edges}
+# --------------------------------------------------------------------------- #
+# API Vault - every third-party credential, encrypted (spec 9)
+# --------------------------------------------------------------------------- #
+
+
+class CredentialUpsert(BaseModel):
+    provider: str
+    secret: str | None = None
+    extra: dict[str, object] = {}
+    label: str | None = None
+    enabled: bool = True
+    #: Refuse to save a key the probe rejects. Off for providers with no probe.
+    require_test: bool = False
+
+
+class CredentialTest(BaseModel):
+    provider: str
+    secret: str | None = None
+    extra: dict[str, object] = {}
+
+
+@app.get(f"{settings.api_prefix}/vault/catalogue", tags=["vault"])
+async def vault_catalogue() -> dict[str, object]:
+    """Every provider Journava can use, and whether it is configured."""
+    return {
+        "categories": vault.CATEGORIES,
+        "providers": await vault.catalogue(),
+    }
+
+
+@app.get(f"{settings.api_prefix}/vault/credentials", tags=["vault"])
+async def vault_list(category: str | None = None) -> list[dict[str, object]]:
+    """Stored credentials. Secrets are masked and never returned in full."""
+    return await vault.list_credentials(category)
+
+
+@app.post(f"{settings.api_prefix}/vault/test", tags=["vault"])
+async def vault_test(request: CredentialTest) -> dict[str, object]:
+    """Probe a credential without storing it - the test-before-save path."""
+    return await vault_probes.probe(request.provider, request.secret, dict(request.extra))
+
+
+@app.post(f"{settings.api_prefix}/vault/credentials", tags=["vault"])
+async def vault_upsert(request: CredentialUpsert) -> dict[str, object]:
+    """Store or rotate a credential, recording its tested health."""
+    if request.provider not in vault.PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider {request.provider!r}")
+
+    verdict = await vault_probes.probe(request.provider, request.secret, dict(request.extra))
+    if request.require_test and not verdict["ok"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Test failed ({verdict['status']}): {verdict['message']}",
+        )
+
+    stored = await vault.upsert_credential(
+        request.provider,
+        secret=request.secret,
+        extra=dict(request.extra),
+        label=request.label,
+        enabled=request.enabled,
+        status=verdict["status"],
+        status_detail=str(verdict["message"]),
+    )
+    if stored is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Credential could not be saved - the database is unavailable.",
+        )
+    vault.invalidate_cache(request.provider)
+    return {**stored, "test": verdict}
+
+
+@app.post(f"{settings.api_prefix}/vault/credentials/{{provider}}/test", tags=["vault"])
+async def vault_retest(provider: str) -> dict[str, object]:
+    """Re-test a stored credential and record the verdict."""
+    resolved = await vault.resolve(provider)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="No credential stored")
+    verdict = await vault_probes.probe(
+        provider, resolved.get("secret"), resolved.get("extra") or {}
+    )
+    await vault.set_status(provider, verdict["status"], str(verdict["message"]))
+    return verdict
+
+
+@app.delete(f"{settings.api_prefix}/vault/credentials/{{provider}}", tags=["vault"])
+async def vault_delete(provider: str) -> dict[str, object]:
+    if not await vault.delete_credential(provider):
+        raise HTTPException(status_code=404, detail="No credential stored")
+    vault.invalidate_cache(provider)
+    return {"deleted": True, "provider": provider}
+
+
+# --------------------------------------------------------------------------- #
+# Scopes - the Command Center presets
+# --------------------------------------------------------------------------- #
+
+
+@app.get(f"{settings.api_prefix}/scopes", tags=["planning"])
+async def list_scopes() -> list[dict[str, object]]:
+    """Preset scopes: what each one runs, and how long it should take."""
+    return scopes.catalogue()
+
+
+# --------------------------------------------------------------------------- #
+# Flight booking flow (Atlas)
+# --------------------------------------------------------------------------- #
+
+
+class EnvironmentRequest(BaseModel):
+    environment: Literal["sandbox", "production"] = "sandbox"
+
+
+class BookingStart(BaseModel):
+    offer_id: str
+    route: str | None = None
+    depart_date: date | None = None
+    travellers: int = 1
+    total_amount: float | None = None
+    currency: str | None = None
+    environment: Literal["sandbox", "production"] = "sandbox"
+    trip_id: str | None = None
+    offer_snapshot: dict[str, object] = {}
+
+
+class BookingVerify(BaseModel):
+    accept_price_change: bool = False
+
+
+class Passenger(BaseModel):
+    """One passenger. Sent straight to the CLI and never persisted."""
+
+    given_name: str
+    surname: str
+    date_of_birth: str
+    gender: Literal["male", "female"] | None = None
+    nationality: str | None = None
+    passport_number: str | None = None
+    passport_expiry: str | None = None
+    passenger_type: Literal["adult", "child", "infant"] = "adult"
+    email: str | None = None
+    phone: str | None = None
+
+
+class BookingOrder(BaseModel):
+    passengers: list[Passenger]
+    seat_policy: str | None = None
+
+
+@app.get(f"{settings.api_prefix}/flights/atlas/status", tags=["flights"])
+async def atlas_status() -> dict[str, object]:
+    """Is the Atlas CLI installed, authorised, and in which environment?"""
+    return await booking_flow.atlas_status()
+
+
+@app.post(f"{settings.api_prefix}/flights/atlas/environment", tags=["flights"])
+async def atlas_set_environment(request: EnvironmentRequest) -> dict[str, object]:
+    """Switch Atlas between sandbox and production."""
+    try:
+        return await booking_flow.set_environment(request.environment)
+    except booking_flow.BookingFlowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post(f"{settings.api_prefix}/flights/atlas/authorize", tags=["flights"])
+async def atlas_authorize() -> dict[str, object]:
+    """Begin browser authorisation; returns the URL to open."""
+    try:
+        return await booking_flow.begin_authorization()
+    except booking_flow.BookingFlowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post(f"{settings.api_prefix}/flights/atlas/authorize/poll", tags=["flights"])
+async def atlas_authorize_poll() -> dict[str, object]:
+    try:
+        return await booking_flow.poll_authorization()
+    except booking_flow.BookingFlowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post(f"{settings.api_prefix}/flights/booking/start", tags=["flights"])
+async def booking_start(request: BookingStart) -> dict[str, object]:
+    """Open a booking for a chosen offer."""
+    return await booking_flow.start(
+        offer_id=request.offer_id,
+        route=request.route,
+        depart_date=request.depart_date,
+        travellers=request.travellers,
+        total_amount=request.total_amount,
+        currency=request.currency,
+        environment=request.environment,
+        trip_id=request.trip_id,
+        offer_snapshot=dict(request.offer_snapshot),
+    )
+
+
+@app.post(f"{settings.api_prefix}/flights/booking/{{booking_row_id}}/verify", tags=["flights"])
+async def booking_verify(booking_row_id: str, request: BookingVerify) -> dict[str, object]:
+    """Re-price and confirm. A price increase stops here unless accepted."""
+    try:
+        return await booking_flow.verify(
+            booking_row_id, accept_price_change=request.accept_price_change
+        )
+    except booking_flow.BookingFlowError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+
+
+@app.post(f"{settings.api_prefix}/flights/booking/{{booking_row_id}}/order", tags=["flights"])
+async def booking_order(booking_row_id: str, request: BookingOrder) -> dict[str, object]:
+    """Create the order. Passenger details are not stored."""
+    try:
+        return await booking_flow.create_order(
+            booking_row_id,
+            [p.model_dump(exclude_none=True) for p in request.passengers],
+            seat_policy=request.seat_policy,
+        )
+    except booking_flow.BookingFlowError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+
+
+@app.post(f"{settings.api_prefix}/flights/booking/{{booking_row_id}}/pay", tags=["flights"])
+async def booking_pay(booking_row_id: str) -> dict[str, object]:
+    """Pay from the Atlas balance. A confirmation ID is single-use."""
+    try:
+        return await booking_flow.pay(booking_row_id)
+    except booking_flow.BookingFlowError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+
+
+@app.get(f"{settings.api_prefix}/flights/booking/{{booking_row_id}}", tags=["flights"])
+async def booking_get(booking_row_id: str) -> dict[str, object]:
+    record = await bookings.get(booking_row_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return record
+
+
+@app.post(f"{settings.api_prefix}/flights/booking/{{booking_row_id}}/status", tags=["flights"])
+async def booking_status(booking_row_id: str) -> dict[str, object]:
+    """Poll ticketing (up to 120s), or query the order later."""
+    try:
+        return await booking_flow.status(booking_row_id)
+    except booking_flow.BookingFlowError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+
+
+# --------------------------------------------------------------------------- #
+# History - past searches and bookings
+# --------------------------------------------------------------------------- #
+
+
+@app.get(f"{settings.api_prefix}/history/searches", tags=["history"])
+async def history_searches(limit: int = 50, scope: str | None = None) -> list[dict[str, object]]:
+    """Past runs, newest first."""
+    return await history.list_entries(limit=limit, scope=scope)
+
+
+@app.get(f"{settings.api_prefix}/history/searches/{{entry_id}}", tags=["history"])
+async def history_search(entry_id: str) -> dict[str, object]:
+    """One past run including its full result, so it can be reopened."""
+    entry = await history.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="History entry not found")
+    return entry
+
+
+@app.delete(f"{settings.api_prefix}/history/searches/{{entry_id}}", tags=["history"])
+async def history_delete(entry_id: str) -> dict[str, object]:
+    if not await history.delete_entry(entry_id):
+        raise HTTPException(status_code=404, detail="History entry not found")
+    return {"deleted": True}
+
+
+@app.get(f"{settings.api_prefix}/history/bookings", tags=["history"])
+async def history_bookings(limit: int = 50) -> list[dict[str, object]]:
+    """Flight bookings, newest first."""
+    return await bookings.history(limit=limit)

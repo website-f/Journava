@@ -55,11 +55,14 @@ class VisaAgent(BaseAgent):
             response = await llm.complete(
                 [
                     {"role": "system", "content": VISA_SYSTEM},
-                    {"role": "user", "content": VISA_USER.format(
-                        destination=destination,
-                        country_data=json.dumps(country) if country else "{}",
-                        duration=duration,
-                    )},
+                    {
+                        "role": "user",
+                        "content": VISA_USER.format(
+                            destination=destination,
+                            country_data=json.dumps(country) if country else "{}",
+                            duration=duration,
+                        ),
+                    },
                 ],
                 response_format={"type": "json_object"},
                 agent="visa",

@@ -22,7 +22,9 @@ def _profile_summary(profile: TravelerProfile) -> str:
     """One-paragraph profile summary injected into every agent's context."""
     parts: list[str] = []
     if profile.halal_required:
-        parts.append("Halal dining REQUIRED (restaurants = hard filter, flights = MOML meal code only, hotels = soft preference for halal breakfast).")
+        parts.append(
+            "Halal dining REQUIRED (restaurants = hard filter, flights = MOML meal code only, hotels = soft preference for halal breakfast)."
+        )
     if profile.allergies:
         parts.append(f"Allergies: {', '.join(profile.allergies)}.")
     if profile.cuisine_likes:
@@ -90,10 +92,13 @@ Return JSON with these keys (null for unknown):
 def chief_messages(request: TripRequest, profile: TravelerProfile) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": CHIEF_SYSTEM.format(today=_today())},
-        {"role": "user", "content": CHIEF_USER.format(
-            goal=request.goal,
-            profile=_profile_summary(profile),
-        )},
+        {
+            "role": "user",
+            "content": CHIEF_USER.format(
+                goal=request.goal,
+                profile=_profile_summary(profile),
+            ),
+        },
     ]
 
 
@@ -154,17 +159,22 @@ Return a JSON object:
 def flight_messages(request: TripRequest, profile: TravelerProfile) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": FLIGHT_SYSTEM},
-        {"role": "user", "content": FLIGHT_USER.format(
-            origin=request.origin or profile.home_airport or "not specified",
-            destination=request.destination or "not specified",
-            depart_date=request.start_date or "flexible",
-            return_date=request.end_date or "one-way or flexible",
-            adults=request.travellers,
-            budget=request.budget_amount or "no limit",
-            currency=request.budget_currency or profile.budget_currency,
-            max_connections=profile.max_connections if profile.max_connections is not None else "any",
-            avoid_red_eye=profile.avoid_red_eye,
-        )},
+        {
+            "role": "user",
+            "content": FLIGHT_USER.format(
+                origin=request.origin or profile.home_airport or "not specified",
+                destination=request.destination or "not specified",
+                depart_date=request.start_date or "flexible",
+                return_date=request.end_date or "one-way or flexible",
+                adults=request.travellers,
+                budget=request.budget_amount or "no limit",
+                currency=request.budget_currency or profile.budget_currency,
+                max_connections=profile.max_connections
+                if profile.max_connections is not None
+                else "any",
+                avoid_red_eye=profile.avoid_red_eye,
+            ),
+        },
     ]
 
 
@@ -218,15 +228,18 @@ Return a JSON object:
 def hotel_messages(request: TripRequest, profile: TravelerProfile) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": HOTEL_SYSTEM},
-        {"role": "user", "content": HOTEL_USER.format(
-            destination=request.destination or "not specified",
-            checkin=request.start_date or "flexible",
-            checkout=request.end_date or "flexible",
-            guests=request.travellers,
-            budget=request.budget_amount or "no limit",
-            currency=request.budget_currency or profile.budget_currency,
-            profile=_profile_summary(profile),
-        )},
+        {
+            "role": "user",
+            "content": HOTEL_USER.format(
+                destination=request.destination or "not specified",
+                checkin=request.start_date or "flexible",
+                checkout=request.end_date or "flexible",
+                guests=request.travellers,
+                budget=request.budget_amount or "no limit",
+                currency=request.budget_currency or profile.budget_currency,
+                profile=_profile_summary(profile),
+            ),
+        },
     ]
 
 
@@ -243,9 +256,14 @@ Rules:
 - Be specific: name real places, restaurants, and events — not generic filler.
 - If halal_required is true, ALL dining recommendations MUST be halal-certified
   or clearly Muslim-friendly with a confidence label. Never claim "certified" \
-  without naming a certification body (JAKIM, MUIS, MUI).
+  without naming a certification body (JAKIM, MUIS, MUI). Treat your own label as
+  a hypothesis — it is re-checked against the certification directories after you
+  answer, and an unsupported "certified" will be downgraded.
 - Include safety tips, local customs, and best times to visit.
 - Each attraction/restaurant needs a one-line reasoning for why it's recommended.
+- Report DISAGREEMENT between sources in "contradictions_detected" rather than \
+  averaging it away. "Highly rated, but recent threads complain about midday \
+  queues" is more useful to a traveler than either half alone.
 - Output ONLY valid JSON — no markdown.
 """
 
@@ -282,7 +300,15 @@ Return a JSON object:
   "safety_tips": ["tip 1", "tip 2"],
   "customs": ["custom 1", "custom 2"],
   "best_times": ["morning for X", "evening for Y"],
-  "sentiment_summary": "Overall traveler sentiment in 2-3 sentences"
+  "sentiment_summary": "Overall traveler sentiment in 2-3 sentences",
+  "contradictions_detected": [
+    {{
+      "topic": "e.g. St Mark's Basilica",
+      "claim": "What the popular/official view says",
+      "counter_claim": "What recent traveler reports say instead",
+      "sources": "which sources disagree"
+    }}
+  ]
 }}
 """
 
@@ -293,15 +319,18 @@ def research_messages(
 ) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": RESEARCH_SYSTEM},
-        {"role": "user", "content": RESEARCH_USER.format(
-            destination=request.destination or "the destination",
-            start_date=request.start_date or "flexible",
-            end_date=request.end_date or "flexible",
-            interests=", ".join(profile.interests) if profile.interests else "general",
-            halal_required=profile.halal_required,
-            allergies=", ".join(profile.allergies) if profile.allergies else "none",
-            profile=_profile_summary(profile),
-        )},
+        {
+            "role": "user",
+            "content": RESEARCH_USER.format(
+                destination=request.destination or "the destination",
+                start_date=request.start_date or "flexible",
+                end_date=request.end_date or "flexible",
+                interests=", ".join(profile.interests) if profile.interests else "general",
+                halal_required=profile.halal_required,
+                allergies=", ".join(profile.allergies) if profile.allergies else "none",
+                profile=_profile_summary(profile),
+            ),
+        },
     ]
 
 
@@ -370,7 +399,9 @@ def itinerary_messages(
             options = result.get("options", [])
             summary = result.get("summary", "")
             if options:
-                summary_parts.append(f"[{agent_slug}] {len(options)} options: {json.dumps(options[:3], default=str)}")
+                summary_parts.append(
+                    f"[{agent_slug}] {len(options)} options: {json.dumps(options[:3], default=str)}"
+                )
             elif summary:
                 summary_parts.append(f"[{agent_slug}] {summary}")
 
@@ -381,15 +412,18 @@ def itinerary_messages(
 
     return [
         {"role": "system", "content": ITINERARY_SYSTEM},
-        {"role": "user", "content": ITINERARY_USER.format(
-            destination=request.destination or "the destination",
-            start_date=request.start_date or "Day 1",
-            end_date=request.end_date or f"Day {days}",
-            days=days,
-            pace=pace,
-            items_per_day=items_per_day,
-            travellers=request.travellers,
-            upstream_summary="\n".join(summary_parts) or "No upstream data available yet.",
-            profile=_profile_summary(profile),
-        )},
+        {
+            "role": "user",
+            "content": ITINERARY_USER.format(
+                destination=request.destination or "the destination",
+                start_date=request.start_date or "Day 1",
+                end_date=request.end_date or f"Day {days}",
+                days=days,
+                pace=pace,
+                items_per_day=items_per_day,
+                travellers=request.travellers,
+                upstream_summary="\n".join(summary_parts) or "No upstream data available yet.",
+                profile=_profile_summary(profile),
+            ),
+        },
     ]

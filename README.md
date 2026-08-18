@@ -9,7 +9,8 @@ disruption hits, the agents rebuild the itinerary autonomously instead of just
 answering a prompt.
 
 Built for the **Alibaba Cloud × Atlas Agentic AI Hackathon**, primarily with
-Qoder. The full specification lives in [`JournavaPlan.md`](./JournavaPlan.md).
+Qoder. The full specification lives in [`JournavaPlan.md`](./JournavaPlan.md);
+the working rules and evidence log live in [`.qoder/`](./.qoder/).
 
 ---
 
@@ -17,40 +18,61 @@ Qoder. The full specification lives in [`JournavaPlan.md`](./JournavaPlan.md).
 
 ```
 journava/
-├─ web/       Vite + React 19 PWA (design system, 5 surfaces)
-├─ api/       FastAPI + LangGraph — orchestrator + 8 agents + SSE stream
+├─ web/       Vite + React 19 PWA (design system, 6 surfaces)
+├─ api/       FastAPI + LangGraph — supervisor + 21 agents + SSE stream
 ├─ skills/    atlas-flight-booking/  vendored Atlas skill → atlas-flight CLI
-├─ gnosion/   memory brain (library in-process + MCP service)   [Phase 2]
-├─ camofox/   hardened-Firefox research service                 [Phase 2]
-├─ ops/       docker-compose, .env.example, deploy.sh, Caddy snippet
+├─ gnosion/   memory brain, MCP mode (library mode runs inside api)
+├─ camofox/   hardened-Firefox research service
+├─ ops/       deploy.sh, Caddy snippet, .env.example
+├─ docker-compose.yml   the one compose file
 └─ JournavaPlan.md
 ```
 
-## Architecture at a glance
+## Architecture
 
-- **8 MVP agents** (spec ships these; pitches 20): `chief · flight · hotel ·
-  research · weather_risk · budget · itinerary · memory`.
-- **LangGraph supervisor** fans the parallel agents out, then runs budget →
-  itinerary → memory in sequence. Falls back to `asyncio.gather` when LangGraph
-  is absent.
-- **SSE agent stream** (`/api/v1/events`) drives the Agent Control Center — a
-  replay buffer + 15s heartbeat, in-process, no broker.
-- **Gnosion** is the memory brain (our MIT IP): library mode on the hot path,
-  MCP mode for the brain graph.
+**21 agents** in four phases. The Critic is a real barrier node, so a refinement
+it triggers is visible to everything downstream:
+
+```
+chief ──► 8 core (flight · hotel · research · weather_risk ·
+          │        visa · emergency · crowd · risk_advisory)
+          ▼
+      [ CRITIC ]  scores Tier 1, re-runs the weakest agent
+          ▼
+       9 enrichment (concierge · transport · sustainability · payment ·
+          │           insurance · recommendation · analytics · language · shopping)
+          ▼
+     itinerary ──► budget ──► memory
+```
+
+Every agent runs **exactly once** per plan (plus an optional Critic retry).
+`itinerary` precedes `budget` because budget aggregates the itinerary's items and
+night count.
+
+- **LangGraph supervisor** is the only executor when installed;
+  `_run_without_langgraph` mirrors it exactly when it is not.
+- **SSE agent stream** (`/api/v1/events`) drives the Agent Control Center and the
+  live plan overlay — replay buffer + 15s heartbeat, in-process, no broker. The
+  frontend holds **one** connection and shares it.
+- **Gnosion** is the memory brain (our MIT IP): memory heads for facts,
+  a classifier head for preference learning. `/health` reports which backend is
+  live so a fallback store never passes as the real thing.
 - **Preference scoping (§7.5):** preference present → narrow scope; absent →
   search globally. Flights are the exception — halal never filters flights, it
   adds an `MOML` meal code and nudges ranking.
-- **Halal confidence** is always labelled: `certified | muslim_friendly |
-  unverified` — never claim "certified" without a certification source.
+- **Halal confidence is evidence-based.** The LLM's label is a hypothesis;
+  `tools/halal.py` re-derives it from JAKIM / MUIS / HalalTrip. Claims are
+  downgraded when nothing corroborates them, and never upgraded to `certified`
+  without a certification body.
 
 ## Quick start (local dev)
 
 ```bash
-# 1. backend  (no credentials needed to boot; /health reports what's live)
+# 1. backend  (boots with no credentials; /health reports what is live)
 cd api
-uv sync
-uv run uvicorn app.main:app --reload --port 8400
-# → http://localhost:8400/health
+uv sync --extra brain        # --extra brain installs Gnosion; without it memory
+uv run uvicorn app.main:app --reload --port 8400   # falls back in-process
+# → http://localhost:8400/health   ·   docs at /docs
 
 # 2. frontend
 cd ../web
@@ -59,31 +81,51 @@ pnpm dev
 # → http://localhost:5173
 ```
 
+## Tests & checks
+
+```bash
+cd api && uv run pytest -q && uv run ruff check . && uv run ruff format --check .
+cd web && pnpm lint && pnpm build
+```
+
+The API suite runs fully offline — the LLM, every HTTP tool and the brain are
+stubbed — because it asserts orchestration invariants (how many times an agent
+runs, whether the parsed destination reaches it, which way money converts) rather
+than third-party behaviour.
+
 ## Deploy (spec §13)
 
 Behind the shared `/opt/reverse-proxy` (Caddy) — never a second TLS terminator.
 
 ```bash
-cd ops
-cp .env.example .env        # fill in POSTGRES_PASSWORD + the ⭐ keys
-./deploy.sh                 # build + up + health check
-# then register the domain: append ops/Caddyfile.journava.snippet to the proxy
+cp ops/.env.example .env     # fill in POSTGRES_PASSWORD + the ⭐ keys
+./ops/deploy.sh              # build, start, wait for /health, report degradation
 ```
 
-Add `--full` to also start the `gnosion` and `camofox` services (Phase 2).
+Then append `ops/Caddyfile.journava.snippet` to the shared Caddyfile and reload.
+`web` and `api` join the external `proxy` network, which is how Caddy resolves
+them by name. See [`ops/README.md`](./ops/README.md).
+
+Add `--profile full` to also start `gnosion` (MCP mode).
 
 ## Toolchain
 
-| Layer    | Tools                                                      |
-| -------- | --------------------------------------------------------- |
-| web      | Vite 8, React 19, TypeScript 7, Tailwind v4, PWA, Radix, Framer Motion, React Flow, MapLibre |
-| api      | Python 3.12, FastAPI, LangGraph, Pydantic v2, LiteLLM (Qwen hero + fallbacks), httpx, asyncpg, redis |
-| data     | PostgreSQL 16 · Redis 7                                    |
-| package  | pnpm (web) · uv (api)                                      |
+| Layer   | Tools                                                                                        |
+| ------- | -------------------------------------------------------------------------------------------- |
+| web     | Vite 8, React 19, TypeScript 7, Tailwind v4, PWA, Radix, Framer Motion, React Flow, MapLibre |
+| api     | Python 3.12, FastAPI, LangGraph, Pydantic v2, LiteLLM (Qwen hero + fallbacks), httpx, asyncpg |
+| brain   | Gnosion (library + MCP)                                                                      |
+| data    | PostgreSQL 16 · Redis 7                                                                      |
+| package | pnpm (web) · uv (api)                                                                        |
+
+MapLibre and React Flow are code-split out of the initial bundle — the PWA shell
+is 574 KB (182 KB gzip) rather than 1.8 MB. Fonts are self-hosted in
+`web/public/fonts` so the installed app renders offline.
 
 ## Status
 
-**Phase 0 — Scaffold** (this repo): repo structure, compose, DB schema, health
-checks, the full §10 design system, and all Phase-0 backend contracts. Later
-phases wire the real tools, the reflexion loop, the disruption recovery, and the
-Qoder Outcomes evidence — see the roadmap in [`JournavaPlan.md`](./JournavaPlan.md) §12.
+All eight tracks are covered and the core loop is wired end to end: real
+planning, real reconciliation, real disruption recovery, and a memory brain that
+grows as it is used. Known gaps are the honest ones from §15 — the Atlas CLI must
+be authenticated interactively before a demo, and hotel inventory is still
+LLM-generated pending sandbox approval.

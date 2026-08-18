@@ -75,17 +75,21 @@ class ItineraryAgent(BaseAgent):
         items: list[ItineraryItem] = []
         for item in raw_items:
             try:
-                items.append(ItineraryItem(
-                    day_index=item.get("day_index", 1),
-                    kind=item.get("kind", "activity"),
-                    title=item.get("title", "Activity"),
-                    starts_at=item.get("starts_at"),
-                    ends_at=item.get("ends_at"),
-                    reasoning=item.get("reasoning"),
-                    cost_amount=Decimal(str(item["cost_amount"])) if item.get("cost_amount") else None,
-                    cost_currency=item.get("cost_currency", request.budget_currency),
-                    details=item.get("details", {}),
-                ))
+                items.append(
+                    ItineraryItem(
+                        day_index=item.get("day_index", 1),
+                        kind=item.get("kind", "activity"),
+                        title=item.get("title", "Activity"),
+                        starts_at=item.get("starts_at"),
+                        ends_at=item.get("ends_at"),
+                        reasoning=item.get("reasoning"),
+                        cost_amount=Decimal(str(item["cost_amount"]))
+                        if item.get("cost_amount")
+                        else None,
+                        cost_currency=item.get("cost_currency", request.budget_currency),
+                        details=item.get("details", {}),
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Skipping malformed itinerary item: %s", exc)
         return items
@@ -102,24 +106,28 @@ class ItineraryAgent(BaseAgent):
 
         items: list[dict[str, Any]] = []
         for day in range(1, days + 1):
-            items.append({
-                "day_index": day,
-                "kind": "activity",
-                "title": f"Day {day}: Explore {destination} (mock data)",
-                "starts_at": "09:00",
-                "ends_at": "12:00",
-                "reasoning": f"Mock itinerary — set DASHSCOPE_API_KEY for real AI-generated plan (pace: {pace}, target {items_per_day}/day)",
-                "cost_amount": 50.0,
-                "cost_currency": request.budget_currency,
-            })
-            items.append({
-                "day_index": day,
-                "kind": "meal",
-                "title": f"Day {day}: Lunch at local restaurant",
-                "starts_at": "12:30",
-                "ends_at": "13:30",
-                "reasoning": "Midday break for local cuisine",
-                "cost_amount": 30.0,
-                "cost_currency": request.budget_currency,
-            })
+            items.append(
+                {
+                    "day_index": day,
+                    "kind": "activity",
+                    "title": f"Day {day}: Explore {destination} (mock data)",
+                    "starts_at": "09:00",
+                    "ends_at": "12:00",
+                    "reasoning": f"Mock itinerary — set DASHSCOPE_API_KEY for real AI-generated plan (pace: {pace}, target {items_per_day}/day)",
+                    "cost_amount": 50.0,
+                    "cost_currency": request.budget_currency,
+                }
+            )
+            items.append(
+                {
+                    "day_index": day,
+                    "kind": "meal",
+                    "title": f"Day {day}: Lunch at local restaurant",
+                    "starts_at": "12:30",
+                    "ends_at": "13:30",
+                    "reasoning": "Midday break for local cuisine",
+                    "cost_amount": 30.0,
+                    "cost_currency": request.budget_currency,
+                }
+            )
         return items

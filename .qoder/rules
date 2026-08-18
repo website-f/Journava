@@ -1,0 +1,68 @@
+# Journava — Qoder project rules
+
+Read `JournavaPlan.md` first. It is the spec; this file is how to work inside it.
+
+## What Journava is
+
+An autonomous multi-agent travel platform. A Chief Agent orchestrates 20
+specialists over a LangGraph supervisor, with Gnosion as long-term memory.
+Backend: FastAPI + LangGraph + LiteLLM (Qwen hero). Frontend: Vite + React 19 PWA.
+
+## Non-negotiable invariants
+
+These are all regressions that already happened once. Breaking one is silent —
+the app keeps working while doing the wrong thing.
+
+1. **Every agent runs exactly once per plan.** The compiled LangGraph is the only
+   executor; `_run_without_langgraph` is its mirror for when the dep is absent.
+   Never let both run. A fan-in must land on **one** node, or that node's
+   successors fire in two supersteps. Asserted by `tests/test_supervisor.py`.
+2. **The Chief's parsed fields must reach the specialists.** `apply_chief_enrichment`
+   folds `enriched` into the request before Tier 1. Without it all 20 agents plan
+   for `destination=None`.
+3. **Tier 3 order is `itinerary → budget → memory`.** Budget aggregates the
+   itinerary's items and night count.
+4. **Preference scoping (§7.5).** Preference present → narrow scope; absent →
+   search globally. Flights are the exception: dietary preferences never filter
+   flight inventory, they only add `MOML` and nudge ranking.
+5. **Halal labels are evidence-based.** The LLM's claim is a hypothesis;
+   `tools/halal.py` re-derives it. Never upgrade to `certified` without a
+   certification body. Downgrading is always allowed.
+6. **Never surface an unverified price as fact.** API is the source of truth for
+   structure, the crawl is discovery. Atlas `verify_price` re-confirms; otherwise
+   flag the option.
+7. **Report degradation honestly.** `/health` names the live memory backend. A
+   fallback store is never presented as Gnosion, and a missing comparison is
+   "not comparable", not zero.
+8. **One compose file**, at the repo root. `web` and `api` join the external
+   `proxy` network. Never terminate TLS in this stack.
+
+## UI rules (§10)
+
+- No native `<select>` → Radix `Select` (it supports groups; use `groups`).
+- No `alert()` / `confirm()` → Sonner toasts + the promise-based `confirm()`.
+- Buttons always show loading + disabled with **no layout shift** (`min-w`).
+- Skeletons for content, not spinners. Empty states get an action.
+- Fonts are self-hosted in `public/fonts` — the PWA must render offline.
+- Heavy deps (MapLibre, React Flow) stay out of the initial bundle. Never
+  re-export `TripMap` from the `ui/` barrel; it drags ~1MB into every chunk.
+- One SSE connection for the whole app (`useAgentStream` is a shared singleton).
+
+## Conventions
+
+- Python: 3.12+, `from __future__ import annotations`, Pydantic v2, ruff
+  (`line-length = 100`), async everywhere, type hints on public functions.
+- A failing tool **degrades** a result; it never breaks a run. Wrap external
+  calls, log, return `None`.
+- Every external call goes through `cached()` — the free tiers only survive with
+  6–24h TTLs. The one exception is a disruption recovery (`bypass_cache`).
+- TS: strict, no `any` in new code, `@/` path alias, tokens via
+  `var(--token)` rather than hard-coded colour values.
+- Comments explain *why*, especially where the obvious approach is wrong.
+
+## Before you finish
+
+```bash
+cd api  && uv run pytest -q && uv run ruff check .
+cd web  && pnpm lint && pnpm build
+```

@@ -10,13 +10,12 @@ publishes a "monitoring" SSE event so the UI can warn the traveler proactively.
 from __future__ import annotations
 
 import logging
-from datetime import date
 from typing import Any
 
 from app.agents.base import BaseAgent
 from app.agents.schemas import AgentResult, TravelerProfile, TripRequest
-from app.tools.open_meteo import forecast, geocode
 from app.tools import gdelt
+from app.tools.open_meteo import forecast, geocode
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +65,9 @@ class WeatherRiskAgent(BaseAgent):
             daily_breakdown: list[dict[str, Any]] = []
             rain_days = 0
         else:
-            weather_summary, risk_level, daily_breakdown, rain_days = self._summarize(forecast_data, destination)
+            weather_summary, risk_level, daily_breakdown, rain_days = self._summarize(
+                forecast_data, destination
+            )
 
         # 3. GDELT global events & threat detection
         self.emit("working", f"GDELT: scanning global events for {destination}")
@@ -178,14 +179,16 @@ class WeatherRiskAgent(BaseAgent):
             if precip >= 60:
                 rain_days += 1
 
-            daily_breakdown.append({
-                "date": dt,
-                "high_c": high,
-                "low_c": low,
-                "precipitation_pct": precip,
-                "weather_code": code,
-                "description": _wmo_code_to_text(code),
-            })
+            daily_breakdown.append(
+                {
+                    "date": dt,
+                    "high_c": high,
+                    "low_c": low,
+                    "precipitation_pct": precip,
+                    "weather_code": code,
+                    "description": _wmo_code_to_text(code),
+                }
+            )
 
         # Determine risk level
         avg_high = round(sum(all_highs) / len(all_highs), 1) if all_highs else 0

@@ -370,6 +370,15 @@ wheels = [
 ]
 
 [[package]]
+name = "gnosion"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/b9/434707ca68a9b88e25b7bdb3f0eb11ec0da799127345943989829bb53bd6/gnosion-0.11.0.tar.gz", hash = "sha256:15cc8bfa23cd9bf6fce4e84edb6eae213083d7ad66c1a07a29e819f965ea5fbc", size = 102910, upload-time = "2026-07-27T03:30:07.36Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fe/93/8eeea23795077773841b8bae616d5f260ef6c30556f7ea5a55bac49ffbae/gnosion-0.11.0-py3-none-any.whl", hash = "sha256:0039b04ff3baaf6a265fa189900185b8f97395c8f67921c1b8de9ede29d6fcdf", size = 99096, upload-time = "2026-07-27T03:30:06.019Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -566,7 +575,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+brain = [
+    { name = "gnosion" },
+]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -576,7 +589,9 @@ dev = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30,<1" },
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "gnosion", marker = "extra == 'brain'", specifier = ">=0.11,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28,<1" },
     { name = "langchain-core", specifier = ">=0.3,<1" },
     { name = "langgraph", specifier = ">=0.3,<1" },
     { name = "litellm", specifier = ">=1.50,<2" },
@@ -590,7 +605,7 @@ requires-dist = [
     { name = "sse-starlette", specifier = ">=2.1,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32,<1" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["brain", "dev"]
 
 [[package]]
 name = "jsonpatch"

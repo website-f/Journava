@@ -1,14 +1,36 @@
-import { Compass, Globe, ShieldAlert, Newspaper, ThumbsUp, ThumbsDown } from "lucide-react";
-import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge } from "@/components/ui";
-import { usePlanStore } from "@/stores/planStore";
-import type { ItineraryItem } from "@/stores/planStore";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  Compass, Globe, ShieldAlert, Newspaper, ThumbsUp, ThumbsDown,
+  TrendingUp, GitCompareArrows, BadgeCheck, ShieldQuestion,
+} from "lucide-react";
+import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge, Skeleton } from "@/components/ui";
+import type { ItineraryItem, PlanOption } from "@/stores/planStore";
+import { useActiveTrip } from "@/hooks/useActiveTrip";
+import { recordOptionOutcome, recordOutcome } from "@/lib/outcomes";
+
+type SocialSignal = {
+  score: number | null;
+  label: string;
+  confidence: string;
+  basis: Record<string, number>;
+};
+
+type Contradiction = {
+  topic: string;
+  claim: string;
+  counter_claim: string;
+  sources: string;
+};
 
 /**
  * Research Board (spec §3.2). Tabbed destination intelligence — Flights, Hotels,
  * Itinerary, and Intelligence. Each pick shows reasoning ("Why this?").
  */
 export function ResearchBoard() {
-  const results = usePlanStore((s) => s.results);
+  // Hydrate from the backend so a reload or a deep link still shows the active
+  // trip, instead of an empty state the store happens not to know about.
+  const { results, loading } = useActiveTrip();
 
   const flights = results?.flight?.options ?? [];
   const hotels = results?.hotel?.options ?? [];
@@ -16,23 +38,36 @@ export function ResearchBoard() {
   const weatherSummary = results?.weather_risk?.summary;
   const researchSummary = results?.research?.summary;
 
+  if (loading) {
+    return (
+      <div className="mx-auto w-full max-w-6xl">
+        <ResearchHeader />
+        <div className="space-y-3">
+          <Skeleton className="h-10 w-full" />
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-32 w-full" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!results) {
     return (
       <div className="mx-auto w-full max-w-6xl">
-        <header className="pt-2 pb-6">
-          <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">
-            Research Board
-          </h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            Destination intelligence — not a chat blob. Each pick shows the reasoning.
-          </p>
-        </header>
+        <ResearchHeader />
         <div className="mt-12">
           <EmptyState
             icon={<Compass className="h-10 w-10" />}
             title="No research runs yet"
             description="Kick off a trip from the Command Center — agents will publish their findings here."
-            action={<Button variant="secondary">Open Command Center</Button>}
+            action={
+              <Button asChild variant="secondary">
+                <Link to="/">Open Command Center</Link>
+              </Button>
+            }
           />
         </div>
       </div>
@@ -41,14 +76,7 @@ export function ResearchBoard() {
 
   return (
     <div className="mx-auto w-full max-w-6xl">
-      <header className="pt-2 pb-6">
-        <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">
-          Research Board
-        </h2>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Destination intelligence — not a chat blob. Each pick shows the reasoning.
-        </p>
-      </header>
+      <ResearchHeader />
 
       <Tabs defaultValue="flights">
         <TabsList>
@@ -154,67 +182,59 @@ export function ResearchBoard() {
               </div>
             )}
 
-            {/* Dining — Halal verification */}
-            {results?.research?.options?.filter(o => o.kind === "restaurant").length > 0 && (
+            {/* Social Signal + contradictions (§3.2) */}
+            <SocialSignalCard
+              signal={results?.research?.data?.social_signal as SocialSignal | undefined}
+              contradictions={
+                (results?.research?.data?.contradictions as Contradiction[] | undefined) ?? []
+              }
+            />
+
+            {/* Dining — halal verification */}
+            {(results?.research?.options ?? []).some((o) => o.kind === "restaurant") && (
               <div className="surface-card p-4">
-                <h4 className="text-sm font-semibold mb-3">Dining — Halal Verification</h4>
+                <h4 className="text-sm font-semibold mb-1">Dining — Halal Verification</h4>
+                <p className="text-[0.65rem] text-[var(--muted)] mb-3">
+                  Labels are re-derived from JAKIM / MUIS / HalalTrip. A claim no
+                  certification body corroborates is shown downgraded, never as certified.
+                </p>
                 <div className="space-y-2">
-                  {results.research.options.filter(o => o.kind === "restaurant").map((opt) => (
-                    <div key={opt.id} className="flex items-start gap-2 py-1.5 border-b border-[var(--border)]/50 last:border-0">
-                      <Badge variant={
-                        opt.halal_confidence === "certified" ? "success" :
-                        opt.halal_confidence === "muslim_friendly" ? "info" : "warning"
-                      }>
-                        {opt.halal_confidence === "certified" ? "Certified" :
-                         opt.halal_confidence === "muslim_friendly" ? "Muslim Friendly" : "Unverified"}
-                      </Badge>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium">{opt.title}</p>
-                        {opt.reasoning && <p className="text-[0.65rem] text-[var(--muted)] italic">{opt.reasoning}</p>}
-                      </div>
-                    </div>
-                  ))}
+                  {results.research.options
+                    .filter((o) => o.kind === "restaurant")
+                    .map((opt) => (
+                      <DiningRow key={opt.id} option={opt} />
+                    ))}
                 </div>
+                {(results.research.warnings ?? []).length > 0 && (
+                  <ul className="mt-3 space-y-1 border-t border-[var(--border)] pt-2">
+                    {results.research.warnings.map((w, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[0.65rem] text-[var(--warning)]">
+                        <ShieldQuestion className="h-3 w-3 shrink-0 mt-0.5" />
+                        {w}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
 
             {/* Attractions with reasoning */}
-            {results?.research?.options?.filter(o => o.kind === "activity").length > 0 && (
+            {(results?.research?.options ?? []).some((o) => o.kind === "activity") && (
               <div className="surface-card p-4">
                 <h4 className="text-sm font-semibold mb-3">Attractions — Why Journava Chose These</h4>
                 <div className="space-y-2">
-                  {results.research.options.filter(o => o.kind === "activity").map((opt) => (
-                    <div key={opt.id} className="py-1.5 border-b border-[var(--border)]/50 last:border-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-medium">{opt.title}</p>
-                        {opt.price_amount != null && (
-                          <span className="text-xs text-[var(--brand-500)] font-semibold shrink-0">
-                            {opt.price_currency ?? "MYR"} {Number(opt.price_amount).toLocaleString()}
-                          </span>
-                        )}
-                      </div>
-                      {opt.reasoning && (
-                        <p className="text-[0.65rem] text-[var(--muted)] italic mt-0.5">&ldquo;{opt.reasoning}&rdquo;</p>
-                      )}
-                    </div>
-                  ))}
+                  {results.research.options
+                    .filter((o) => o.kind === "activity")
+                    .map((opt) => (
+                      <AttractionRow key={opt.id} option={opt} />
+                    ))}
                 </div>
               </div>
             )}
 
-            {/* Outcome feedback */}
-            {(researchSummary || results?.research?.options?.length) && (
-              <div className="surface-card p-4 text-center">
-                <p className="text-xs text-[var(--muted)] mb-2">Was this research helpful?</p>
-                <div className="flex justify-center gap-3">
-                  <button className="flex items-center gap-1 text-xs text-[var(--success)] hover:underline">
-                    <ThumbsUp className="h-3.5 w-3.5" /> Yes
-                  </button>
-                  <button className="flex items-center gap-1 text-xs text-[var(--muted)] hover:underline">
-                    <ThumbsDown className="h-3.5 w-3.5" /> No
-                  </button>
-                </div>
-              </div>
+            {/* Outcome feedback — feeds the §7 ③ flywheel */}
+            {(researchSummary || (results?.research?.options ?? []).length > 0) && (
+              <ResearchFeedback destination={researchSummary ?? "research"} />
             )}
 
             {!weatherSummary && !researchSummary && !results?.research?.options?.length && (
@@ -225,6 +245,278 @@ export function ResearchBoard() {
           </div>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Sub-components
+// --------------------------------------------------------------------------- //
+
+function ResearchHeader() {
+  return (
+    <header className="pt-2 pb-6">
+      <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">
+        Research Board
+      </h2>
+      <p className="mt-1 text-sm text-[var(--muted)]">
+        Destination intelligence — not a chat blob. Each pick shows the reasoning.
+      </p>
+    </header>
+  );
+}
+
+/**
+ * Social Signal + contradiction detection (§3.2).
+ *
+ * The score is labelled Journava-derived on the card itself, because a bare
+ * number next to a place name reads as a rating no matter what the docs say.
+ */
+function SocialSignalCard({
+  signal,
+  contradictions,
+}: {
+  signal?: SocialSignal;
+  contradictions: Contradiction[];
+}) {
+  if (!signal && contradictions.length === 0) return null;
+
+  const score = signal?.score ?? null;
+  const pct = score != null ? Math.round(score * 100) : null;
+
+  return (
+    <div className="surface-card p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <TrendingUp className="h-4 w-4 text-[var(--brand-500)]" />
+        <h4 className="text-sm font-semibold">Social Signal</h4>
+        {signal?.confidence && (
+          <Badge variant={signal.confidence === "medium" ? "info" : "warning"}>
+            {signal.confidence} confidence
+          </Badge>
+        )}
+      </div>
+
+      {pct != null ? (
+        <>
+          <div className="flex items-center gap-3">
+            <div className="h-2 flex-1 rounded-full bg-[var(--border)] overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-[var(--brand-500)] to-[var(--accent)] transition-all duration-500"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="text-sm font-semibold tabular-nums">{pct}</span>
+          </div>
+          <p className="mt-1.5 text-[0.65rem] text-[var(--muted)] italic">
+            {signal?.label}
+          </p>
+          {signal?.basis && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {Object.entries(signal.basis)
+                .filter(([, v]) => v > 0)
+                .map(([key, value]) => (
+                  <Badge key={key}>
+                    {key.replace(/_/g, " ")}: {value.toLocaleString()}
+                  </Badge>
+                ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="text-xs text-[var(--muted)]">
+          Not enough public signal to score this destination yet.
+        </p>
+      )}
+
+      {contradictions.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-[var(--border)]">
+          <div className="flex items-center gap-1.5 mb-2">
+            <GitCompareArrows className="h-3.5 w-3.5 text-[var(--warning)]" />
+            <span className="text-xs font-medium">
+              Sources disagree ({contradictions.length})
+            </span>
+          </div>
+          <ul className="space-y-2">
+            {contradictions.map((c, i) => (
+              <li key={i} className="text-[0.65rem] leading-relaxed">
+                <span className="font-medium">{c.topic}: </span>
+                <span className="text-[var(--muted)]">{c.claim}</span>
+                {c.counter_claim && (
+                  <>
+                    <span className="text-[var(--warning)] font-medium"> — but </span>
+                    <span className="text-[var(--muted)]">{c.counter_claim}</span>
+                  </>
+                )}
+                {c.sources && (
+                  <span className="text-[var(--muted)] italic"> ({c.sources})</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const HALAL_LABEL: Record<string, { text: string; variant: "success" | "info" | "warning" }> = {
+  certified: { text: "Certified", variant: "success" },
+  muslim_friendly: { text: "Muslim Friendly", variant: "info" },
+  unverified: { text: "Unverified", variant: "warning" },
+};
+
+function DiningRow({ option }: { option: PlanOption }) {
+  const evidence = (option.raw?.halal_evidence ?? {}) as {
+    claimed?: string | null;
+    resolved?: string | null;
+    cert_body?: string | null;
+    notes?: string;
+  };
+  const label = HALAL_LABEL[option.halal_confidence ?? "unverified"];
+  const downgraded =
+    Boolean(evidence.claimed) && evidence.claimed !== evidence.resolved;
+
+  return (
+    <div className="flex items-start gap-2 py-1.5 border-b border-[var(--border)]/50 last:border-0">
+      <Badge variant={label.variant}>{label.text}</Badge>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium flex items-center gap-1">
+          {option.title}
+          {evidence.cert_body && (
+            <span className="inline-flex items-center gap-0.5 text-[0.6rem] text-[var(--success)]">
+              <BadgeCheck className="h-3 w-3" />
+              {evidence.cert_body}
+            </span>
+          )}
+        </p>
+        {option.reasoning && (
+          <p className="text-[0.65rem] text-[var(--muted)] italic">{option.reasoning}</p>
+        )}
+        {downgraded && (
+          <p className="text-[0.6rem] text-[var(--warning)] mt-0.5">
+            Claimed “{evidence.claimed}” — downgraded: {evidence.notes || "no certification source"}
+          </p>
+        )}
+      </div>
+      <OptionFeedback option={option} />
+    </div>
+  );
+}
+
+function AttractionRow({ option }: { option: PlanOption }) {
+  return (
+    <div className="py-1.5 border-b border-[var(--border)]/50 last:border-0">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium min-w-0 truncate">{option.title}</p>
+        <div className="flex items-center gap-2 shrink-0">
+          {option.price_amount != null && (
+            <span className="text-xs text-[var(--brand-500)] font-semibold">
+              {option.price_currency ?? "MYR"}{" "}
+              {Number(option.price_amount).toLocaleString()}
+            </span>
+          )}
+          <OptionFeedback option={option} />
+        </div>
+      </div>
+      {option.reasoning && (
+        <p className="text-[0.65rem] text-[var(--muted)] italic mt-0.5">
+          &ldquo;{option.reasoning}&rdquo;
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Per-option thumbs. Each vote trains the brain's preference classifier. */
+function OptionFeedback({ option }: { option: PlanOption }) {
+  const [voted, setVoted] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const vote = async (accepted: boolean) => {
+    if (pending || voted !== null) return;
+    setPending(true);
+    const ok = await recordOptionOutcome(option, accepted);
+    setPending(false);
+    if (ok) setVoted(accepted);
+  };
+
+  if (voted !== null) {
+    return (
+      <span
+        className={`text-[0.6rem] font-medium shrink-0 ${
+          voted ? "text-[var(--success)]" : "text-[var(--muted)]"
+        }`}
+      >
+        {voted ? "Saved ✓" : "Noted"}
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1 shrink-0">
+      <button
+        type="button"
+        aria-label={`Good pick: ${option.title}`}
+        disabled={pending}
+        onClick={() => void vote(true)}
+        className="p-1 rounded-[var(--r-sm)] text-[var(--muted)] transition-colors hover:text-[var(--success)] hover:bg-[color-mix(in_srgb,var(--success)_12%,transparent)] disabled:opacity-40"
+      >
+        <ThumbsUp className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        aria-label={`Poor pick: ${option.title}`}
+        disabled={pending}
+        onClick={() => void vote(false)}
+        className="p-1 rounded-[var(--r-sm)] text-[var(--muted)] transition-colors hover:text-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_12%,transparent)] disabled:opacity-40"
+      >
+        <ThumbsDown className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
+function ResearchFeedback({ destination }: { destination: string }) {
+  const [voted, setVoted] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const vote = async (accepted: boolean) => {
+    if (pending) return;
+    setPending(true);
+    const ok = await recordOutcome("research", { summary: destination }, accepted);
+    setPending(false);
+    if (ok) setVoted(accepted);
+  };
+
+  return (
+    <div className="surface-card p-4 text-center">
+      {voted === null ? (
+        <>
+          <p className="text-xs text-[var(--muted)] mb-2">Was this research helpful?</p>
+          <div className="flex justify-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={pending}
+              onClick={() => void vote(true)}
+            >
+              <ThumbsUp className="h-3.5 w-3.5" /> Yes
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={pending}
+              onClick={() => void vote(false)}
+            >
+              <ThumbsDown className="h-3.5 w-3.5" /> No
+            </Button>
+          </div>
+        </>
+      ) : (
+        <p className="text-xs text-[var(--success)]">
+          Thanks — written to the brain. Your next plan starts from this.
+        </p>
+      )}
     </div>
   );
 }

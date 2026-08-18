@@ -34,7 +34,9 @@ async def geocode(place: str) -> dict[str, Any] | None:
             return results[0] if results else None
 
     try:
-        return await cached(f"open_meteo:geocode:{place.lower()}", fetch, ttl=settings.cache_ttl_long)
+        return await cached(
+            f"open_meteo:geocode:{place.lower()}", fetch, ttl=settings.cache_ttl_long
+        )
     except Exception as exc:  # noqa: BLE001 - a missing forecast never breaks a plan
         logger.warning("Geocode failed for %s: %s", place, exc)
         return None

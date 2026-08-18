@@ -78,9 +78,10 @@ class RiskAdvisoryAgent(BaseAgent):
         country = await rest_countries.country_info(destination)
 
         # 3. Build events summary for LLM
-        events_summary = "\n".join(
-            f"- {e.get('title', 'Unknown')}" for e in news_events[:10]
-        ) or "No recent news events found."
+        events_summary = (
+            "\n".join(f"- {e.get('title', 'Unknown')}" for e in news_events[:10])
+            or "No recent news events found."
+        )
 
         country_info_str = json.dumps(country) if country else "Not available"
 
@@ -89,15 +90,18 @@ class RiskAdvisoryAgent(BaseAgent):
             response = await llm.complete(
                 [
                     {"role": "system", "content": SAFETY_SYSTEM},
-                    {"role": "user", "content": SAFETY_USER.format(
-                        destination=destination,
-                        dates=dates,
-                        events_summary=events_summary,
-                        country_info=country_info_str,
-                        avg_tone=tone_data.get("avg_tone", 0),
-                        num_articles=tone_data.get("num_articles", 0),
-                        threat_keywords=", ".join(keywords) or "none",
-                    )},
+                    {
+                        "role": "user",
+                        "content": SAFETY_USER.format(
+                            destination=destination,
+                            dates=dates,
+                            events_summary=events_summary,
+                            country_info=country_info_str,
+                            avg_tone=tone_data.get("avg_tone", 0),
+                            num_articles=tone_data.get("num_articles", 0),
+                            threat_keywords=", ".join(keywords) or "none",
+                        ),
+                    },
                 ],
                 response_format={"type": "json_object"},
                 agent="risk_advisory",
@@ -120,18 +124,23 @@ class RiskAdvisoryAgent(BaseAgent):
                 warnings.append(f"Suggested safer months: {', '.join(safe_months)}")
         elif safety_level == "caution":
             warnings.append(
-                f"Travel to {destination} requires caution. "
-                f"{assessment.get('advisory_text', '')}"
+                f"Travel to {destination} requires caution. {assessment.get('advisory_text', '')}"
             )
 
-        self.emit("active", f"Safety: {safety_level.upper()}", data={
-            "safety_level": safety_level,
-            "active_threats": assessment.get("active_threats", []),
-        })
+        self.emit(
+            "active",
+            f"Safety: {safety_level.upper()}",
+            data={
+                "safety_level": safety_level,
+                "active_threats": assessment.get("active_threats", []),
+            },
+        )
 
         return AgentResult(
             agent=self.slug,
-            summary=assessment.get("advisory_text", f"Safety assessment for {destination}: {safety_level}"),
+            summary=assessment.get(
+                "advisory_text", f"Safety assessment for {destination}: {safety_level}"
+            ),
             warnings=warnings,
             data={
                 "safety_level": safety_level,

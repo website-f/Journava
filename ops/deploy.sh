@@ -47,25 +47,46 @@ echo "==> Starting services..."
 docker compose -f "$COMPOSE_FILE" up -d
 
 # --- Health check wait --------------------------------------------------------
-echo "==> Waiting for health checks..."
+# /health always returns 200 (it reports degradation in the body rather than the
+# status code), so reachability is the gate here and the body is printed below
+# for the operator to read.
+echo "==> Waiting for the API to serve /health..."
 RETRIES=0
-MAX_RETRIES=30
-until docker compose -f "$COMPOSE_FILE" ps | grep -q "api" && \
-      curl -sf http://localhost:8400/health > /dev/null 2>&1; do
+MAX_RETRIES=60
+until curl -sf http://127.0.0.1:8400/health > /dev/null 2>&1; do
     RETRIES=$((RETRIES + 1))
-    if [ $RETRIES -ge $MAX_RETRIES ]; then
-        echo "ERROR: Services failed to become healthy within ${MAX_RETRIES}s"
-        docker compose -f "$COMPOSE_FILE" logs --tail=30 api
+    if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
+        echo "ERROR: API did not answer /health within ${MAX_RETRIES}s"
+        docker compose -f "$COMPOSE_FILE" ps
+        docker compose -f "$COMPOSE_FILE" logs --tail=40 api
         exit 1
     fi
     sleep 1
 done
 
+HEALTH="$(curl -s http://127.0.0.1:8400/health)"
+
 echo ""
-echo "==> Journava is running!"
-echo "    Web:  http://localhost:8401"
-echo "    API:  http://localhost:8400"
-echo "    Health: $(curl -s http://localhost:8400/health | head -c 200)"
+echo "==> Journava is running"
+echo "    Web:  http://127.0.0.1:8401"
+echo "    API:  http://127.0.0.1:8400"
+echo "    Health: $HEALTH"
+echo ""
+
+# Surface degraded dependencies explicitly — the app boots without any of them,
+# which is convenient but makes it easy to ship a half-wired stack unnoticed.
+for dep in postgres redis gnosion camofox; do
+    case "$HEALTH" in
+        *"\"$dep\":false"*) echo "    ⚠  $dep is NOT available (running degraded)" ;;
+    esac
+done
+
+case "$HEALTH" in
+    *'"memory_backend":"in-process-fallback"'*)
+        echo "    ⚠  memory is the in-process fallback, not Gnosion."
+        echo "       Rebuild the api image with the 'brain' extra for real semantic memory."
+        ;;
+esac
 echo ""
 
 # --- Optional log tail --------------------------------------------------------

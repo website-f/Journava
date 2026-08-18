@@ -1,19 +1,25 @@
 """Research / Travel-Intelligence Agent (spec §4.4).
 
-Real web research via Camofox Browser (stealth headless Firefox with C++
-anti-detection) + LLM synthesis. Three-phase pipeline:
+Four-phase pipeline, ordered by the §9 rule *official API first, permitted public
+pages second, never bypass access controls*:
 
-  Phase A — Camofox crawl: Google, Wikipedia, YouTube, Reddit search macros
-  Phase B — LLM synthesis: structure crawled data into attractions, dining, safety
-  Phase C — Fallback: LLM-only generation, then static mock data
+  Phase A — Official APIs: YouTube Data API + Reddit public JSON (when keyed)
+  Phase B — Camofox crawl: Google / Wikipedia / YouTube / Reddit search macros
+  Phase C — LLM synthesis: structure everything into attractions, dining, safety
+  Phase D — Halal verification: cross-check every dining pick against the
+            certification directories before any confidence label is shown
 
-Camofox uses search macros (@google_search, @youtube_search, @reddit_search,
-@wikipedia_search) that produce accessibility snapshots — token-efficient and
-bypass bot detection via Camoufox's C++ fingerprint spoofing.
+Phase D is the honest part of the halal story (§7.5): an LLM saying "certified"
+is not evidence, so `tools/halal.py` re-derives the label from JAKIM / HalalTrip
+and a claim that cannot be corroborated is downgraded, never passed through.
+
+Also computes the **Social Signal** score and **contradiction detection** from
+§3.2 — both explicitly labelled Journava-derived, not objective measures.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from decimal import Decimal
@@ -23,9 +29,13 @@ from app.agents.base import BaseAgent
 from app.agents.prompts import research_messages
 from app.agents.schemas import AgentResult, Option, Scope, TravelerProfile, TripRequest
 from app.core.llm import LLMUnavailableError, complete
-from app.tools import camofox
+from app.tools import camofox, halal, reddit, youtube
 
 logger = logging.getLogger(__name__)
+
+#: Confidence ranking — a verified label may only move a claim *down* this list
+#: unless a certification body corroborates it.
+_CONFIDENCE_RANK = {"certified": 2, "muslim_friendly": 1, "unverified": 0}
 
 
 class ResearchAgent(BaseAgent):
@@ -53,9 +63,16 @@ class ResearchAgent(BaseAgent):
         interests_str = ", ".join(profile.interests) if profile.interests else "general travel"
 
         # ------------------------------------------------------------------ #
-        # Phase A — Real web crawling via Camofox
+        # Phase A — Official APIs first (§9 rule). Both are optional: a missing
+        # key returns None and the crawl in Phase B covers the same ground.
         # ------------------------------------------------------------------ #
-        crawled_sources: dict[str, str] = {}
+        self.emit("working", f"Querying official APIs for {destination}")
+        api_sources, social = await self._official_apis(destination, profile)
+
+        # ------------------------------------------------------------------ #
+        # Phase B — Web research via Camofox (discovery + verification)
+        # ------------------------------------------------------------------ #
+        crawled_sources: dict[str, str] = dict(api_sources)
 
         if await camofox.available():
             self.emit("working", f"Camofox: crawling Google for {destination}...")
@@ -93,9 +110,23 @@ class ResearchAgent(BaseAgent):
             self.emit("working", f"Camofox unavailable — using LLM generation for {destination}")
 
         # ------------------------------------------------------------------ #
-        # Phase B — LLM synthesis (with crawled data as context)
+        # Phase C — LLM synthesis (with API + crawled data as context)
         # ------------------------------------------------------------------ #
         data = await self._synthesize(request, profile, crawled_sources)
+
+        # ------------------------------------------------------------------ #
+        # Phase D — Halal verification against certification directories
+        # ------------------------------------------------------------------ #
+        warnings: list[str] = []
+        if data.get("dining"):
+            data["dining"], halal_warnings = await self._verify_halal(
+                data["dining"], destination, halal_required=profile.halal_required
+            )
+            warnings.extend(halal_warnings)
+
+        # Social Signal + contradiction detection (§3.2) — Journava-derived.
+        data["social_signal"] = social
+        data["contradictions"] = self._detect_contradictions(data)
 
         # Build option list from attractions + dining (for the Research Board tab)
         options = self._build_options(data, request.budget_currency)
@@ -104,22 +135,218 @@ class ResearchAgent(BaseAgent):
         n_attractions = len(data.get("attractions", []))
         n_dining = len(data.get("dining", []))
         source_label = f"{len(crawled_sources)} live sources" if crawled_sources else "LLM"
-        summary = f"{n_attractions} attractions, {n_dining} dining picks for {destination} (via {source_label})"
+        summary = (
+            f"{n_attractions} attractions, {n_dining} dining picks for "
+            f"{destination} (via {source_label})"
+        )
         if data.get("sentiment_summary"):
             summary += f" — {data['sentiment_summary']}"
+
+        if profile.halal_required:
+            warnings.append(
+                "Halal labels are evidence-based: 'certified' requires a "
+                "certification source, otherwise the pick is downgraded."
+            )
 
         return AgentResult(
             agent=self.slug,
             summary=summary,
             options=options,
             applied_preferences=applied,
-            warnings=(
-                ["Halal results carry a confidence label — never an unverified claim"]
-                if profile.halal_required
-                else []
-            ),
+            warnings=warnings,
             data={**data, "sources_crawled": list(crawled_sources.keys())},
         )
+
+    # ---------------------------------------------------------------------- #
+    # Phase A — official APIs + Social Signal
+    # ---------------------------------------------------------------------- #
+
+    async def _official_apis(
+        self,
+        destination: str,
+        profile: TravelerProfile,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        """Query YouTube + Reddit through their official APIs.
+
+        Returns (source_text_by_name, social_signal). Both APIs are optional —
+        an absent key yields None and the caller carries on.
+        """
+        food_qualifier = "halal food" if profile.halal_required else "food"
+        videos, posts = await asyncio.gather(
+            youtube.search_videos(f"{destination} travel guide {food_qualifier}", max_results=5),
+            reddit.search(f"{destination} travel tips", limit=10),
+        )
+
+        sources: dict[str, str] = {}
+        stats: list[dict[str, Any]] = []
+
+        if videos:
+            stats = await youtube.video_stats([v["video_id"] for v in videos]) or []
+            views = {s["video_id"]: s for s in stats}
+            sources["youtube_api"] = "\n".join(
+                f"- {v['title']} ({v['channel']}, "
+                f"{views.get(v['video_id'], {}).get('view_count', 0):,} views)"
+                for v in videos
+            )
+            self.emit("active", f"YouTube API: {len(videos)} videos")
+
+        if posts:
+            sources["reddit_api"] = "\n".join(
+                f"- r/{p['subreddit']} ({p['score']} pts, {p['num_comments']} comments): "
+                f"{p['title']} — {p['selftext'][:200]}"
+                for p in posts
+            )
+            self.emit("active", f"Reddit API: {len(posts)} threads")
+
+        return sources, self._social_signal(videos or [], stats, posts or [])
+
+    @staticmethod
+    def _social_signal(
+        videos: list[dict[str, Any]],
+        video_stats: list[dict[str, Any]],
+        posts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Journava-derived popularity score in [0, 1] (spec §3.2).
+
+        Explicitly **not** an objective measure — it is a normalised blend of
+        YouTube reach and Reddit discussion volume, surfaced with that caveat so
+        nobody mistakes it for a rating.
+        """
+        total_views = sum(s.get("view_count", 0) for s in video_stats)
+        total_score = sum(p.get("score", 0) for p in posts)
+        total_comments = sum(p.get("num_comments", 0) for p in posts)
+
+        # Log-ish normalisation: 1M views or 5k upvotes saturates the component.
+        video_component = min(1.0, total_views / 1_000_000) if total_views else 0.0
+        reddit_component = min(1.0, total_score / 5_000) if total_score else 0.0
+        chatter_component = min(1.0, total_comments / 2_000) if total_comments else 0.0
+
+        samples = [c for c in (video_component, reddit_component, chatter_component) if c]
+        score = round(sum(samples) / len(samples), 2) if samples else None
+
+        return {
+            "score": score,
+            "label": "Journava-derived, not an objective rating",
+            "basis": {
+                "youtube_videos": len(videos),
+                "youtube_views": total_views,
+                "reddit_threads": len(posts),
+                "reddit_upvotes": total_score,
+                "reddit_comments": total_comments,
+            },
+            "confidence": "low" if len(samples) < 2 else "medium",
+        }
+
+    # ---------------------------------------------------------------------- #
+    # Phase D — halal verification + contradiction detection
+    # ---------------------------------------------------------------------- #
+
+    async def _verify_halal(
+        self,
+        dining: list[dict[str, Any]],
+        destination: str,
+        *,
+        halal_required: bool,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Re-derive every halal label from the certification directories.
+
+        The LLM's claim is treated as a *hypothesis*. `tools/halal.py` checks
+        JAKIM / HalalTrip and heuristics; a claim the directories cannot support
+        is downgraded to what the evidence shows. Nothing is ever upgraded to
+        "certified" without a certification body naming it.
+        """
+        if not dining:
+            return dining, []
+
+        self.emit("working", f"Verifying halal status for {len(dining)} dining picks")
+        checks = await halal.verify_batch(
+            [{"title": d.get("title", ""), "country": destination} for d in dining]
+        )
+
+        warnings: list[str] = []
+        downgraded = 0
+        verified = 0
+
+        for item, check in zip(dining, checks, strict=True):
+            claimed = item.get("halal_confidence")
+            evidence = check.get("confidence", "unverified")
+
+            # Certification bodies are authoritative in both directions.
+            if check.get("cert_body"):
+                resolved = evidence
+                verified += 1
+            else:
+                # No cert source: cap the claim at what evidence supports.
+                claimed_rank = _CONFIDENCE_RANK.get(claimed or "unverified", 0)
+                evidence_rank = _CONFIDENCE_RANK.get(evidence, 0)
+                resolved = claimed if claimed_rank <= evidence_rank else evidence
+                if claimed_rank > evidence_rank:
+                    downgraded += 1
+
+            item["halal_confidence"] = resolved
+            item["halal_evidence"] = {
+                "claimed": claimed,
+                "resolved": resolved,
+                "source": check.get("source"),
+                "cert_body": check.get("cert_body"),
+                "notes": check.get("notes", ""),
+            }
+
+        if downgraded:
+            warnings.append(
+                f"{downgraded} halal claim(s) downgraded — no certification "
+                "source could corroborate them."
+            )
+        if verified:
+            self.emit("active", f"Halal: {verified} corroborated by a certification body")
+        if halal_required and not verified:
+            warnings.append(
+                "No dining pick could be confirmed against JAKIM/MUIS/HalalTrip — "
+                "treat every label as unverified and confirm locally."
+            )
+
+        return dining, warnings
+
+    @staticmethod
+    def _detect_contradictions(data: dict[str, Any]) -> list[dict[str, str]]:
+        """Surface conflicts between sources (spec §3.2).
+
+        "Popular, but recent Reddit complaints about midday queues" is more
+        useful than either signal alone, so disagreement is reported rather than
+        averaged away.
+        """
+        contradictions: list[dict[str, str]] = []
+
+        # The LLM is asked to flag these directly; pass through what it found.
+        for raw in data.get("contradictions_detected") or []:
+            if isinstance(raw, dict) and raw.get("claim"):
+                contradictions.append(
+                    {
+                        "topic": str(raw.get("topic", "general")),
+                        "claim": str(raw["claim"]),
+                        "counter_claim": str(raw.get("counter_claim", "")),
+                        "sources": str(raw.get("sources", "")),
+                    }
+                )
+
+        # A high social signal alongside negative sentiment is itself a conflict.
+        signal = (data.get("social_signal") or {}).get("score")
+        sentiment = (data.get("sentiment_summary") or "").lower()
+        negative = any(
+            word in sentiment
+            for word in ("crowd", "queue", "overrated", "complain", "scam", "avoid")
+        )
+        if signal is not None and signal >= 0.6 and negative:
+            contradictions.append(
+                {
+                    "topic": "popularity vs experience",
+                    "claim": f"High Social Signal ({signal}) — heavily discussed online",
+                    "counter_claim": data.get("sentiment_summary", ""),
+                    "sources": "YouTube/Reddit volume vs traveller sentiment",
+                }
+            )
+
+        return contradictions
 
     # ---------------------------------------------------------------------- #
     # Phase B — LLM synthesis
@@ -138,17 +365,19 @@ class ResearchAgent(BaseAgent):
             # Inject crawled data as additional context if available
             if crawled_sources:
                 crawled_context = self._format_crawled_data(crawled_sources)
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "REAL WEB RESEARCH DATA (use this as your primary source, "
-                        "cross-reference with your knowledge):\n\n"
-                        f"{crawled_context}\n\n"
-                        "Now generate the destination intelligence JSON using the "
-                        "real data above. Attribute specific facts to their source "
-                        "(e.g. reasoning: 'per Wikipedia' or 'per Reddit travelers')."
-                    ),
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "REAL WEB RESEARCH DATA (use this as your primary source, "
+                            "cross-reference with your knowledge):\n\n"
+                            f"{crawled_context}\n\n"
+                            "Now generate the destination intelligence JSON using the "
+                            "real data above. Attribute specific facts to their source "
+                            "(e.g. reasoning: 'per Wikipedia' or 'per Reddit travelers')."
+                        ),
+                    }
+                )
 
             raw_text = await complete(messages, response_format={"type": "json_object"})
             data = json.loads(raw_text)
@@ -159,6 +388,7 @@ class ResearchAgent(BaseAgent):
             data.setdefault("customs", [])
             data.setdefault("best_times", [])
             data.setdefault("sentiment_summary", "")
+            data.setdefault("contradictions_detected", [])
             return data
         except (LLMUnavailableError, json.JSONDecodeError) as exc:
             logger.warning("Research LLM synthesis failed: %s", exc)
@@ -175,16 +405,54 @@ class ResearchAgent(BaseAgent):
         dest = destination or "your destination"
         return {
             "attractions": [
-                {"title": f"Central Market — {dest}", "kind": "market", "reasoning": "Iconic local experience (fallback)", "estimated_cost": 15.00, "cost_currency": "MYR"},
-                {"title": f"Old Town Walking Tour — {dest}", "kind": "landmark", "reasoning": "Covers major historical sites (fallback)", "estimated_cost": 0, "cost_currency": "MYR"},
-                {"title": f"National Museum — {dest}", "kind": "museum", "reasoning": "Best overview of local culture (fallback)", "estimated_cost": 10.00, "cost_currency": "MYR"},
+                {
+                    "title": f"Central Market — {dest}",
+                    "kind": "market",
+                    "reasoning": "Iconic local experience (fallback)",
+                    "estimated_cost": 15.00,
+                    "cost_currency": "MYR",
+                },
+                {
+                    "title": f"Old Town Walking Tour — {dest}",
+                    "kind": "landmark",
+                    "reasoning": "Covers major historical sites (fallback)",
+                    "estimated_cost": 0,
+                    "cost_currency": "MYR",
+                },
+                {
+                    "title": f"National Museum — {dest}",
+                    "kind": "museum",
+                    "reasoning": "Best overview of local culture (fallback)",
+                    "estimated_cost": 10.00,
+                    "cost_currency": "MYR",
+                },
             ],
             "dining": [
-                {"title": f"Local Street Food Hub — {dest}", "cuisine": "Local", "halal_confidence": "muslim_friendly", "reasoning": "Popular with locals (fallback)", "estimated_cost": 20.00, "cost_currency": "MYR"},
-                {"title": f"Riverside Restaurant — {dest}", "cuisine": "Fusion", "halal_confidence": "unverified", "reasoning": "Scenic dining (fallback)", "estimated_cost": 60.00, "cost_currency": "MYR"},
+                {
+                    "title": f"Local Street Food Hub — {dest}",
+                    "cuisine": "Local",
+                    "halal_confidence": "muslim_friendly",
+                    "reasoning": "Popular with locals (fallback)",
+                    "estimated_cost": 20.00,
+                    "cost_currency": "MYR",
+                },
+                {
+                    "title": f"Riverside Restaurant — {dest}",
+                    "cuisine": "Fusion",
+                    "halal_confidence": "unverified",
+                    "reasoning": "Scenic dining (fallback)",
+                    "estimated_cost": 60.00,
+                    "cost_currency": "MYR",
+                },
             ],
-            "safety_tips": ["Keep valuables secure in crowded areas", "Use registered taxi services"],
-            "customs": ["Remove shoes before entering temples/homes", "Tipping is appreciated but not mandatory"],
+            "safety_tips": [
+                "Keep valuables secure in crowded areas",
+                "Use registered taxi services",
+            ],
+            "customs": [
+                "Remove shoes before entering temples/homes",
+                "Tipping is appreciated but not mandatory",
+            ],
             "best_times": ["Early morning for popular attractions", "Evening for street food"],
             "sentiment_summary": f"{dest} research via fallback data. Enable Camofox for live web intelligence.",
         }
@@ -208,26 +476,41 @@ class ResearchAgent(BaseAgent):
         options: list[Option] = []
 
         for item in data.get("attractions", []):
-            options.append(Option(
-                id=f"RSH-A{len(options)+1:03d}",
-                kind="activity",
-                title=item.get("title", "Attraction"),
-                price_amount=Decimal(str(item["estimated_cost"])) if item.get("estimated_cost") else None,
-                price_currency=item.get("cost_currency", currency),
-                reasoning=item.get("reasoning"),
-                raw={"source": "research", "kind": item.get("kind", "attraction")},
-            ))
+            options.append(
+                Option(
+                    id=f"RSH-A{len(options) + 1:03d}",
+                    kind="activity",
+                    title=item.get("title", "Attraction"),
+                    price_amount=Decimal(str(item["estimated_cost"]))
+                    if item.get("estimated_cost")
+                    else None,
+                    price_currency=item.get("cost_currency", currency),
+                    reasoning=item.get("reasoning"),
+                    raw={"source": "research", "kind": item.get("kind", "attraction")},
+                )
+            )
 
         for item in data.get("dining", []):
-            options.append(Option(
-                id=f"RSH-D{len(options)+1:03d}",
-                kind="restaurant",
-                title=item.get("title", "Restaurant"),
-                price_amount=Decimal(str(item["estimated_cost"])) if item.get("estimated_cost") else None,
-                price_currency=item.get("cost_currency", currency),
-                reasoning=item.get("reasoning"),
-                halal_confidence=item.get("halal_confidence"),
-                raw={"source": "research", "cuisine": item.get("cuisine", "")},
-            ))
+            options.append(
+                Option(
+                    id=f"RSH-D{len(options) + 1:03d}",
+                    kind="restaurant",
+                    title=item.get("title", "Restaurant"),
+                    price_amount=Decimal(str(item["estimated_cost"]))
+                    if item.get("estimated_cost")
+                    else None,
+                    price_currency=item.get("cost_currency", currency),
+                    reasoning=item.get("reasoning"),
+                    halal_confidence=item.get("halal_confidence"),
+                    # `verified` here means "a certification body named it", which is
+                    # the only claim strong enough to show without a caveat.
+                    verified=bool((item.get("halal_evidence") or {}).get("cert_body")),
+                    raw={
+                        "source": "research",
+                        "cuisine": item.get("cuisine", ""),
+                        "halal_evidence": item.get("halal_evidence", {}),
+                    },
+                )
+            )
 
         return options

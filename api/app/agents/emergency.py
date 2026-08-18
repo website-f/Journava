@@ -49,10 +49,13 @@ class EmergencyAgent(BaseAgent):
             response = await llm.complete(
                 [
                     {"role": "system", "content": EMERGENCY_SYSTEM},
-                    {"role": "user", "content": EMERGENCY_USER.format(
-                        destination=destination,
-                        country_data=json.dumps(country) if country else "{}",
-                    )},
+                    {
+                        "role": "user",
+                        "content": EMERGENCY_USER.format(
+                            destination=destination,
+                            country_data=json.dumps(country) if country else "{}",
+                        ),
+                    },
                 ],
                 response_format={"type": "json_object"},
                 agent="emergency",

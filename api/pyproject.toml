@@ -22,9 +22,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Gnosion is Journava's own memory brain (§7 ①). It is an extra rather than a
+# hard dependency so the API still boots without it — `gnosion_client` falls back
+# to an in-process store and /health reports `memory_backend` honestly. Install
+# it with `uv sync --extra brain` to get real semantic memory.
+brain = [
+    "gnosion>=0.11,<1",
+]
 dev = [
     "pytest>=8,<9",
     "pytest-asyncio>=0.24,<1",
+    "httpx>=0.28,<1",
     "ruff>=0.8,<1",
 ]
 
@@ -46,6 +54,27 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# E501 is enforced everywhere except where the long lines are single string
+# literals a formatter cannot split: LLM prompt templates, SQL statements, and
+# mock-data copy. Wrapping those by hand hurts readability and invites drift
+# between the prompt as written and the prompt as sent. Real code stays at 100.
+"app/agents/prompts.py" = ["E501"]
+"app/agents/analytics.py" = ["E501"]
+"app/agents/concierge.py" = ["E501"]
+"app/agents/crowd.py" = ["E501"]
+"app/agents/emergency.py" = ["E501"]
+"app/agents/language.py" = ["E501"]
+"app/agents/recommendation.py" = ["E501"]
+"app/agents/sustainability.py" = ["E501"]
+"app/agents/flight.py" = ["E501"]
+"app/agents/hotel.py" = ["E501"]
+"app/agents/itinerary.py" = ["E501"]
+"app/agents/research.py" = ["E501"]
+"app/brain/demo_trip.py" = ["E501"]
+"app/core/llm_providers.py" = ["E501"]
+"app/graph/supervisor.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

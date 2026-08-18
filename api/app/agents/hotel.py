@@ -68,7 +68,9 @@ class HotelAgent(BaseAgent):
     ) -> list[Option]:
         """LLM-generate hotel options, cache via Redis."""
 
-        cache_key = f"hotel:{destination}:{request.start_date}:{request.end_date}:{request.travellers}"
+        cache_key = (
+            f"hotel:{destination}:{request.start_date}:{request.end_date}:{request.travellers}"
+        )
 
         async def producer() -> list[dict[str, Any]]:
             try:
@@ -86,18 +88,22 @@ class HotelAgent(BaseAgent):
         options: list[Option] = []
         for opt in raw_options or []:
             try:
-                options.append(Option(
-                    id=opt.get("id", f"HT{len(options)+1:03d}"),
-                    kind="hotel",
-                    title=opt.get("title", "Hotel"),
-                    price_amount=Decimal(str(opt["price_amount"])) if opt.get("price_amount") else None,
-                    price_currency=opt.get("price_currency", request.budget_currency),
-                    provider=opt.get("provider"),
-                    reasoning=opt.get("reasoning"),
-                    verified=opt.get("verified", False),
-                    last_checked=opt.get("last_checked"),
-                    raw=opt.get("raw", {}),
-                ))
+                options.append(
+                    Option(
+                        id=opt.get("id", f"HT{len(options) + 1:03d}"),
+                        kind="hotel",
+                        title=opt.get("title", "Hotel"),
+                        price_amount=Decimal(str(opt["price_amount"]))
+                        if opt.get("price_amount")
+                        else None,
+                        price_currency=opt.get("price_currency", request.budget_currency),
+                        provider=opt.get("provider"),
+                        reasoning=opt.get("reasoning"),
+                        verified=opt.get("verified", False),
+                        last_checked=opt.get("last_checked"),
+                        raw=opt.get("raw", {}),
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Skipping malformed hotel option: %s", exc)
         return options
@@ -107,7 +113,12 @@ class HotelAgent(BaseAgent):
         """Build 4-bucket hotel ranking."""
         priced = [(o, float(o.price_amount or 0)) for o in options if o.price_amount]
         if not priced:
-            return {"cheapest": None, "best_location": None, "best_value": None, "highest_rated": None}
+            return {
+                "cheapest": None,
+                "best_location": None,
+                "best_value": None,
+                "highest_rated": None,
+            }
 
         priced.sort(key=lambda x: x[1])
         cheapest = priced[0][0].id
@@ -144,7 +155,12 @@ class HotelAgent(BaseAgent):
                 "price_currency": "MYR",
                 "provider": "Mock (no LLM key)",
                 "reasoning": "Best value 4-star near city center (mock data — set DASHSCOPE_API_KEY for real results)",
-                "raw": {"stars": 4, "location": "city center", "amenities": ["wifi", "pool", "halal_breakfast"], "near_transit": True},
+                "raw": {
+                    "stars": 4,
+                    "location": "city center",
+                    "amenities": ["wifi", "pool", "halal_breakfast"],
+                    "near_transit": True,
+                },
             },
             {
                 "id": "HT002",
@@ -153,7 +169,12 @@ class HotelAgent(BaseAgent):
                 "price_currency": "MYR",
                 "provider": "Mock (no LLM key)",
                 "reasoning": "Premium boutique with rooftop, walking distance to attractions (mock data)",
-                "raw": {"stars": 5, "location": "old town", "amenities": ["wifi", "spa", "restaurant"], "near_transit": True},
+                "raw": {
+                    "stars": 5,
+                    "location": "old town",
+                    "amenities": ["wifi", "spa", "restaurant"],
+                    "near_transit": True,
+                },
             },
             {
                 "id": "HT003",
@@ -162,6 +183,11 @@ class HotelAgent(BaseAgent):
                 "price_currency": "MYR",
                 "provider": "Mock (no LLM key)",
                 "reasoning": "Most affordable option, clean and functional (mock data)",
-                "raw": {"stars": 3, "location": "suburb", "amenities": ["wifi"], "near_transit": False},
+                "raw": {
+                    "stars": 3,
+                    "location": "suburb",
+                    "amenities": ["wifi"],
+                    "near_transit": False,
+                },
             },
         ]

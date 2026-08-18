@@ -10,8 +10,8 @@ Tier 2 (enrichment — 9 parallel after critic): concierge, transport, sustainab
 Tier 3 (assembly — 3 sequential): budget, itinerary, memory
 """
 
-from app.agents.base import BaseAgent
 from app.agents.analytics import AnalyticsAgent
+from app.agents.base import BaseAgent
 from app.agents.budget import BudgetAgent
 from app.agents.chief import ChiefAgent
 from app.agents.concierge import ConciergeAgent

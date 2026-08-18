@@ -57,6 +57,11 @@ class TripRequest(BaseModel):
     pace: Literal["relaxed", "balanced", "packed"] | None = None
 
 
+#: Where an option came from. Surfaced as a badge so the traveller can tell a
+#: bookable API fare from something an agent read on a web page (§5).
+OptionSource = Literal["atlas", "amadeus", "camofox", "llm", "mock", "research"]
+
+
 class Option(BaseModel):
     """A single ranked candidate (flight, hotel, activity…)."""
 
@@ -74,6 +79,13 @@ class Option(BaseModel):
     # True when a crawled price has been reconciled against an API (§5).
     verified: bool = False
     last_checked: str | None = None
+    #: Which source produced this option — drives the result badge.
+    source: OptionSource | None = None
+    #: For crawled options, the page the agent actually read. Always shown, so a
+    #: research-derived fare can be checked by the traveller rather than trusted.
+    source_url: str | None = None
+    #: True when this option can be carried into a real booking flow.
+    bookable: bool = False
     raw: dict[str, Any] = Field(default_factory=dict)
 
 

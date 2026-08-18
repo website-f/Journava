@@ -108,8 +108,18 @@ async def tone_analysis(
 
 async def threat_keywords(country: str, *, days: int = 14) -> list[str]:
     """Fetch top threat-related keywords from recent news. Cached 6h."""
-    THREAT_TERMS = ["conflict", "war", "attack", "protest", "earthquake",
-                    "flood", "hurricane", "terror", "unrest", "epidemic"]
+    THREAT_TERMS = [
+        "conflict",
+        "war",
+        "attack",
+        "protest",
+        "earthquake",
+        "flood",
+        "hurricane",
+        "terror",
+        "unrest",
+        "epidemic",
+    ]
     articles = await events(country, country=country, days=days)
     if not articles:
         return []

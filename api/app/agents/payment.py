@@ -27,7 +27,13 @@ class PaymentAgent(BaseAgent):
     name = "Payment"
     role = "Payment methods · card acceptance · tipping"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
         # Get FX rate if available
         rates = await frankfurter.rates("MYR")
@@ -35,12 +41,28 @@ class PaymentAgent(BaseAgent):
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(destination=destination, currency=local_currency)}],
-                response_format={"type": "json_object"}, agent="payment",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": USER.format(destination=destination, currency=local_currency),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                agent="payment",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
-            data = {"cards_accepted": True, "cash_needed": "Some vendors", "tipping_pct": 10, "notes": "Carry some local currency."}
+            data = {
+                "cards_accepted": True,
+                "cash_needed": "Some vendors",
+                "tipping_pct": 10,
+                "notes": "Carry some local currency.",
+            }
 
         fx_rate = rates.get(local_currency, 1.0) if rates else None
-        return AgentResult(agent=self.slug, summary=f"Payment info for {destination}", data={"destination": destination, "fx_rate_myr_to_local": fx_rate, **data})
+        return AgentResult(
+            agent=self.slug,
+            summary=f"Payment info for {destination}",
+            data={"destination": destination, "fx_rate_myr_to_local": fx_rate, **data},
+        )

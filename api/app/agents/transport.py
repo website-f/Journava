@@ -27,18 +27,39 @@ class TransportAgent(BaseAgent):
     name = "Transport"
     role = "Ground transport · inter-city · local transit"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
-        days = (request.end_date - request.start_date).days if request.start_date and request.end_date else 7
+        days = (
+            (request.end_date - request.start_date).days
+            if request.start_date and request.end_date
+            else 7
+        )
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(destination=destination, days=days)}],
-                response_format={"type": "json_object"}, agent="transport",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": USER.format(destination=destination, days=days)},
+                ],
+                response_format={"type": "json_object"},
+                agent="transport",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
-            data = {"airport_transfer": [{"mode": "taxi", "cost_usd": 30, "duration_min": 45}],
-                    "local_transit": {"primary": "taxi/rideshare", "apps": ["Grab"]}, "tips": "Use rideshare apps for convenience."}
+            data = {
+                "airport_transfer": [{"mode": "taxi", "cost_usd": 30, "duration_min": 45}],
+                "local_transit": {"primary": "taxi/rideshare", "apps": ["Grab"]},
+                "tips": "Use rideshare apps for convenience.",
+            }
 
-        return AgentResult(agent=self.slug, summary=f"Transport options for {destination}", data={"destination": destination, **data})
+        return AgentResult(
+            agent=self.slug,
+            summary=f"Transport options for {destination}",
+            data={"destination": destination, **data},
+        )

@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from app.core import vault
 from app.core.cache import cached
 from app.core.settings import settings
 
@@ -78,6 +79,7 @@ async def check_certification(
 
 async def _check_jakim(name: str) -> dict[str, Any] | None:
     """Check JAKIM (Malaysia) halal certification directory."""
+
     async def fetch() -> dict[str, Any] | None:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             # JAKIM e-Halal public search
@@ -108,15 +110,21 @@ async def _check_jakim(name: str) -> dict[str, Any] | None:
 
 async def _check_halaltrip(name: str) -> dict[str, Any] | None:
     """Check HalalTrip for Muslim-friendly restaurants."""
+
     async def fetch() -> dict[str, Any] | None:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            response = await client.get(
-                _HALALTRIP_SEARCH_URL,
-                params={"q": name, "type": "restaurant"},
-            )
+            api_key = await vault.secret_for("halaltrip")
+            params: dict[str, Any] = {"q": name, "type": "restaurant"}
+            if api_key:
+                params["api_key"] = api_key
+            response = await client.get(_HALALTRIP_SEARCH_URL, params=params)
             if response.status_code != 200:
                 return None
-            data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+            data = (
+                response.json()
+                if response.headers.get("content-type", "").startswith("application/json")
+                else {}
+            )
             results = data.get("results", [])
             if results:
                 return {
@@ -141,8 +149,15 @@ def _heuristic_check(name: str, country: str | None) -> dict[str, Any]:
 
     # Common halal-certified chain keywords
     halal_chains = [
-        "nasi kandar", "mamak", "nando's", "marrybrown", "a&w",
-        "kenny rogers", "secret recipe", "oldtown", "teh tarik",
+        "nasi kandar",
+        "mamak",
+        "nando's",
+        "marrybrown",
+        "a&w",
+        "kenny rogers",
+        "secret recipe",
+        "oldtown",
+        "teh tarik",
     ]
     for chain in halal_chains:
         if chain in name_lower:
@@ -175,8 +190,5 @@ async def verify_batch(
     """
     import asyncio
 
-    tasks = [
-        check_certification(r.get("title", ""), country=r.get("country"))
-        for r in restaurants
-    ]
+    tasks = [check_certification(r.get("title", ""), country=r.get("country")) for r in restaurants]
     return await asyncio.gather(*tasks)

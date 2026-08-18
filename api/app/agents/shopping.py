@@ -26,21 +26,49 @@ class ShoppingAgent(BaseAgent):
     name = "Shopping"
     role = "Markets · duty-free · souvenirs · bargaining"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
         budget = str(request.budget_amount) if request.budget_amount else "moderate"
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(destination=destination, budget=budget)}],
-                response_format={"type": "json_object"}, agent="shopping",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": USER.format(destination=destination, budget=budget),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                agent="shopping",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
-            data = {"markets": [], "duty_free": "Check airport duty-free on departure", "must_buy": [], "scam_warnings": ["Always verify prices"]}
+            data = {
+                "markets": [],
+                "duty_free": "Check airport duty-free on departure",
+                "must_buy": [],
+                "scam_warnings": ["Always verify prices"],
+            }
 
         options = [
-            Option(id=f"shop-{i}", kind="activity", title=m.get("name", ""), reasoning=m.get("specialty", ""))
+            Option(
+                id=f"shop-{i}",
+                kind="activity",
+                title=m.get("name", ""),
+                reasoning=m.get("specialty", ""),
+            )
             for i, m in enumerate(data.get("markets", []))
         ]
-        return AgentResult(agent=self.slug, summary=f"Shopping guide for {destination}", options=options, data={"destination": destination, **data})
+        return AgentResult(
+            agent=self.slug,
+            summary=f"Shopping guide for {destination}",
+            options=options,
+            data={"destination": destination, **data},
+        )

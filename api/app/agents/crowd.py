@@ -67,12 +67,15 @@ class CrowdAgent(BaseAgent):
             response = await llm.complete(
                 [
                     {"role": "system", "content": CROWD_SYSTEM},
-                    {"role": "user", "content": CROWD_USER.format(
-                        destination=destination,
-                        dates=dates,
-                        article_count=article_count,
-                        season=season,
-                    )},
+                    {
+                        "role": "user",
+                        "content": CROWD_USER.format(
+                            destination=destination,
+                            dates=dates,
+                            article_count=article_count,
+                            season=season,
+                        ),
+                    },
                 ],
                 response_format={"type": "json_object"},
                 agent="crowd",

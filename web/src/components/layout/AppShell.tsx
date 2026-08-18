@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -11,6 +11,8 @@ import {
   Sun,
   Cpu,
   Download,
+  History as HistoryIcon,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useTheme } from "@/lib/theme";
@@ -18,15 +20,25 @@ import { useIsDesktop, useIsMobile } from "@/hooks/useMediaQuery";
 import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Button } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
+import { AgentStreamColumn, AgentStreamDrawer } from "./AgentStreamPanel";
 
+/**
+ * Primary navigation. `mobile: false` keeps a link out of the bottom tab bar —
+ * eight tabs on a phone is a row of unreadable slivers, so the settings-shaped
+ * surfaces stay desktop-side while remaining reachable by URL.
+ */
 const LINKS = [
-  { to: "/", label: "Command", icon: Home },
-  { to: "/research", label: "Research", icon: Search },
-  { to: "/trip", label: "My Trip", icon: Briefcase },
-  { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/engine", label: "Engine", icon: Cpu },
-  { to: "/profile", label: "Profile", icon: User },
+  { to: "/", label: "Command", icon: Home, mobile: true },
+  { to: "/research", label: "Research", icon: Search, mobile: true },
+  { to: "/trip", label: "My Trip", icon: Briefcase, mobile: true },
+  { to: "/history", label: "History", icon: HistoryIcon, mobile: true },
+  { to: "/agents", label: "Agents", icon: Bot, mobile: true },
+  { to: "/vault", label: "API Vault", icon: KeyRound, mobile: false },
+  { to: "/engine", label: "Engine", icon: Cpu, mobile: false },
+  { to: "/profile", label: "Profile", icon: User, mobile: false },
 ] as const;
+
+const MOBILE_LINKS = LINKS.filter((link) => link.mobile);
 
 /**
  * Responsive shell — spec §10.7.
@@ -52,12 +64,33 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [events]);
 
+  // Scroll progress bar (spec §10.5)
+  const mainRef = useRef<HTMLElement>(null);
+  const updateScrollProgress = useCallback(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const scrolled = el.scrollTop;
+    const scrollable = el.scrollHeight - el.clientHeight;
+    const p = scrollable > 0 ? scrolled / scrollable : 0;
+    el.style.setProperty("--p", String(p));
+  }, []);
+
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", updateScrollProgress, { passive: true });
+    return () => el.removeEventListener("scroll", updateScrollProgress);
+  }, [updateScrollProgress]);
+
   return (
     <div
       className={cn(
-        "min-h-[100dvh] bg-[var(--bg)] text-[var(--text)]",
+        "min-h-[100dvh] max-h-[100dvh] bg-[var(--bg)] text-[var(--text)]",
+        // §10.7: sidebar · main · agent stream on desktop. The stream column
+        // sizes itself (collapsed or expanded), hence `auto` rather than a fixed
+        // track — the main column keeps `1fr` and never overflows.
         isDesktop
-          ? "grid grid-cols-[14rem_1fr] grid-rows-[1fr]"
+          ? "grid grid-cols-[14rem_1fr_auto] grid-rows-[1fr]"
           : "flex flex-col",
       )}
     >
@@ -110,14 +143,30 @@ export function AppShell({ children }: { children: ReactNode }) {
       )}
 
       {/* --- Main content area --- */}
-      <main className="flex-1 overflow-y-auto p-4 md:p-6 min-w-0">
+      <main
+        ref={mainRef}
+        className={cn(
+          "flex-1 overflow-y-auto p-4 md:p-6 min-w-0 relative",
+          // Room for the swipe-up stream tab so it never covers page content.
+          !isDesktop && "pb-20",
+        )}
+      >
+        <div className="scroll-progress" style={{ position: "sticky", top: 0, zIndex: 50 }} />
         {children}
       </main>
 
+      {/* --- Agent stream: right column on desktop, swipe-up drawer on mobile --- */}
+      {isDesktop ? <AgentStreamColumn /> : <AgentStreamDrawer />}
+
       {/* --- Bottom tab bar (mobile) --- */}
       {isMobile && (
-        <nav className="sticky bottom-0 z-40 grid grid-cols-6 border-t border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]">
-          {LINKS.map(({ to, label, icon: Icon }) => {
+        <nav
+          className="sticky bottom-0 z-40 grid border-t border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]"
+          style={{
+            gridTemplateColumns: `repeat(${MOBILE_LINKS.length}, minmax(0, 1fr))`,
+          }}
+        >
+          {MOBILE_LINKS.map(({ to, label, icon: Icon }) => {
             const active = location.pathname === to;
             return (
               <NavLink

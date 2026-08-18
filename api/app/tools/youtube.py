@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from app.core import vault
 from app.core.cache import cached
 from app.core.settings import settings
 
@@ -39,9 +40,9 @@ async def search_videos(
     thumbnail, published_at) or ``None`` when the API key is missing / quota
     exhausted.  Cached for 12 h.
     """
-    api_key = getattr(settings, "youtube_api_key", None)
+    api_key = await vault.secret_for("youtube")
     if not api_key:
-        logger.debug("YouTube API key not configured — skipping video search")
+        logger.debug("No YouTube credential in the vault — skipping video search")
         return None
 
     async def fetch() -> list[dict[str, Any]] | None:
@@ -86,7 +87,7 @@ async def video_stats(video_ids: list[str]) -> list[dict[str, Any]] | None:
 
     Cached for 6 h.  Returns ``None`` on failure.
     """
-    api_key = getattr(settings, "youtube_api_key", None)
+    api_key = await vault.secret_for("youtube")
     if not api_key or not video_ids:
         return None
 

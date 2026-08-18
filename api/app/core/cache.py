@@ -6,8 +6,10 @@ Caching is a hard requirement, not an optimization: the free API tiers in spec
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -17,21 +19,43 @@ logger = logging.getLogger(__name__)
 
 _redis: Any = None
 
+#: When to next attempt a connection after a failure. Without this, `_redis`
+#: staying `None` means every cache read re-dials a dead server — which turns a
+#: missing cache from "slower" into "much slower", the opposite of the point.
+_retry_after: float = 0.0
+_RETRY_BACKOFF_SECONDS = 30.0
+_CONNECT_TIMEOUT_SECONDS = 3.0
+
 
 async def get_redis() -> Any:
     """Lazily create the shared Redis client. Returns None when unreachable."""
-    global _redis
+    global _redis, _retry_after
     if _redis is not None:
         return _redis
+    if time.monotonic() < _retry_after:
+        return None
+
     try:
         from redis.asyncio import from_url
 
-        client = from_url(settings.redis_url, decode_responses=True)
-        await client.ping()
+        client = from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=_CONNECT_TIMEOUT_SECONDS,
+            socket_timeout=_CONNECT_TIMEOUT_SECONDS,
+        )
+        await asyncio.wait_for(client.ping(), timeout=_CONNECT_TIMEOUT_SECONDS)
         _redis = client
+        _retry_after = 0.0
+        logger.info("Redis cache ready")
     except Exception as exc:  # noqa: BLE001 - cache is optional, never fatal
-        logger.warning("Redis unavailable (%s) — running without cache", exc)
         _redis = None
+        _retry_after = time.monotonic() + _RETRY_BACKOFF_SECONDS
+        logger.warning(
+            "Redis unavailable (%s) — running without cache, retrying in %ds",
+            exc,
+            int(_RETRY_BACKOFF_SECONDS),
+        )
     return _redis
 
 
@@ -40,6 +64,12 @@ async def close_redis() -> None:
     if _redis is not None:
         await _redis.aclose()
         _redis = None
+
+
+def reset_backoff() -> None:
+    """Force the next `get_redis()` to retry immediately."""
+    global _retry_after
+    _retry_after = 0.0
 
 
 async def cached(

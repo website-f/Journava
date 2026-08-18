@@ -24,23 +24,50 @@ class RecommendationAgent(BaseAgent):
     name = "Recommendation"
     role = "Personalized picks · based on profile"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
         interests = ", ".join(profile.interests) if profile.interests else "culture, food"
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(
-                    destination=destination, interests=interests, pace=profile.pace, halal=profile.halal_required)}],
-                response_format={"type": "json_object"}, agent="recommendation",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": USER.format(
+                            destination=destination,
+                            interests=interests,
+                            pace=profile.pace,
+                            halal=profile.halal_required,
+                        ),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                agent="recommendation",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
             data = {"activities": []}
 
         options = [
-            Option(id=f"rec-{i}", kind="activity", title=a.get("name", ""),
-                   reasoning=a.get("why", ""), halal_confidence=a.get("halal_confidence"))
+            Option(
+                id=f"rec-{i}",
+                kind="activity",
+                title=a.get("name", ""),
+                reasoning=a.get("why", ""),
+                halal_confidence=a.get("halal_confidence"),
+            )
             for i, a in enumerate(data.get("activities", []))
         ]
-        return AgentResult(agent=self.slug, summary=f"{len(options)} personalized picks for {destination}", options=options, data={"destination": destination, "activities": data.get("activities", [])})
+        return AgentResult(
+            agent=self.slug,
+            summary=f"{len(options)} personalized picks for {destination}",
+            options=options,
+            data={"destination": destination, "activities": data.get("activities", [])},
+        )

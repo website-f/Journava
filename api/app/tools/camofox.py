@@ -14,6 +14,7 @@ A failing crawl degrades the result (returns None); it never breaks the run.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -34,6 +35,64 @@ USER_ID = "journava"
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+
+
+#: Matches URLs inside an accessibility snapshot, so a crawled claim can always
+#: be traced back to the page it came from.
+_URL_PATTERN = re.compile(r"https?://[^\s\)\]\}\"'<>]+")
+
+#: Hosts that are navigation rather than evidence — never cited as a source.
+_NOISE_HOSTS = (
+    "google.com/search",
+    "google.com/preferences",
+    "google.com/intl",
+    "accounts.google.com",
+    "policies.google.com",
+    "support.google.com",
+    "youtube.com/about",
+    "youtube.com/t/",
+    "reddit.com/login",
+    "wikimediafoundation.org",
+    "creativecommons.org",
+    "mediawiki.org",
+)
+
+
+def extract_sources(snapshot: str, *, limit: int = 8) -> list[str]:
+    """Pull the citable URLs out of a snapshot, in order, de-duplicated.
+
+    Research that cannot be checked is not much better than a guess, so every
+    crawl-derived option carries the page it came from.
+    """
+    seen: set[str] = set()
+    urls: list[str] = []
+    for raw in _URL_PATTERN.findall(snapshot or ""):
+        url = raw.rstrip(".,;:!?”’")
+        if url in seen:
+            continue
+        if any(noise in url for noise in _NOISE_HOSTS):
+            continue
+        seen.add(url)
+        urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+async def search_with_sources(
+    query: str,
+    macro: str = "@google_search",
+) -> dict[str, Any] | None:
+    """Run a search macro and return both the snapshot and its source URLs."""
+    snapshot = await search(query, macro=macro)
+    if not snapshot:
+        return None
+    return {
+        "snapshot": snapshot,
+        "sources": extract_sources(snapshot),
+        "macro": macro,
+        "query": query,
+    }
 
 
 async def search(query: str, macro: str = "@google_search") -> str | None:

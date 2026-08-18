@@ -1,17 +1,25 @@
 """Disruption recovery orchestrator (spec §3 "wow flow").
 
-When a flight disruption hits, this module re-runs a subset of agents to
-autonomously rebuild the trip. Each step publishes SSE events so the Agent
-Control Center shows the recovery chain live — this is the "money shot" demo.
+When a disruption hits, this re-runs the affected slice of the graph to rebuild
+the trip autonomously. Every step publishes SSE events so the Agent Control
+Center shows the recovery chain live — the "money shot" demo.
 
-Cascade: Flight (rebook) → Budget (cost impact) → Itinerary (adjust days)
-         → Chief (summarise recovery plan)
+Cascade: Flight (rebook) → Itinerary (adjust days) → Budget (cost impact)
+         → Chief (summarise the recovery plan)
+
+Two things this module has to get right or the demo is theatre:
+
+1. **Fresh inventory.** The recovery search must bypass the Redis cache. Serving
+   the pre-disruption cache returns the cancelled flight as its own replacement,
+   which makes "additional cost RM0" a cache artefact rather than a result.
+2. **Honest cost.** The delta is computed against a comparable option, and a
+   recovery that genuinely costs nothing says so for a reason — because the
+   replacement was found at or below the original fare.
 """
 
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 from typing import Any, Literal
 
 from app.agents import REGISTRY
@@ -20,98 +28,169 @@ from app.core import sse
 
 logger = logging.getLogger(__name__)
 
+DisruptionType = Literal["flight_cancelled", "weather_alert", "budget_exceeded"]
+
+#: Which agent leads recovery for each disruption kind.
+_RECOVERY_LEAD: dict[str, str] = {
+    "flight_cancelled": "flight",
+    "weather_alert": "weather_risk",
+    "budget_exceeded": "budget",
+}
+
+_DISRUPTION_MESSAGE: dict[str, str] = {
+    "flight_cancelled": "Flight cancelled by airline — finding alternatives",
+    "weather_alert": "Severe weather detected — re-routing trip",
+    "budget_exceeded": "Budget threshold breached — adjusting options",
+}
+
 
 async def handle_disruption(
-    disruption_type: Literal["flight_cancelled", "weather_alert", "budget_exceeded"],
+    disruption_type: DisruptionType,
     affected_agent: str,
     original_request: TripRequest,
     profile: TravelerProfile,
     original_results: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run the recovery cascade and return a recovery plan.
-
-    Each agent in the chain emits SSE events so the UI shows live progress.
-    """
+    """Run the recovery cascade and return a recovery plan."""
     agents_activated: list[str] = []
 
     # --- 1. Announce the disruption ---
-    disruption_messages = {
-        "flight_cancelled": "Flight cancelled by airline — finding alternatives",
-        "weather_alert": "Severe weather detected — re-routing trip",
-        "budget_exceeded": "Budget threshold breached — adjusting options",
-    }
-    sse.publish(affected_agent, "error", disruption_messages.get(disruption_type, "Disruption detected"))
+    sse.publish(
+        affected_agent,
+        "error",
+        _DISRUPTION_MESSAGE.get(disruption_type, "Disruption detected"),
+        data={"disruption_type": disruption_type},
+    )
 
-    # --- 2. Re-run Flight Agent (find next available) ---
-    sse.publish("flight", "working", "Searching alternative flights (next available)")
-    agents_activated.append("flight")
+    lead = _RECOVERY_LEAD.get(disruption_type, "flight")
 
-    flight_agent = REGISTRY["flight"]
-    flight_result: AgentResult = await flight_agent(original_request, profile, caused_by="chief")
-    new_flight_data = flight_result.model_dump(mode="json")
+    # --- 2. Re-run the lead agent against *fresh* inventory ---
+    sse.publish(lead, "working", "Searching alternatives (bypassing cache)")
+    agents_activated.append(lead)
 
-    sse.publish("flight", "active", f"Found {len(flight_result.options)} alternative flights")
+    # `bypass_cache` is what makes this a real re-search rather than a replay of
+    # the results that existed before the disruption.
+    lead_result: AgentResult = await REGISTRY[lead](
+        original_request,
+        profile,
+        caused_by="chief",
+        context={**original_results, "bypass_cache": True, "disruption": disruption_type},
+    )
+    new_lead_data = lead_result.model_dump(mode="json")
+    sse.publish(
+        lead,
+        "active",
+        f"Found {len(lead_result.options)} alternative option(s)",
+    )
 
-    # --- 3. Re-run Budget Agent (check cost impact) ---
+    recovery_context: dict[str, Any] = {**original_results, lead: new_lead_data}
+
+    # --- 3. Itinerary first: it produces the items and nights Budget needs ---
+    sse.publish("itinerary", "working", "Adjusting itinerary for the new schedule")
+    agents_activated.append("itinerary")
+    itinerary_result: AgentResult = await REGISTRY["itinerary"](
+        original_request,
+        profile,
+        caused_by=lead,
+        context=recovery_context,
+    )
+    new_itinerary_data = itinerary_result.model_dump(mode="json")
+    recovery_context["itinerary"] = new_itinerary_data
+    sse.publish(
+        "itinerary",
+        "active",
+        f"Itinerary adjusted — {len(itinerary_result.items)} items",
+    )
+
+    # --- 4. Budget: cost impact of the rebuilt trip ---
     sse.publish("budget", "working", "Recalculating budget impact")
     agents_activated.append("budget")
-
-    # Build a context with the new flight results for the budget agent
-    recovery_context = {**original_results, "flight": new_flight_data}
-    budget_agent = REGISTRY["budget"]
-    budget_result: AgentResult = await budget_agent(
-        original_request, profile, caused_by="flight", context=recovery_context,
+    budget_result: AgentResult = await REGISTRY["budget"](
+        original_request,
+        profile,
+        caused_by="itinerary",
+        context=recovery_context,
     )
     new_budget_data = budget_result.model_dump(mode="json")
-
+    recovery_context["budget"] = new_budget_data
     sse.publish("budget", "active", budget_result.summary)
 
-    # --- 4. Re-run Itinerary Agent (adjust affected days) ---
-    sse.publish("itinerary", "working", "Adjusting itinerary for new flight schedule")
-    agents_activated.append("itinerary")
-
-    recovery_context["budget"] = new_budget_data
-    itinerary_agent = REGISTRY["itinerary"]
-    itinerary_result: AgentResult = await itinerary_agent(
-        original_request, profile, caused_by="flight", context=recovery_context,
-    )
-
-    sse.publish("itinerary", "active", f"Itinerary adjusted — {len(itinerary_result.items)} items")
-
-    # --- 5. Chief summarises the recovery plan ---
+    # --- 5. Chief summarises ---
     agents_activated.append("chief")
-
-    # Calculate additional cost
-    original_flight_cost = _extract_min_cost(original_results.get("flight", {}))
-    new_flight_cost = _extract_min_cost(new_flight_data)
-    additional_cost = max(0.0, round(new_flight_cost - original_flight_cost, 2))
     currency = original_request.budget_currency or profile.budget_currency
+    delta = _cost_delta(original_results.get(lead, {}), new_lead_data, currency=currency)
 
-    # --- 6. Publish recovery summary ---
-    if additional_cost == 0:
-        cost_msg = "Recovery plan ready — additional cost RM0"
-    else:
-        cost_msg = f"Recovery plan ready — additional cost {currency} {additional_cost}"
-
-    sse.publish("chief", "active", cost_msg)
+    summary = _summarise(delta, currency)
+    sse.publish("chief", "active", summary, data=delta)
 
     return {
         "disruption_type": disruption_type,
         "recovery_plan": {
-            "flight": new_flight_data,
+            lead: new_lead_data,
+            "itinerary": new_itinerary_data,
             "budget": new_budget_data,
-            "itinerary": itinerary_result.model_dump(mode="json"),
         },
-        "additional_cost": f"{currency} {additional_cost}",
+        "additional_cost": (
+            f"{currency} {delta['additional_cost']:.2f}"
+            if delta["additional_cost"] is not None
+            else "not comparable"
+        ),
+        "cost_detail": delta,
         "agents_activated": agents_activated,
-        "summary": cost_msg,
+        "summary": summary,
     }
 
 
-def _extract_min_cost(flight_result: dict[str, Any]) -> float:
-    """Find the cheapest option price in a flight result."""
-    options = flight_result.get("options", [])
-    if not options:
-        return 0.0
-    prices = [float(o.get("price_amount", 0) or 0) for o in options if o.get("price_amount")]
-    return min(prices) if prices else 0.0
+def _summarise(delta: dict[str, Any], currency: str) -> str:
+    """Phrase the outcome without overclaiming."""
+    additional = delta["additional_cost"]
+    if additional is None:
+        return "Recovery plan ready — cost impact could not be compared"
+    if additional <= 0:
+        saved = abs(additional)
+        if saved > 0:
+            return f"Recovery plan ready — {currency} {saved:.2f} cheaper than the original"
+        return f"Recovery plan ready — no additional cost ({currency} 0.00)"
+    return f"Recovery plan ready — additional cost {currency} {additional:.2f}"
+
+
+def _cost_delta(
+    original: dict[str, Any],
+    replacement: dict[str, Any],
+    *,
+    currency: str,
+) -> dict[str, Any]:
+    """Compare the cheapest comparable option before and after recovery.
+
+    Returns `additional_cost=None` when either side has no priced option — a
+    missing comparison is reported as such rather than silently becoming zero.
+    """
+    before = _cheapest(original)
+    after = _cheapest(replacement)
+
+    if before is None or after is None:
+        return {
+            "original_cost": before,
+            "replacement_cost": after,
+            "additional_cost": None,
+            "currency": currency,
+            "comparable": False,
+        }
+
+    return {
+        "original_cost": round(before, 2),
+        "replacement_cost": round(after, 2),
+        "additional_cost": round(after - before, 2),
+        "currency": currency,
+        "comparable": True,
+    }
+
+
+def _cheapest(result: dict[str, Any]) -> float | None:
+    """Cheapest priced option in a result, or None when nothing is priced."""
+    prices = [
+        float(option["price_amount"])
+        for option in result.get("options", []) or []
+        if option.get("price_amount") is not None
+    ]
+    return min(prices) if prices else None

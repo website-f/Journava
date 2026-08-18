@@ -1,38 +1,29 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2, ShieldAlert, ShieldCheck, Newspaper } from "lucide-react";
-import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, TripMap, confirm } from "@/components/ui";
+import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
+
+// MapLibre is ~1MB; load it only when this page actually renders.
+const TripMap = lazy(() =>
+  import("@/components/ui/TripMap").then((m) => ({ default: m.TripMap })),
+);
 import { api } from "@/lib/api";
 import { usePlanStore } from "@/stores/planStore";
-import type { AgentPlanResult, DisruptionRecovery, ItineraryItem } from "@/stores/planStore";
+import type { AgentPlanResult, CostDetail, DisruptionRecovery, ItineraryItem } from "@/stores/planStore";
 import { useAgentStream } from "@/hooks/useAgentStream";
+import { useActiveTrip } from "@/hooks/useActiveTrip";
+import { agentEntries } from "@/lib/types";
 
 /**
  * My Trip (spec section 3.3) — day-by-day itinerary, budget tracker, weather,
  * and the disruption simulation "money shot".
  */
 export function MyTrip() {
-  const { results, setResults, recovery, setRecovery, recoveryLoading, setRecoveryLoading } = usePlanStore();
+  const { recovery, setRecovery, recoveryLoading, setRecoveryLoading } = usePlanStore();
   const { events } = useAgentStream();
-  const [tripLoading, setTripLoading] = useState(true);
-
-  // Load active trip on mount
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.get<{ trip: Record<string, AgentPlanResult> | null }>("/trip");
-        if (!cancelled && res.trip) {
-          setResults(res.trip);
-        }
-      } catch {
-        // No active trip yet
-      } finally {
-        if (!cancelled) setTripLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [setResults]);
+  // Shared with the Research Board so both surfaces agree on the active trip.
+  const { results, loading: tripLoading } = useActiveTrip();
 
   const handleCancelRecovery = async () => {
     const ok = await confirm({
@@ -52,8 +43,15 @@ export function MyTrip() {
 
   if (tripLoading) {
     return (
-      <div className="mx-auto w-full max-w-5xl flex items-center justify-center min-h-[60vh]">
-        <p className="text-sm text-[var(--muted)]">Loading trip...</p>
+      <div className="mx-auto w-full max-w-5xl">
+        <TripHeader />
+        {/* Skeletons rather than a spinner, so the layout doesn't shift (§10.6). */}
+        <div className="space-y-4">
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-56 w-full" />
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
       </div>
     );
   }
@@ -66,7 +64,12 @@ export function MyTrip() {
           icon={<Briefcase className="h-10 w-10" />}
           title="No active trip"
           description="Once a plan is accepted it becomes your live trip, with day-by-day detail and a budget tracker."
-          action={<Button asChild variant="secondary"><a href="/">Plan a trip</a></Button>}
+          action={
+            // Router link, not <a>: a full page reload would drop the store.
+            <Button asChild variant="secondary">
+              <Link to="/">Plan a trip</Link>
+            </Button>
+          }
         />
       </div>
     );
@@ -83,7 +86,9 @@ export function MyTrip() {
       <TripHeader />
       <TripSummary results={results} />
       <RiskBanner results={results} />
-      <TripMap className="mb-6" />
+      <Suspense fallback={<Skeleton className="mb-6 h-64 w-full" />}>
+        <TripMap className="mb-6" />
+      </Suspense>
       <BudgetCard results={results} />
       <WeatherCard results={results} />
       <ItinerarySection results={results} />
@@ -131,8 +136,11 @@ function RiskBanner({ results }: { results: Record<string, AgentPlanResult> }) {
   const data = risk.data;
   const safetyLevel = data.safety_level as string | undefined;
   const threats = data.active_threats as string[] | undefined;
-  const safeMonths = data.predicted_safe_months as string[] | undefined;
-  const summary = data.summary as string | undefined;
+  // Field names must match what risk_advisory.py actually emits: `safe_months`
+  // in `data`, and the advisory text as the result's top-level `summary`.
+  const safeMonths = data.safe_months as string[] | undefined;
+  const summary = risk.summary;
+  const recommendedAction = data.recommended_action as string | undefined;
 
   if (!safetyLevel || safetyLevel === "safe") {
     // Show a subtle "safe" indicator
@@ -154,10 +162,18 @@ function RiskBanner({ results }: { results: Record<string, AgentPlanResult> }) {
       <div className="flex items-start gap-3">
         <ShieldAlert className={`h-6 w-6 shrink-0 ${isDangerous ? "text-[var(--danger)]" : "text-[var(--warning)]"}`} />
         <div className="min-w-0">
-          <p className={`text-sm font-semibold ${isDangerous ? "text-[var(--danger)]" : "text-[var(--warning)]"}`}>
+          <p className={`text-sm font-semibold ${isDangerous ? "text-[var(--danger)]" : "text-[var(--warning)]"} flex items-center gap-2`}>
             {isDangerous ? "Travel Risk Alert" : "Travel Caution"}
+            {recommendedAction && (
+              <Badge variant={recommendedAction === "avoid" ? "danger" : "warning"}>
+                {recommendedAction}
+              </Badge>
+            )}
           </p>
           {summary && <p className="text-sm mt-1">{summary}</p>}
+          {(risk.warnings ?? []).map((w, i) => (
+            <p key={i} className="text-xs text-[var(--muted)] mt-1">{w}</p>
+          ))}
           {threats && threats.length > 0 && (
             <div className="mt-2">
               <p className="text-xs font-medium text-[var(--muted)]">Active threats:</p>
@@ -395,6 +411,72 @@ function ItinerarySection({ results }: { results: Record<string, AgentPlanResult
   );
 }
 
+/**
+ * Before/after cost of a recovery.
+ *
+ * `comparable: false` means one side had no priced option, so there is no delta
+ * to report — showing "RM 0" there would claim a free recovery that was never
+ * actually measured.
+ */
+function CostComparison({
+  detail,
+  fallback,
+}: {
+  detail?: CostDetail;
+  fallback: string;
+}) {
+  if (!detail) {
+    return (
+      <p className="text-sm text-[var(--muted)]">
+        <strong>Additional cost:</strong> {fallback}
+      </p>
+    );
+  }
+
+  if (!detail.comparable) {
+    return (
+      <p className="text-sm text-[var(--warning)]">
+        <strong>Cost impact:</strong> not comparable — one of the two options had
+        no published price.
+      </p>
+    );
+  }
+
+  const delta = detail.additional_cost ?? 0;
+  const tone =
+    delta > 0 ? "text-[var(--danger)]" : delta < 0 ? "text-[var(--success)]" : "text-[var(--muted)]";
+
+  return (
+    <div className="grid grid-cols-3 gap-2 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_6%,transparent)] p-3">
+      <div>
+        <p className="text-[0.65rem] text-[var(--muted)]">Was</p>
+        <p className="text-sm font-semibold tabular-nums">
+          {detail.currency} {Number(detail.original_cost ?? 0).toLocaleString()}
+        </p>
+      </div>
+      <div>
+        <p className="text-[0.65rem] text-[var(--muted)]">Now</p>
+        <p className="text-sm font-semibold tabular-nums">
+          {detail.currency} {Number(detail.replacement_cost ?? 0).toLocaleString()}
+        </p>
+      </div>
+      <div>
+        <p className="text-[0.65rem] text-[var(--muted)]">Difference</p>
+        <p className={`text-sm font-semibold tabular-nums ${tone}`}>
+          {delta > 0 ? "+" : delta < 0 ? "−" : ""}
+          {detail.currency} {Math.abs(delta).toLocaleString()}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const DISRUPTION_OPTIONS = [
+  { value: "flight_cancelled", label: "Flight Cancelled", icon: Plane, agent: "flight" },
+  { value: "weather_alert", label: "Severe Weather", icon: Cloud, agent: "weather_risk" },
+  { value: "budget_exceeded", label: "Budget Exceeded", icon: TrendingUp, agent: "budget" },
+] as const;
+
 function DisruptionSection({
   recovery,
   setRecovery,
@@ -406,12 +488,16 @@ function DisruptionSection({
   setRecoveryLoading: (l: boolean) => void;
   recoveryLoading: boolean;
 }) {
+  const [disruptionType, setDisruptionType] = useState<string>("flight_cancelled");
+
+  const selected = DISRUPTION_OPTIONS.find((d) => d.value === disruptionType) ?? DISRUPTION_OPTIONS[0];
+
   const handleDisruption = async () => {
     setRecoveryLoading(true);
     try {
       const res = await api.post<DisruptionRecovery>("/disruption", {
-        disruption_type: "flight_cancelled",
-        affected_agent: "flight",
+        disruption_type: disruptionType,
+        affected_agent: selected.agent,
       });
       setRecovery(res);
       toast.success(res.summary);
@@ -431,32 +517,61 @@ function DisruptionSection({
           <p className="text-sm text-[var(--muted)] mb-4">
             Watch your agents autonomously recover: rebook flights, recalculate budget, adjust itinerary.
           </p>
-          <Button variant="danger" onClick={handleDisruption} loading={recoveryLoading} disabled={recoveryLoading}>
-            <Zap className="h-4 w-4" />
-            Simulate Flight Cancelled
-          </Button>
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <div className="w-52">
+              <Select
+                value={disruptionType}
+                onValueChange={setDisruptionType}
+                options={DISRUPTION_OPTIONS.map((d) => ({ value: d.value, label: d.label }))}
+                aria-label="Disruption type"
+              />
+            </div>
+            <Button variant="danger" onClick={handleDisruption} loading={recoveryLoading} disabled={recoveryLoading}>
+              <Zap className="h-4 w-4" />
+              Simulate {selected.label}
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="surface-card p-6 border-l-4 border-[var(--success)]">
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
             <Badge variant="success">Recovery Complete</Badge>
             <span className="text-sm font-semibold">{recovery.summary}</span>
           </div>
-          <div className="space-y-2 text-sm text-[var(--muted)]">
-            <p><strong>Additional cost:</strong> {recovery.additional_cost}</p>
-            <p><strong>Agents activated:</strong> {recovery.agents_activated.join(" → ")}</p>
-          </div>
-          {/* Show new flight options from recovery */}
-          {recovery.recovery_plan.flight?.options?.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-sm font-medium mb-2">New Flight Options</h4>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {recovery.recovery_plan.flight.options.slice(0, 2).map((opt) => (
-                  <OptionCard key={opt.id} option={opt} />
-                ))}
+
+          {/* Before/after, so "no additional cost" is shown to be a real
+              comparison rather than an absent one. */}
+          <CostComparison detail={recovery.cost_detail} fallback={recovery.additional_cost} />
+
+          <p className="mt-3 text-sm text-[var(--muted)]">
+            <strong>Agents activated:</strong>{" "}
+            {recovery.agents_activated.join(" → ")}
+          </p>
+
+          {agentEntries(recovery.recovery_plan)
+            .filter(([, result]) => (result.options?.length ?? 0) > 0)
+            .map(([slug, result]) => (
+              <div className="mt-4" key={slug}>
+                <h4 className="text-sm font-medium mb-2 capitalize">
+                  New {slug.replace(/_/g, " ")} options
+                </h4>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {result.options.slice(0, 2).map((opt) => (
+                    <OptionCard key={opt.id} option={opt} />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            ))}
+
+          <div className="mt-4 flex justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setRecovery(null)}
+            >
+              Simulate another
+            </Button>
+          </div>
         </div>
       )}
     </section>

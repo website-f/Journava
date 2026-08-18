@@ -1,83 +1,143 @@
 /**
- * Plan store — holds the latest plan results so Command Center + Research Board
- * can both read from it without re-fetching. Uses zustand (spec §6).
+ * Plan store — the result of the most recent run, shared across surfaces.
  *
- * Phase 2: also holds the active trip (loaded from GET /trip) and disruption
- * recovery state for the My Trip page.
+ * Keyed by scope as well as holding the "current" result: a flights-only lookup
+ * should not overwrite the full trip the traveller is working from, so the two
+ * live side by side and each surface reads the one it cares about.
  */
 
 import { create } from "zustand";
+import type { PlanResults, ScopeMeta } from "@/lib/types";
 
-export interface PlanOption {
-  id: string;
-  kind: "flight" | "hotel" | "activity" | "restaurant" | "transport";
-  title: string;
-  price_amount: number | null;
-  price_currency: string | null;
-  provider: string | null;
-  booking_url: string | null;
-  reasoning: string | null;
-  halal_confidence: "certified" | "muslim_friendly" | "unverified" | null;
-  verified: boolean;
-  last_checked: string | null;
-  raw: Record<string, unknown>;
-}
+export type {
+  AgentPlanResult,
+  ItineraryItem,
+  PlanOption,
+  PlanResults,
+  ScopeMeta,
+} from "@/lib/types";
 
-export interface ItineraryItem {
-  day_index: number;
-  kind: "flight" | "hotel" | "activity" | "meal" | "transport";
-  title: string;
-  starts_at: string | null;
-  ends_at: string | null;
-  reasoning: string | null;
-  cost_amount: number | null;
-  cost_currency: string | null;
-  details: Record<string, unknown>;
-}
-
-export interface AgentPlanResult {
-  agent: string;
-  summary: string;
-  options: PlanOption[];
-  items: ItineraryItem[];
-  applied_preferences: Record<string, string>;
-  warnings: string[];
-  data: Record<string, unknown>;
+export interface CostDetail {
+  original_cost: number | null;
+  replacement_cost: number | null;
+  additional_cost: number | null;
+  currency: string;
+  /** False when either side had no priced option — the delta is not a real zero. */
+  comparable: boolean;
 }
 
 export interface DisruptionRecovery {
   disruption_type: string;
-  recovery_plan: Record<string, AgentPlanResult>;
+  recovery_plan: PlanResults;
   additional_cost: string;
+  cost_detail: CostDetail;
   agents_activated: string[];
   summary: string;
 }
 
+/** Extra inputs the scoped Command Center collects alongside the goal. */
+export interface PlanInputs {
+  goal: string;
+  start_date: string;
+  end_date: string;
+  travellers: number;
+  budget_amount: string;
+  budget_currency: string;
+  pace: "relaxed" | "balanced" | "packed";
+}
+
+export const EMPTY_INPUTS: PlanInputs = {
+  goal: "",
+  start_date: "",
+  end_date: "",
+  travellers: 1,
+  budget_amount: "",
+  budget_currency: "MYR",
+  pace: "balanced",
+};
+
 export interface PlanState {
-  results: Record<string, AgentPlanResult> | null;
+  /** The most recent result, whatever its scope. */
+  results: PlanResults | null;
+  /** Results per scope, so a narrow lookup never clobbers the full trip. */
+  byScope: Record<string, PlanResults>;
+  activeScope: string | null;
+  lastDurationMs: number | null;
+  lastHistoryId: string | null;
+
   loading: boolean;
   error: string | null;
-  /** Disruption recovery result (shown in My Trip). */
+
+  inputs: PlanInputs;
+
   recovery: DisruptionRecovery | null;
   recoveryLoading: boolean;
-  setResults: (results: Record<string, AgentPlanResult>) => void;
+
+  setResults: (results: PlanResults, scope?: string, meta?: {
+    durationMs?: number;
+    historyId?: string | null;
+  }) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  setInputs: (patch: Partial<PlanInputs>) => void;
+  resetInputs: (goal?: string) => void;
   setRecovery: (recovery: DisruptionRecovery | null) => void;
   setRecoveryLoading: (loading: boolean) => void;
+  resultsFor: (scope: string) => PlanResults | null;
   clear: () => void;
 }
 
-export const usePlanStore = create<PlanState>((set) => ({
+function scopeOf(results: PlanResults, fallback?: string): string {
+  const meta = results._scope as ScopeMeta | undefined;
+  return meta?.slug ?? fallback ?? "full_trip";
+}
+
+export const usePlanStore = create<PlanState>((set, get) => ({
   results: null,
+  byScope: {},
+  activeScope: null,
+  lastDurationMs: null,
+  lastHistoryId: null,
   loading: false,
   error: null,
+  inputs: { ...EMPTY_INPUTS },
   recovery: null,
   recoveryLoading: false,
-  setResults: (results) => set({ results, loading: false, error: null }),
+
+  setResults: (results, scope, meta) => {
+    const slug = scopeOf(results, scope);
+    set((state) => ({
+      results,
+      activeScope: slug,
+      byScope: { ...state.byScope, [slug]: results },
+      lastDurationMs: meta?.durationMs ?? state.lastDurationMs,
+      lastHistoryId: meta?.historyId ?? state.lastHistoryId,
+      loading: false,
+      error: null,
+    }));
+  },
+
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error, loading: false }),
+
+  setInputs: (patch) =>
+    set((state) => ({ inputs: { ...state.inputs, ...patch } })),
+  resetInputs: (goal = "") => set({ inputs: { ...EMPTY_INPUTS, goal } }),
+
   setRecovery: (recovery) => set({ recovery, recoveryLoading: false }),
   setRecoveryLoading: (recoveryLoading) => set({ recoveryLoading }),
-  clear: () => set({ results: null, loading: false, error: null, recovery: null }),
+
+  resultsFor: (scope) => get().byScope[scope] ?? null,
+
+  clear: () =>
+    set({
+      results: null,
+      byScope: {},
+      activeScope: null,
+      recovery: null,
+      loading: false,
+      error: null,
+      lastDurationMs: null,
+      lastHistoryId: null,
+    }),
 }));

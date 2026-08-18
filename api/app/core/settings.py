@@ -42,6 +42,22 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     openrouter_api_key: str | None = None
 
+    # --- Local fallback model (keyless) ---
+    # Tried only after every configured cloud provider has failed, so a demo
+    # never dies on an expired key when Ollama is running locally.
+    ollama_fallback_enabled: bool = True
+    ollama_fallback_model: str = "ollama/llama3.2"
+    # Probed directly before any call: reaching an absent Ollama through LiteLLM
+    # costs ~9s, a TCP connect costs milliseconds.
+    ollama_host: str = "localhost"
+    ollama_port: int = 11434
+
+    # --- API Vault ---
+    # Fernet key encrypting every stored provider credential. Set this in
+    # production: without it a key is derived from the database URL, so rotating
+    # the DB password would make the whole vault unreadable.
+    vault_encryption_key: str | None = None
+
     # --- Brain (Gnosion) ---
     gnosion_brain_path: str = "data/journava.gnosion"
     gnosion_mcp_url: str | None = None

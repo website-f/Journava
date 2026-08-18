@@ -19,12 +19,23 @@ const VARIANT_STYLES: Record<BadgeVariant, string> = {
 interface BadgeProps {
   variant?: BadgeVariant;
   className?: string;
+  /**
+   * Native tooltip. A badge is often an abbreviation ("from .env", "sandbox"),
+   * and the long form has to live somewhere the reader can reach.
+   */
+  title?: string;
   children: ReactNode;
 }
 
-export function Badge({ variant = "default", className, children }: BadgeProps) {
+export function Badge({
+  variant = "default",
+  className,
+  title,
+  children,
+}: BadgeProps) {
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex items-center gap-1 rounded-[var(--r-pill)] px-2 py-0.5",
         "text-[0.65rem] font-medium uppercase tracking-wide whitespace-nowrap",

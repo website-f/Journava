@@ -31,8 +31,10 @@ async def country_info(name: str) -> dict[str, Any] | None:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await client.get(
                 f"{BASE_URL}/name/{name}",
-                params={"fields": "name,capital,region,subregion,currencies,languages,"
-                        "timezones,population,area,borders,flag,cca2,cca3"},
+                params={
+                    "fields": "name,capital,region,subregion,currencies,languages,"
+                    "timezones,population,area,borders,flag,cca2,cca3"
+                },
             )
             if response.status_code == 404:
                 return None

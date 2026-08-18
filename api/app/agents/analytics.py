@@ -25,20 +25,54 @@ class AnalyticsAgent(BaseAgent):
     name = "Analytics"
     role = "Trip statistics · optimization · insights"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
-        days = (request.end_date - request.start_date).days if request.start_date and request.end_date else 7
+        days = (
+            (request.end_date - request.start_date).days
+            if request.start_date and request.end_date
+            else 7
+        )
         budget = str(request.budget_amount) if request.budget_amount else "flexible"
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(
-                    destination=destination, days=days, budget=budget, currency=request.budget_currency)}],
-                response_format={"type": "json_object"}, agent="analytics",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": USER.format(
+                            destination=destination,
+                            days=days,
+                            budget=budget,
+                            currency=request.budget_currency,
+                        ),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                agent="analytics",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
-            data = {"insights": [{"metric": "Daily budget", "value": f"{budget} {request.budget_currency}", "tip": "Track spending daily"}],
-                    "optimization_score": 0.7, "summary": "Monitor and adjust as needed."}
+            data = {
+                "insights": [
+                    {
+                        "metric": "Daily budget",
+                        "value": f"{budget} {request.budget_currency}",
+                        "tip": "Track spending daily",
+                    }
+                ],
+                "optimization_score": 0.7,
+                "summary": "Monitor and adjust as needed.",
+            }
 
-        return AgentResult(agent=self.slug, summary=data.get("summary", f"Analytics for {destination}"), data={"destination": destination, **data})
+        return AgentResult(
+            agent=self.slug,
+            summary=data.get("summary", f"Analytics for {destination}"),
+            data={"destination": destination, **data},
+        )

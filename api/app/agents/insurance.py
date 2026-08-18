@@ -26,9 +26,19 @@ class InsuranceAgent(BaseAgent):
     name = "Insurance"
     role = "Travel insurance · coverage recommendations"
 
-    async def run(self, request: TripRequest, profile: TravelerProfile, *, context: dict[str, Any] | None = None) -> AgentResult:
+    async def run(
+        self,
+        request: TripRequest,
+        profile: TravelerProfile,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> AgentResult:
         destination = request.destination or "unknown"
-        days = (request.end_date - request.start_date).days if request.start_date and request.end_date else 7
+        days = (
+            (request.end_date - request.start_date).days
+            if request.start_date and request.end_date
+            else 7
+        )
         safety = "safe"
         if context:
             risk_data = context.get("risk_advisory", {}).get("data", {})
@@ -36,15 +46,33 @@ class InsuranceAgent(BaseAgent):
 
         try:
             resp = await llm.complete(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER.format(destination=destination, safety=safety, days=days)}],
-                response_format={"type": "json_object"}, agent="insurance",
+                [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": USER.format(destination=destination, safety=safety, days=days),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                agent="insurance",
             )
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
-            data = {"recommended_coverage": ["medical", "trip_cancellation"], "estimated_cost_usd": 40, "notes": "Compare providers before purchasing."}
+            data = {
+                "recommended_coverage": ["medical", "trip_cancellation"],
+                "estimated_cost_usd": 40,
+                "notes": "Compare providers before purchasing.",
+            }
 
         warnings = []
         if safety in ("caution", "dangerous"):
-            warnings.append(f"Higher-risk destination — comprehensive medical + evacuation coverage recommended.")
+            warnings.append(
+                "Higher-risk destination — comprehensive medical + evacuation coverage recommended."
+            )
 
-        return AgentResult(agent=self.slug, summary=f"Insurance coverage for {destination} ({safety})", warnings=warnings, data={"destination": destination, "safety_level": safety, **data})
+        return AgentResult(
+            agent=self.slug,
+            summary=f"Insurance coverage for {destination} ({safety})",
+            warnings=warnings,
+            data={"destination": destination, "safety_level": safety, **data},
+        )

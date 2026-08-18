@@ -1,227 +1,156 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Mic, Paperclip, Image, Video, Sparkles, Plane, Building2, Calendar } from "lucide-react";
-import { Button, LoadingOverlay, Select, OptionCard, Badge, confirm } from "@/components/ui";
-import { useAsync } from "@/lib/useAsync";
+import { LoadingOverlay, Skeleton, confirm } from "@/components/ui";
 import { api } from "@/lib/api";
-import { usePlanStore } from "@/stores/planStore";
-import type { AgentPlanResult } from "@/stores/planStore";
 import { useAgentStream } from "@/hooks/useAgentStream";
-
-const PACE_OPTIONS = [
-  { value: "relaxed", label: "Relaxed — 1–2 things a day" },
-  { value: "balanced", label: "Balanced" },
-  { value: "packed", label: "Packed — see everything" },
-];
+import { usePlanStore } from "@/stores/planStore";
+import type { PlanResponse, Scope } from "@/lib/types";
+import { ScopePicker } from "./ScopePicker";
+import { ScopedConsole } from "./ScopedConsole";
+import { ScopedResults } from "./ScopedResults";
 
 /**
- * Command Center (spec §3.1) — one universal input, multimodal affordances,
- * quick actions. Phase 1 wires the full plan call and displays results.
+ * Command Center — the main surface (spec §3.1), in three states:
+ *
+ *   pick   →  choose what you want (all 10 presets)
+ *   ask    →  a focused console for that scope
+ *   answer →  only the panels that scope produced
+ *
+ * The scope lives in the URL (`?scope=flights_only`), so a mode is linkable and
+ * a reload doesn't dump the traveller back at the picker.
  */
+
+type Phase = "pick" | "ask" | "answer";
+
 export function CommandCenter() {
-  const [goal, setGoal] = useState("");
-  const [pace, setPace] = useState("balanced");
-  const { results, setResults, setLoading, setError } = usePlanStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { events } = useAgentStream();
 
-  const handleCancel = async () => {
+  const [scopes, setScopes] = useState<Scope[] | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const results = usePlanStore((s) => s.results);
+  const activeScope = usePlanStore((s) => s.activeScope);
+  const setResults = usePlanStore((s) => s.setResults);
+  const setError = usePlanStore((s) => s.setError);
+  const inputs = usePlanStore((s) => s.inputs);
+  const resetInputs = usePlanStore((s) => s.resetInputs);
+
+  const scopeSlug = searchParams.get("scope");
+  const scope = scopes?.find((entry) => entry.slug === scopeSlug) ?? null;
+
+  useEffect(() => {
+    api
+      .get<Scope[]>("/scopes")
+      .then(setScopes)
+      .catch(() => {
+        setScopes([]);
+        toast.error("Could not load the planning modes.");
+      });
+  }, []);
+
+  // Show the answer only when it belongs to the scope currently selected.
+  const showingAnswer = Boolean(scope && results && activeScope === scope.slug);
+  const phase: Phase = !scope ? "pick" : showingAnswer ? "answer" : "ask";
+
+  const pickScope = (next: Scope) => {
+    resetInputs();
+    setSearchParams({ scope: next.slug });
+  };
+
+  const backToPicker = () => {
+    setSearchParams({});
+  };
+
+  const runPlan = async () => {
+    if (!scope) return;
+    setRunning(true);
+    try {
+      const payload: Record<string, unknown> = {
+        goal: inputs.goal.trim(),
+        scope: scope.slug,
+        travellers: inputs.travellers,
+        budget_currency: inputs.budget_currency,
+      };
+      // Only send what the traveller actually filled in — an empty string would
+      // fail date validation, and a zero budget is not the same as "no budget".
+      if (inputs.start_date) payload.start_date = inputs.start_date;
+      if (inputs.end_date) payload.end_date = inputs.end_date;
+      if (inputs.budget_amount) payload.budget_amount = Number(inputs.budget_amount);
+      if (scope.inputs.includes("pace")) payload.pace = inputs.pace;
+
+      const response = await api.post<PlanResponse>("/plan", payload);
+      setResults(response.results, response.scope, {
+        durationMs: response.duration_ms,
+        historyId: response.history_id,
+      });
+
+      const seconds = (response.duration_ms / 1000).toFixed(1);
+      toast.success(`${scope.label} done in ${seconds}s`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Planning failed";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const cancel = async () => {
     const ok = await confirm({
-      title: "Cancel planning?",
-      body: "Agents are still working. This will stop further tiers from running.",
-      confirmText: "Cancel plan",
+      title: "Cancel this run?",
+      body: "Agents already working will finish, but nothing further will start.",
+      confirmText: "Cancel run",
     });
     if (!ok) return;
     try {
       await api.post("/cancel");
-      toast.info("Plan cancelled.");
+      toast.info("Cancellation requested.");
     } catch {
-      // ignore
+      // The run may already have finished; nothing useful to say here.
     }
   };
 
-  const plan = useAsync(async () => {
-    const ok = await confirm({
-      title: "Start planning?",
-      body: "Journava will wake the Chief Agent and its specialists to build your trip.",
-      confirmText: "Plan it",
-    });
-    if (!ok) return;
-
-    setLoading(true);
-    try {
-      const res = await api.post<{ results: Record<string, AgentPlanResult> }>("/plan", { goal, pace });
-      setResults(res.results);
-      toast.success("Plan complete — check the Research Board for details.");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Planning failed";
-      setError(msg);
-      toast.error(msg);
-    }
-  });
+  if (scopes === null) {
+    return (
+      <div className="mx-auto w-full max-w-5xl space-y-4">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-32 w-full" />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-32 w-full" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
-      <LoadingOverlay
-        open={plan.loading}
-        events={events}
-        onCancel={handleCancel}
-      />
+    <>
+      <LoadingOverlay open={running} events={events} onCancel={cancel} />
 
-      <header className="pt-6 pb-8 text-center">
-        <h2 className="font-[family-name:var(--font-display)] text-3xl md:text-4xl tracking-tight">
-          Where to next?
-        </h2>
-        <p className="mt-2 text-[var(--muted)]">
-          Travel, run by agents. Describe the trip — they handle the rest.
-        </p>
-      </header>
+      {phase === "pick" && <ScopePicker scopes={scopes} onPick={pickScope} />}
 
-      {/* Universal input */}
-      <div className="surface-card p-4">
-        <textarea
-          value={goal}
-          onChange={(event) => setGoal(event.target.value)}
-          rows={3}
-          placeholder="Plan a 7-day Venice trip for 2, budget RM8,000, we love food + culture, avoid crowds, max 1 connection."
-          className="w-full resize-none bg-transparent text-[var(--text)] placeholder:text-[var(--muted)] outline-none"
+      {phase === "ask" && scope && (
+        <ScopedConsole
+          scope={scope}
+          onBack={backToPicker}
+          onRun={() => void runPlan()}
+          running={running}
         />
-        <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-1">
-            {[Mic, Paperclip, Image, Video].map((Icon, index) => (
-              <Button
-                key={index}
-                variant="ghost"
-                size="icon"
-                aria-label="Add input"
-                onClick={() => toast.info("Multimodal capture arrives in Phase 2.")}
-              >
-                <Icon className="h-[18px] w-[18px]" />
-              </Button>
-            ))}
-          </div>
-          <Button
-            loading={plan.loading}
-            disabled={goal.trim().length === 0}
-            onClick={() => void plan.run()}
-          >
-            <Sparkles className="h-4 w-4" />
-            Plan my trip
-          </Button>
-        </div>
-      </div>
-
-      {/* Preference peek — full profile lives in §3.5 */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-2 block text-sm font-medium">Trip pace</span>
-          <Select
-            value={pace}
-            onValueChange={setPace}
-            options={PACE_OPTIONS}
-            aria-label="Trip pace"
-          />
-        </label>
-      </div>
-
-      {/* Quick actions */}
-      <div className="mt-8 flex flex-wrap gap-2">
-        {["Flights", "Hotels", "Explore", "Budget", "Trips"].map((action) => (
-          <Button key={action} variant="secondary" size="sm">
-            {action}
-          </Button>
-        ))}
-      </div>
-
-      {/* --- Plan Results --- */}
-      {results && <PlanResults results={results} />}
-    </div>
-  );
-}
-
-// --------------------------------------------------------------------------- //
-// Plan Results sub-component
-// --------------------------------------------------------------------------- //
-
-function PlanResults({ results }: { results: Record<string, AgentPlanResult> }) {
-  const flights = results.flight?.options ?? [];
-  const hotels = results.hotel?.options ?? [];
-  const itinerary = results.itinerary?.items ?? [];
-  const chiefSummary = results.chief?.summary;
-
-  return (
-    <div className="mt-10 space-y-8">
-      {chiefSummary && (
-        <div className="surface-card p-4 border-l-4 border-[var(--brand-500)]">
-          <p className="text-sm font-medium">{chiefSummary}</p>
-        </div>
       )}
 
-      {/* Flights */}
-      {flights.length > 0 && (
-        <section>
-          <h3 className="flex items-center gap-2 text-lg font-semibold mb-3">
-            <Plane className="h-5 w-5 text-[var(--brand-500)]" />
-            Flights
-            <Badge variant="brand">{flights.length}</Badge>
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {flights.map((opt) => (
-              <OptionCard key={opt.id} option={opt} />
-            ))}
-          </div>
-        </section>
+      {phase === "answer" && scope && results && (
+        <ScopedResults
+          scope={scope}
+          results={results}
+          onAskAgain={() => usePlanStore.setState({ results: null, activeScope: null })}
+          onBack={backToPicker}
+          onOpenTrip={() => navigate("/trip")}
+        />
       )}
-
-      {/* Hotels */}
-      {hotels.length > 0 && (
-        <section>
-          <h3 className="flex items-center gap-2 text-lg font-semibold mb-3">
-            <Building2 className="h-5 w-5 text-[var(--brand-500)]" />
-            Hotels
-            <Badge variant="brand">{hotels.length}</Badge>
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {hotels.map((opt) => (
-              <OptionCard key={opt.id} option={opt} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Itinerary */}
-      {itinerary.length > 0 && (
-        <section>
-          <h3 className="flex items-center gap-2 text-lg font-semibold mb-3">
-            <Calendar className="h-5 w-5 text-[var(--brand-500)]" />
-            Itinerary
-            <Badge variant="brand">{itinerary.length} items</Badge>
-          </h3>
-          <ol className="space-y-2">
-            {itinerary.map((item, idx) => (
-              <li key={idx} className="surface-card p-3 flex items-start gap-3">
-                <span className="shrink-0 h-7 w-7 rounded-full bg-[var(--brand-500)] text-white text-xs font-bold grid place-items-center">
-                  {item.day_index}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <div className="mt-0.5 flex items-center gap-2 text-xs text-[var(--muted)]">
-                    <Badge>{item.kind}</Badge>
-                    {item.starts_at && <span>{item.starts_at}{item.ends_at ? ` – ${item.ends_at}` : ""}</span>}
-                    {item.cost_amount != null && (
-                      <span className="font-medium text-[var(--brand-500)]">
-                        {item.cost_currency ?? "MYR"} {Number(item.cost_amount).toLocaleString()}
-                      </span>
-                    )}
-                  </div>
-                  {item.reasoning && (
-                    <p className="mt-1 text-xs text-[var(--muted)] italic">{item.reasoning}</p>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-    </div>
+    </>
   );
 }

@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from app.core import vault
 from app.core.cache import cached
 from app.core.settings import settings
 
@@ -39,10 +40,12 @@ async def _get_token() -> str | None:
     """Obtain or refresh the OAuth2 bearer token (cached in memory)."""
     global _token, _token_expiry  # noqa: PLW0603
 
-    api_key = getattr(settings, "amadeus_client_id", None)
-    api_secret = getattr(settings, "amadeus_client_secret", None)
+    resolved = await vault.resolve("amadeus")
+    api_secret = resolved.get("secret") if resolved else None
+    api_key = (resolved.get("extra") or {}).get("client_id") if resolved else None
+    api_key = api_key or getattr(settings, "amadeus_client_id", None)
     if not api_key or not api_secret:
-        logger.debug("Amadeus credentials not configured — skipping")
+        logger.debug("No Amadeus credential in the vault — skipping")
         return None
 
     if _token and time.time() < _token_expiry - 60:
@@ -124,12 +127,8 @@ async def search_flights(
                         "departure": first.get("departure", {}),
                         "arrival": last.get("arrival", {}),
                         "stops": len(segs) - 1,
-                        "price_amount": float(
-                            offer.get("price", {}).get("total", 0)
-                        ),
-                        "price_currency": offer.get("price", {}).get(
-                            "currency", currency
-                        ),
+                        "price_amount": float(offer.get("price", {}).get("total", 0)),
+                        "price_currency": offer.get("price", {}).get("currency", currency),
                         "booking_class": first.get("cabin", "ECONOMY"),
                         "source": "amadeus",
                     }
