@@ -19,6 +19,10 @@ dependencies = [
     "asyncpg>=0.30,<1",
     "sse-starlette>=2.1,<3",
     "python-dotenv>=1.0,<2",
+    # Fernet encryption for the API Vault / LLM-provider keys (core/vault.py).
+    # Was imported but never declared — a saved provider hit ImportError that the
+    # 503 handler reported as "database unavailable".
+    "cryptography>=43,<47",
 ]
 
 [project.optional-dependencies]
