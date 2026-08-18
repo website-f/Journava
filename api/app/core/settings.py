@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     gnosion_mcp_url: str | None = None
 
     # --- Services ---
-    camofox_url: str = "http://camofox:3000"
+    camofox_url: str = "http://camofox:9377"
     atlas_flight_cli: str = "atlas-flight"
     atlas_sandbox: bool = True
 

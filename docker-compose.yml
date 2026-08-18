@@ -1,6 +1,6 @@
 # Journava — Docker Compose (spec §11)
 #
-# Services: postgres, redis, api (FastAPI), web (Nginx + Vite build)
+# Services: postgres, redis, camofox, api (FastAPI), web (Nginx + Vite build)
 # Internal ports: 8400–8405 (reserved block per spec)
 #
 # Usage:
@@ -57,14 +57,29 @@ services:
     environment:
       DATABASE_URL: postgresql://journava:${POSTGRES_PASSWORD}@postgres:5432/journava
       REDIS_URL: redis://redis:6379/0
+      CAMOFOX_URL: http://camofox:9377
       ENVIRONMENT: prod
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      camofox:
+        condition: service_started
     ports:
       - "8400:8400"
+
+  # ---------------------------------------------------------------------------
+  # Camofox — stealth headless browser for real web research (spec §8)
+  # ---------------------------------------------------------------------------
+  camofox:
+    build:
+      context: ./camofox
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    shm_size: "1gb"  # Firefox needs real shared memory
+    ports:
+      - "9377:9377"  # exposed for debugging; remove in production
 
   # ---------------------------------------------------------------------------
   # Web — Nginx serves the PWA build, proxies /api to the API service

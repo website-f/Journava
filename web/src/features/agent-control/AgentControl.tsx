@@ -17,16 +17,33 @@ import type { AgentStatus } from "@/lib/sse";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { BrainGraph } from "./BrainGraph";
 
-/** The 8 agents shipped for the MVP (spec section 4). */
+/** All 20 agents — the full vision roster (spec section 4). */
 const AGENTS = [
-  { slug: "chief", name: "Chief", role: "Orchestration & reconciliation" },
-  { slug: "flight", name: "Flight", role: "Atlas skill · search → ticket" },
-  { slug: "hotel", name: "Hotel", role: "Compare & auto-switch" },
-  { slug: "research", name: "Research", role: "Camofox · YouTube · Reddit" },
-  { slug: "weather_risk", name: "Weather / Risk", role: "Open-Meteo · GDELT" },
-  { slug: "budget", name: "Budget", role: "Cost tracking · FX" },
-  { slug: "itinerary", name: "Itinerary", role: "Day-by-day assembly" },
-  { slug: "memory", name: "Memory", role: "Gnosion read / write" },
+  // Chief
+  { slug: "chief", name: "Chief", role: "Orchestration & reconciliation", tier: 0 },
+  // Tier 1 — core intelligence (8 parallel)
+  { slug: "flight", name: "Flight", role: "Atlas skill · search → ticket", tier: 1 },
+  { slug: "hotel", name: "Hotel", role: "Compare & auto-switch", tier: 1 },
+  { slug: "research", name: "Research", role: "Camofox · YouTube · Reddit", tier: 1 },
+  { slug: "weather_risk", name: "Weather", role: "Open-Meteo forecast", tier: 1 },
+  { slug: "visa", name: "Visa", role: "Entry requirements · documents", tier: 1 },
+  { slug: "emergency", name: "Emergency", role: "Embassy · hospitals · crisis", tier: 1 },
+  { slug: "crowd", name: "Crowd", role: "Tourist density · peak seasons", tier: 1 },
+  { slug: "risk_advisory", name: "Risk Advisory", role: "GDELT · threat detection", tier: 1 },
+  // Tier 2 — enrichment (9 parallel, after critic)
+  { slug: "concierge", name: "Concierge", role: "Reservations · events", tier: 2 },
+  { slug: "transport", name: "Transport", role: "Ground transit · routes", tier: 2 },
+  { slug: "sustainability", name: "Sustainability", role: "Carbon · eco options", tier: 2 },
+  { slug: "payment", name: "Payment", role: "Cards · tipping · FX", tier: 2 },
+  { slug: "insurance", name: "Insurance", role: "Coverage · risk-based", tier: 2 },
+  { slug: "recommendation", name: "Recommendation", role: "Personalized picks", tier: 2 },
+  { slug: "analytics", name: "Analytics", role: "Trip optimization", tier: 2 },
+  { slug: "language", name: "Language", role: "Phrases · etiquette", tier: 2 },
+  { slug: "shopping", name: "Shopping", role: "Markets · souvenirs", tier: 2 },
+  // Tier 3 — assembly (3 sequential)
+  { slug: "budget", name: "Budget", role: "Cost tracking · FX", tier: 3 },
+  { slug: "itinerary", name: "Itinerary", role: "Day-by-day assembly", tier: 3 },
+  { slug: "memory", name: "Memory", role: "Gnosion read / write", tier: 3 },
 ] as const;
 
 const STATUS_COLORS: Record<AgentStatus, string> = {
@@ -38,16 +55,45 @@ const STATUS_COLORS: Record<AgentStatus, string> = {
   error: "#EF4444",
 };
 
-// Graph topology matching supervisor.py
+// Graph topology matching supervisor.py 3-tier architecture
 const GRAPH_EDGES: Array<[string, string]> = [
+  // Chief -> Tier 1 (8 core intelligence)
   ["chief", "flight"],
   ["chief", "hotel"],
   ["chief", "research"],
   ["chief", "weather_risk"],
-  ["flight", "budget"],
-  ["hotel", "budget"],
-  ["research", "budget"],
-  ["weather_risk", "budget"],
+  ["chief", "visa"],
+  ["chief", "emergency"],
+  ["chief", "crowd"],
+  ["chief", "risk_advisory"],
+  // Tier 1 -> Tier 2 (via concierge as gateway)
+  ["flight", "concierge"],
+  ["hotel", "concierge"],
+  ["research", "concierge"],
+  ["weather_risk", "concierge"],
+  ["visa", "concierge"],
+  ["emergency", "concierge"],
+  ["crowd", "concierge"],
+  ["risk_advisory", "concierge"],
+  // Tier 2 fan-out (concierge -> rest of enrichment)
+  ["concierge", "transport"],
+  ["concierge", "sustainability"],
+  ["concierge", "payment"],
+  ["concierge", "insurance"],
+  ["concierge", "recommendation"],
+  ["concierge", "analytics"],
+  ["concierge", "language"],
+  ["concierge", "shopping"],
+  // Tier 2 -> Tier 3 (all enrichment -> budget)
+  ["transport", "budget"],
+  ["sustainability", "budget"],
+  ["payment", "budget"],
+  ["insurance", "budget"],
+  ["recommendation", "budget"],
+  ["analytics", "budget"],
+  ["language", "budget"],
+  ["shopping", "budget"],
+  // Tier 3 sequential
   ["budget", "itinerary"],
   ["itinerary", "memory"],
 ];
@@ -60,35 +106,43 @@ export function AgentControl() {
   const { events, statusMap, connected } = useAgentStream();
   const isMobile = useIsMobile();
 
-  // Build initial nodes with positions
+  // Build initial nodes with positions — 4 rows for 3-tier architecture
   const initialNodes: Node[] = useMemo(() => {
     const nodes: Node[] = [];
     // Chief at top center
     nodes.push({
       id: "chief",
-      position: { x: 300, y: 0 },
+      position: { x: 550, y: 0 },
       data: { label: "Chief", status: "idle" },
       type: "agentNode",
     });
-    // Specialists in middle row
-    const specialists = ["flight", "hotel", "research", "weather_risk"];
-    specialists.forEach((slug, i) => {
-      const meta = AGENTS.find((a) => a.slug === slug)!;
+    // Tier 1 — 8 core intelligence agents in row 2
+    const tier1 = AGENTS.filter((a) => a.tier === 1);
+    tier1.forEach((agent, i) => {
       nodes.push({
-        id: slug,
-        position: { x: i * 180, y: 120 },
-        data: { label: meta.name, status: "idle" },
+        id: agent.slug,
+        position: { x: i * 145, y: 110 },
+        data: { label: agent.name, status: "idle" },
         type: "agentNode",
       });
     });
-    // Sequential at bottom
-    const sequential = ["budget", "itinerary", "memory"];
-    sequential.forEach((slug, i) => {
-      const meta = AGENTS.find((a) => a.slug === slug)!;
+    // Tier 2 — 9 enrichment agents in row 3
+    const tier2 = AGENTS.filter((a) => a.tier === 2);
+    tier2.forEach((agent, i) => {
       nodes.push({
-        id: slug,
-        position: { x: 180 + i * 180, y: 240 },
-        data: { label: meta.name, status: "idle" },
+        id: agent.slug,
+        position: { x: i * 130, y: 230 },
+        data: { label: agent.name, status: "idle" },
+        type: "agentNode",
+      });
+    });
+    // Tier 3 — 3 assembly agents in row 4
+    const tier3 = AGENTS.filter((a) => a.tier === 3);
+    tier3.forEach((agent, i) => {
+      nodes.push({
+        id: agent.slug,
+        position: { x: 380 + i * 170, y: 350 },
+        data: { label: agent.name, status: "idle" },
         type: "agentNode",
       });
     });
@@ -164,7 +218,7 @@ export function AgentControl() {
         {/* React Flow graph + Brain Graph */}
         <div className="space-y-4">
           {/* Agent Topology */}
-          <div className="surface-card overflow-hidden" style={{ height: 380 }}>
+          <div className="surface-card overflow-hidden" style={{ height: 480 }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}

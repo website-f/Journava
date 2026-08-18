@@ -18,8 +18,9 @@ from app.agents.schemas import TravelerProfile, TripRequest
 from app.brain import gnosion_client, trip_store
 from app.core import cache, db, llm_providers, sse
 from app.core.settings import settings
-from app.graph.supervisor import run_plan
+from app.graph.supervisor import run_plan, cancel_run as _cancel_plan_run
 from app.graph.disruption import handle_disruption
+from app.tools import camofox as camofox_tool
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -72,6 +73,7 @@ async def health() -> dict[str, object]:
             "postgres": await db.healthy(),
             "redis": await cache.get_redis() is not None,
             "gnosion": gnosion_client.available(),
+            "camofox": await camofox_tool.available(),
         },
         "sse_subscribers": sse.subscriber_count(),
     }
@@ -135,6 +137,18 @@ async def plan(request: TripRequest) -> PlanResponse:
     # Persist as active trip for the My Trip page (§3.3)
     trip_store.save_trip(results)
     return PlanResponse(results=results)
+
+
+@app.post(f"{settings.api_prefix}/cancel", tags=["planning"])
+async def cancel_plan() -> dict[str, bool]:
+    """Request cancellation of the currently running plan.
+
+    The supervisor checks the cancel flag between tiers; in-flight agents
+    will finish but no further tiers will start.
+    """
+    _cancel_plan_run()
+    sse.publish("system", "idle", "Cancellation requested…")
+    return {"cancelled": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -304,24 +318,54 @@ async def engine_delete_provider(provider_id: str) -> dict[str, object]:
 
 @app.post(f"{settings.api_prefix}/engine/test/{{provider_id}}", tags=["engine"])
 async def engine_test_provider(provider_id: str) -> dict[str, object]:
-    """Send a tiny prompt through a single provider to verify it works."""
+    """Send a tiny prompt through a single provider to verify it works.
+
+    Sets provider-specific env vars so LiteLLM resolves the API key correctly
+    for every provider type (DashScope, Groq, Gemini, OpenRouter, etc.).
+    """
+    import os
     import time
-    from app.core import llm as llm_gateway
     from fastapi import HTTPException
 
     provider = await llm_providers.get_provider_full(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="Provider not found")
 
+    model = provider["litellm_model"]
+    api_key = provider.get("api_key", "")
+
+    # Map provider name → LiteLLM env var so the key is always found.
+    ENV_MAP = {
+        "dashscope": "DASHSCOPE_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "cerebras": "CEREBRAS_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }
+
+    # Determine which env var to set from model prefix or provider name
+    prefix = model.split("/")[0].lower() if "/" in model else provider["name"].lower()
+    env_var = ENV_MAP.get(prefix)
+
+    # Temporarily set the env var so LiteLLM picks it up
+    old_val = os.environ.get(env_var) if env_var else None
+    if env_var and api_key:
+        os.environ[env_var] = api_key
+
     start = time.monotonic()
     try:
         from litellm import acompletion
         response = await acompletion(
-            model=provider["litellm_model"],
+            model=model,
             messages=[{"role": "user", "content": "Say hello in one word."}],
             temperature=0,
-            timeout=15,
-            api_key=provider["api_key"],
+            timeout=30,
+            api_key=api_key,
         )
         content = response.choices[0].message.content or ""
         elapsed = int((time.monotonic() - start) * 1000)
@@ -329,16 +373,23 @@ async def engine_test_provider(provider_id: str) -> dict[str, object]:
             "success": True,
             "response": content,
             "latency_ms": elapsed,
-            "model": provider["litellm_model"],
+            "model": model,
         }
     except Exception as exc:  # noqa: BLE001
         elapsed = int((time.monotonic() - start) * 1000)
         return {
             "success": False,
-            "error": str(exc)[:300],
+            "error": str(exc)[:500],
             "latency_ms": elapsed,
-            "model": provider["litellm_model"],
+            "model": model,
         }
+    finally:
+        # Restore original env var
+        if env_var:
+            if old_val is not None:
+                os.environ[env_var] = old_val
+            else:
+                os.environ.pop(env_var, None)
 
 
 @app.get(f"{settings.api_prefix}/engine/stats", tags=["engine"])

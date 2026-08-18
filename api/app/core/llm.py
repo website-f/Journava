@@ -62,6 +62,9 @@ async def complete(
         provider_id = candidate.get("provider_id")
         api_key = candidate.get("api_key")
 
+        # Set provider-specific env var so LiteLLM always finds the key
+        _set_provider_env(litellm_model, api_key)
+
         try:
             start = time.monotonic()
             response = await acompletion(
@@ -212,3 +215,33 @@ def _is_rate_limit_error(exc: Exception) -> bool:
         return True
     msg = str(exc).lower()
     return "rate limit" in msg or "rate_limit" in msg or "429" in msg
+
+
+#: Provider prefix → env var that LiteLLM reads for the API key.
+_PROVIDER_ENV_MAP = {
+    "dashscope": "DASHSCOPE_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "cerebras": "CEREBRAS_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "cohere": "COHERE_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+}
+
+
+def _set_provider_env(model: str, api_key: str | None) -> None:
+    """Temporarily set the provider-specific env var so LiteLLM finds the key.
+
+    Called before each provider attempt in the failover chain. The env var is
+    overwritten on the next call, so no cleanup is needed between candidates.
+    """
+    if not api_key:
+        return
+    prefix = model.split("/")[0].lower() if "/" in model else ""
+    env_var = _PROVIDER_ENV_MAP.get(prefix)
+    if env_var:
+        import os
+        os.environ[env_var] = api_key

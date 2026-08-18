@@ -59,7 +59,7 @@ services:
       # Container-internal DSNs override whatever .env holds for local dev.
       DATABASE_URL: postgresql://${POSTGRES_USER:-journava}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-journava}
       REDIS_URL: redis://redis:6379/0
-      CAMOFOX_URL: http://camofox:3000
+      CAMOFOX_URL: http://camofox:9377
       GNOSION_MCP_URL: http://gnosion:8765
       GNOSION_BRAIN_PATH: /srv/data/journava.gnosion
     volumes:
@@ -101,8 +101,9 @@ services:
       TZ: ${TZ:-Asia/Kuala_Lumpur}
     # Firefox needs real shared memory or it dies on heavy pages.
     shm_size: "1gb"
+    ports:
+      - "9377:9377"
     networks: [internal]
-    profiles: [full] # Phase 2
 
   # ---------------------------------------------------------------------------
   # postgres — trips, itineraries, bookings, agent events, decision outcomes

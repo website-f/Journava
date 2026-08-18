@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2 } from "lucide-react";
-import { Button, Badge, EmptyState, LoadingOverlay, OptionCard } from "@/components/ui";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, confirm } from "@/components/ui";
 import { api } from "@/lib/api";
 import { usePlanStore } from "@/stores/planStore";
 import type { AgentPlanResult, DisruptionRecovery, ItineraryItem } from "@/stores/planStore";
@@ -13,7 +13,7 @@ import { useAgentStream } from "@/hooks/useAgentStream";
  */
 export function MyTrip() {
   const { results, setResults, recovery, setRecovery, recoveryLoading, setRecoveryLoading } = usePlanStore();
-  const { statusMap } = useAgentStream();
+  const { events } = useAgentStream();
   const [tripLoading, setTripLoading] = useState(true);
 
   // Load active trip on mount
@@ -34,7 +34,21 @@ export function MyTrip() {
     return () => { cancelled = true; };
   }, [setResults]);
 
-  const activeAgent = Object.values(statusMap).find((e) => e.status === "working");
+  const handleCancelRecovery = async () => {
+    const ok = await confirm({
+      title: "Cancel recovery?",
+      body: "Agents are still rebuilding your trip. Stop the recovery?",
+      confirmText: "Cancel",
+    });
+    if (!ok) return;
+    try {
+      await api.post("/cancel");
+      setRecoveryLoading(false);
+      toast.info("Recovery cancelled.");
+    } catch {
+      // ignore
+    }
+  };
 
   if (tripLoading) {
     return (
@@ -62,12 +76,13 @@ export function MyTrip() {
     <div className="mx-auto w-full max-w-5xl">
       <LoadingOverlay
         open={recoveryLoading}
-        title="Recovery in progress..."
-        sub={activeAgent ? `${activeAgent.agent}: ${activeAgent.message}` : "Agents are rebuilding your trip."}
+        events={events}
+        onCancel={handleCancelRecovery}
       />
 
       <TripHeader />
       <TripSummary results={results} />
+      <RiskBanner results={results} />
       <BudgetCard results={results} />
       <WeatherCard results={results} />
       <ItinerarySection results={results} />
@@ -103,6 +118,66 @@ function TripSummary({ results }: { results: Record<string, AgentPlanResult> }) 
         {chief?.summary && (
           <Badge variant="brand">{chief.summary}</Badge>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RiskBanner({ results }: { results: Record<string, AgentPlanResult> }) {
+  const risk = results.risk_advisory;
+  if (!risk?.data) return null;
+
+  const data = risk.data;
+  const safetyLevel = data.safety_level as string | undefined;
+  const threats = data.active_threats as string[] | undefined;
+  const safeMonths = data.predicted_safe_months as string[] | undefined;
+  const summary = data.summary as string | undefined;
+
+  if (!safetyLevel || safetyLevel === "safe") {
+    // Show a subtle "safe" indicator
+    return (
+      <div className="surface-card p-3 mb-6 flex items-center gap-3 border-l-4 border-[var(--success)]">
+        <ShieldCheck className="h-5 w-5 text-[var(--success)] shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-[var(--success)]">Destination assessed as safe</p>
+          {summary && <p className="text-xs text-[var(--muted)] mt-0.5">{summary}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  const isDangerous = safetyLevel === "dangerous";
+
+  return (
+    <div className={`surface-card p-4 mb-6 border-l-4 ${isDangerous ? "border-[var(--danger)]" : "border-[var(--warning)]"}`}>
+      <div className="flex items-start gap-3">
+        <ShieldAlert className={`h-6 w-6 shrink-0 ${isDangerous ? "text-[var(--danger)]" : "text-[var(--warning)]"}`} />
+        <div className="min-w-0">
+          <p className={`text-sm font-semibold ${isDangerous ? "text-[var(--danger)]" : "text-[var(--warning)]"}`}>
+            {isDangerous ? "Travel Risk Alert" : "Travel Caution"}
+          </p>
+          {summary && <p className="text-sm mt-1">{summary}</p>}
+          {threats && threats.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs font-medium text-[var(--muted)]">Active threats:</p>
+              <ul className="mt-1 space-y-0.5">
+                {threats.map((t, i) => (
+                  <li key={i} className="text-xs text-[var(--muted)]">• {t}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {safeMonths && safeMonths.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs font-medium text-[var(--muted)]">Predicted safe periods:</p>
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {safeMonths.map((m, i) => (
+                  <Badge key={i} variant="success">{m}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

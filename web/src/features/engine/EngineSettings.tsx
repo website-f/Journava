@@ -10,6 +10,7 @@ import {
   XCircle,
   RefreshCw,
   Shield,
+  Pencil,
 } from "lucide-react";
 import { Button, Badge, Spinner } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -51,6 +52,119 @@ interface TestResult {
 }
 
 // --------------------------------------------------------------------------- //
+// Model Presets — pick a provider, then pick a model
+// --------------------------------------------------------------------------- //
+
+interface ModelPreset {
+  label: string;
+  value: string;
+  tag?: string;
+}
+
+interface ProviderPreset {
+  name: string;
+  icon: string;
+  models: ModelPreset[];
+  suggestedRpm?: number;
+}
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    name: "DashScope (Qwen)",
+    icon: "🟠",
+    suggestedRpm: 30,
+    models: [
+      { label: "Qwen Plus", value: "dashscope/qwen-plus", tag: "recommended" },
+      { label: "Qwen Turbo", value: "dashscope/qwen-turbo", tag: "fast" },
+      { label: "Qwen Max", value: "dashscope/qwen-max" },
+      { label: "Qwen Long", value: "dashscope/qwen-long", tag: "128k ctx" },
+      { label: "Qwen VL Plus", value: "dashscope/qwen-vl-plus", tag: "vision" },
+    ],
+  },
+  {
+    name: "Groq",
+    icon: "⚡",
+    suggestedRpm: 30,
+    models: [
+      { label: "Llama 3.3 70B", value: "groq/llama-3.3-70b-versatile", tag: "recommended" },
+      { label: "Llama 3.1 8B", value: "groq/llama-3.1-8b-instant", tag: "fast" },
+      { label: "Llama 3 70B", value: "groq/llama3-70b-8192" },
+      { label: "Mixtral 8x7B", value: "groq/mixtral-8x7b-32768" },
+      { label: "Gemma 2 9B", value: "groq/gemma2-9b-it" },
+    ],
+  },
+  {
+    name: "Google Gemini",
+    icon: "🔵",
+    suggestedRpm: 15,
+    models: [
+      { label: "Gemini 2.0 Flash", value: "gemini/gemini-2.0-flash", tag: "recommended" },
+      { label: "Gemini 1.5 Flash", value: "gemini/gemini-1.5-flash", tag: "fast" },
+      { label: "Gemini 1.5 Pro", value: "gemini/gemini-1.5-pro" },
+    ],
+  },
+  {
+    name: "OpenRouter",
+    icon: "🟢",
+    models: [
+      { label: "Llama 3.1 8B (free)", value: "openrouter/meta-llama/llama-3.1-8b-instruct:free", tag: "free" },
+      { label: "Qwen 2 72B (free)", value: "openrouter/qwen/qwen-2-72b-instruct:free", tag: "free" },
+      { label: "Mistral 7B (free)", value: "openrouter/mistralai/mistral-7b-instruct:free", tag: "free" },
+      { label: "Llama 3.3 70B", value: "openrouter/meta-llama/llama-3.3-70b-instruct" },
+      { label: "DeepSeek V3", value: "openrouter/deepseek/deepseek-chat" },
+    ],
+  },
+  {
+    name: "DeepSeek",
+    icon: "🟣",
+    suggestedRpm: 20,
+    models: [
+      { label: "DeepSeek Chat (V3)", value: "deepseek/deepseek-chat", tag: "recommended" },
+      { label: "DeepSeek Coder", value: "deepseek/deepseek-coder" },
+      { label: "DeepSeek Reasoner (R1)", value: "deepseek/deepseek-reasoner", tag: "thinking" },
+    ],
+  },
+  {
+    name: "Cerebras",
+    icon: "🔴",
+    suggestedRpm: 30,
+    models: [
+      { label: "Llama 3.3 70B", value: "cerebras/llama3.3-70b", tag: "recommended" },
+      { label: "Llama 3.1 8B", value: "cerebras/llama3.1-8b", tag: "fast" },
+    ],
+  },
+  {
+    name: "OpenAI",
+    icon: "⚫",
+    models: [
+      { label: "GPT-4o mini", value: "openai/gpt-4o-mini", tag: "fast" },
+      { label: "GPT-4o", value: "openai/gpt-4o" },
+      { label: "GPT-4.1", value: "openai/gpt-4.1" },
+    ],
+  },
+  {
+    name: "Mistral",
+    icon: "🟤",
+    models: [
+      { label: "Mistral Large", value: "mistral/mistral-large-latest" },
+      { label: "Mistral Small", value: "mistral/mistral-small-latest", tag: "fast" },
+      { label: "Codestral", value: "mistral/codestral-latest", tag: "code" },
+    ],
+  },
+];
+
+/** All models flattened for the dropdown */
+const ALL_MODEL_OPTIONS = PROVIDER_PRESETS.flatMap((p) =>
+  p.models.map((m) => ({
+    label: `${p.icon} ${p.name} — ${m.label}`,
+    value: m.value,
+    tag: m.tag,
+    providerName: p.name,
+    suggestedRpm: p.suggestedRpm,
+  }))
+);
+
+// --------------------------------------------------------------------------- //
 // Main Page
 // --------------------------------------------------------------------------- //
 
@@ -59,6 +173,7 @@ export function EngineSettings() {
   const [stats, setStats] = useState<UsageStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -126,6 +241,7 @@ export function EngineSettings() {
 
   const handleSaved = () => {
     setShowForm(false);
+    setEditingProvider(null);
     fetchProviders();
   };
 
@@ -150,10 +266,10 @@ export function EngineSettings() {
             LLM Engine
           </h1>
           <p className="text-sm text-[var(--muted)] mt-1">
-            Manage your provider failover chain. The engine rotates through providers automatically.
+            Manage your provider failover chain. The engine rotates through providers on failure.
           </p>
         </div>
-        <Button onClick={() => setShowForm(!showForm)} size="sm">
+        <Button onClick={() => { setShowForm(!showForm); setEditingProvider(null); }} size="sm">
           {showForm ? "Cancel" : <><Plus className="h-4 w-4" /> Add Provider</>}
         </Button>
       </div>
@@ -163,8 +279,14 @@ export function EngineSettings() {
         <FailoverChain providers={enabledProviders} />
       )}
 
-      {/* Add Provider Form */}
-      {showForm && <ProviderForm onSaved={handleSaved} />}
+      {/* Add / Edit Provider Form */}
+      {(showForm || editingProvider) && (
+        <ProviderForm
+          onSaved={handleSaved}
+          editing={editingProvider}
+          onCancel={() => { setShowForm(false); setEditingProvider(null); }}
+        />
+      )}
 
       {/* Provider List */}
       <div className="space-y-3">
@@ -183,6 +305,7 @@ export function EngineSettings() {
               onToggle={handleToggle}
               onDelete={handleDelete}
               onReorder={handleReorder}
+              onEdit={(provider) => { setEditingProvider(provider); setShowForm(false); }}
             />
           ))
         )}
@@ -236,6 +359,7 @@ function ProviderCard({
   onToggle,
   onDelete,
   onReorder,
+  onEdit,
 }: {
   provider: Provider;
   index: number;
@@ -243,6 +367,7 @@ function ProviderCard({
   onToggle: (p: Provider) => void;
   onDelete: (id: string, name: string) => void;
   onReorder: (p: Provider, dir: "up" | "down") => void;
+  onEdit: (p: Provider) => void;
 }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -256,7 +381,7 @@ function ProviderCard({
       if (result.success) {
         toast.success(`${provider.name}: ${result.latency_ms}ms`);
       } else {
-        toast.error(`${provider.name}: ${result.error}`);
+        toast.error(`${provider.name}: ${result.error?.slice(0, 80)}`);
       }
     } catch {
       toast.error("Test request failed");
@@ -281,7 +406,7 @@ function ProviderCard({
             <Badge variant={provider.enabled ? "success" : "default"}>
               {provider.enabled ? "Active" : "Disabled"}
             </Badge>
-            <Badge variant="info">Priority {provider.priority}</Badge>
+            <Badge variant="info">P{provider.priority}</Badge>
             {provider.max_rpm && (
               <Badge variant="warning">{provider.max_rpm} RPM</Badge>
             )}
@@ -295,12 +420,11 @@ function ProviderCard({
         </div>
 
         <div className="flex items-center gap-1">
-          {/* Reorder */}
           <button
             onClick={() => onReorder(provider, "up")}
             disabled={index === 0}
             className="p-1.5 rounded hover:bg-[color-mix(in_srgb,var(--brand-400)_10%,transparent)] disabled:opacity-30 transition"
-            title="Move up (higher priority)"
+            title="Move up"
           >
             <ArrowUp className="h-4 w-4" />
           </button>
@@ -308,12 +432,11 @@ function ProviderCard({
             onClick={() => onReorder(provider, "down")}
             disabled={index === total - 1}
             className="p-1.5 rounded hover:bg-[color-mix(in_srgb,var(--brand-400)_10%,transparent)] disabled:opacity-30 transition"
-            title="Move down (lower priority)"
+            title="Move down"
           >
             <ArrowDown className="h-4 w-4" />
           </button>
 
-          {/* Toggle */}
           <button
             onClick={() => onToggle(provider)}
             className={cn(
@@ -330,12 +453,11 @@ function ProviderCard({
             />
           </button>
 
-          {/* Test */}
           <button
             onClick={handleTest}
             disabled={testing}
             className="p-1.5 rounded hover:bg-[color-mix(in_srgb,var(--brand-400)_10%,transparent)] transition disabled:opacity-50"
-            title="Test this provider"
+            title="Test connection"
           >
             {testing ? (
               <Spinner className="h-4 w-4" />
@@ -350,7 +472,14 @@ function ProviderCard({
             )}
           </button>
 
-          {/* Delete */}
+          <button
+            onClick={() => onEdit(provider)}
+            className="p-1.5 rounded hover:bg-[color-mix(in_srgb,var(--brand-400)_10%,transparent)] transition"
+            title="Edit provider"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+
           <button
             onClick={() => onDelete(provider.id, provider.name)}
             className="p-1.5 rounded hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] text-[var(--muted)] hover:text-[var(--danger)] transition"
@@ -361,7 +490,6 @@ function ProviderCard({
         </div>
       </div>
 
-      {/* Test result details */}
       {testResult && (
         <div
           className={cn(
@@ -381,41 +509,78 @@ function ProviderCard({
 }
 
 // --------------------------------------------------------------------------- //
-// Add Provider Form
+// Add / Edit Provider Form
 // --------------------------------------------------------------------------- //
 
-function ProviderForm({ onSaved }: { onSaved: () => void }) {
-  const [name, setName] = useState("");
-  const [litellmModel, setLitellmModel] = useState("");
+function ProviderForm({
+  onSaved,
+  editing,
+  onCancel,
+}: {
+  onSaved: () => void;
+  editing: Provider | null;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(editing?.name ?? "");
+  const [litellmModel, setLitellmModel] = useState(editing?.litellm_model ?? "");
   const [apiKey, setApiKey] = useState("");
-  const [priority, setPriority] = useState(0);
-  const [maxRpm, setMaxRpm] = useState("");
+  const [priority, setPriority] = useState(editing?.priority ?? 0);
+  const [maxRpm, setMaxRpm] = useState(editing?.max_rpm?.toString() ?? "");
   const [saving, setSaving] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState("");
+
+  const handlePresetChange = (value: string) => {
+    setSelectedPreset(value);
+    if (!value) return;
+    // Find the preset and auto-fill
+    const option = ALL_MODEL_OPTIONS.find((o) => o.value === value);
+    if (option) {
+      setLitellmModel(option.value);
+      // Auto-fill provider name from preset (strip parenthetical)
+      setName(option.providerName.replace(/ \(.*\)/, ""));
+      if (option.suggestedRpm && !maxRpm) {
+        setMaxRpm(option.suggestedRpm.toString());
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !litellmModel || !apiKey) {
-      toast.error("Name, model, and API key are required");
+    if (!name || !litellmModel) {
+      toast.error("Name and model are required");
+      return;
+    }
+    if (!editing && !apiKey) {
+      toast.error("API key is required for new providers");
       return;
     }
     setSaving(true);
     try {
-      await api.post("/engine/providers", {
+      const payload: Record<string, unknown> = {
         name,
         litellm_model: litellmModel,
-        api_key: apiKey,
         priority,
         enabled: true,
         max_rpm: maxRpm ? parseInt(maxRpm, 10) : null,
-      });
-      toast.success(`${name} added to chain`);
+      };
+      if (apiKey) payload.api_key = apiKey; // only send if provided (for edit)
+
+      if (editing) {
+        await api.patch(`/engine/providers/${editing.id}`, payload);
+        toast.success(`${name} updated`);
+      } else {
+        await api.post("/engine/providers", payload);
+        toast.success(`${name} added to chain`);
+      }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add provider");
+      toast.error(err instanceof Error ? err.message : "Failed to save provider");
     } finally {
       setSaving(false);
     }
   };
+
+  const isEditing = editing !== null;
 
   return (
     <form
@@ -424,11 +589,34 @@ function ProviderForm({ onSaved }: { onSaved: () => void }) {
     >
       <h3 className="text-sm font-medium flex items-center gap-2">
         <Shield className="h-4 w-4 text-[var(--brand-500)]" />
-        Add Provider
+        {isEditing ? "Edit Provider" : "Add Provider"}
       </h3>
 
+      {/* Model Preset Picker */}
+      {!isEditing && (
+        <Field label="Quick Pick — choose a provider + model" hint="Or type a custom model below">
+          <select
+            value={selectedPreset}
+            onChange={(e) => handlePresetChange(e.target.value)}
+            className="input-field"
+          >
+            <option value="">— Select a preset —</option>
+            {PROVIDER_PRESETS.map((p) => (
+              <optgroup key={p.name} label={`${p.icon} ${p.name}`}>
+                {p.models.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}{m.tag ? ` (${m.tag})` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+            <option value="__custom">✏️ Custom model (type below)</option>
+          </select>
+        </Field>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Field label="Provider Name" hint='e.g. "Groq", "OpenRouter", "DashScope"'>
+        <Field label="Provider Name" hint='e.g. "Groq", "DashScope"'>
           <input
             type="text"
             value={name}
@@ -446,12 +634,15 @@ function ProviderForm({ onSaved }: { onSaved: () => void }) {
             className="input-field font-mono text-sm"
           />
         </Field>
-        <Field label="API Key" hint="Stored server-side only">
+        <Field
+          label={isEditing ? "API Key (leave blank to keep current)" : "API Key"}
+          hint="Stored server-side only"
+        >
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="gsk_..."
+            placeholder={isEditing ? "•••• unchanged ••••" : "gsk_..."}
             className="input-field font-mono text-sm"
           />
         </Field>
@@ -477,9 +668,12 @@ function ProviderForm({ onSaved }: { onSaved: () => void }) {
         </Field>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="secondary" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
         <Button type="submit" size="sm" loading={saving}>
-          <Plus className="h-4 w-4" /> Add to Chain
+          <Plus className="h-4 w-4" /> {isEditing ? "Save Changes" : "Add to Chain"}
         </Button>
       </div>
     </form>
@@ -585,7 +779,7 @@ function EmptyEngineState() {
         No providers configured yet.
       </p>
       <p className="text-[var(--muted)] text-xs mt-1">
-        Add your API keys above to build the failover chain.
+        Click <strong>Add Provider</strong> and pick a preset to get started.
         The engine falls back to environment variables when no DB providers exist.
       </p>
     </div>

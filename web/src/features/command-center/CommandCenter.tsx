@@ -22,7 +22,22 @@ export function CommandCenter() {
   const [goal, setGoal] = useState("");
   const [pace, setPace] = useState("balanced");
   const { results, setResults, setLoading, setError } = usePlanStore();
-  const { statusMap } = useAgentStream();
+  const { events } = useAgentStream();
+
+  const handleCancel = async () => {
+    const ok = await confirm({
+      title: "Cancel planning?",
+      body: "Agents are still working. This will stop further tiers from running.",
+      confirmText: "Cancel plan",
+    });
+    if (!ok) return;
+    try {
+      await api.post("/cancel");
+      toast.info("Plan cancelled.");
+    } catch {
+      // ignore
+    }
+  };
 
   const plan = useAsync(async () => {
     const ok = await confirm({
@@ -44,15 +59,12 @@ export function CommandCenter() {
     }
   });
 
-  // Find the agent currently working
-  const activeAgent = Object.values(statusMap).find((e) => e.status === "working");
-
   return (
     <div className="mx-auto w-full max-w-3xl">
       <LoadingOverlay
         open={plan.loading}
-        title="Journava is working…"
-        sub={activeAgent ? `${activeAgent.agent}: ${activeAgent.message}` : "Chief Agent is delegating to your specialists."}
+        events={events}
+        onCancel={handleCancel}
       />
 
       <header className="pt-6 pb-8 text-center">
