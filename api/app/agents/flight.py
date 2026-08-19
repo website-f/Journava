@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import date as _date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import quote_plus
@@ -40,8 +41,9 @@ from app.brain import gnosion_client
 from app.core.cache import cached
 from app.core.llm import LLMUnavailableError, complete
 from app.core.settings import settings
-from app.tools import amadeus, atlas_skill, camofox
+from app.tools import amadeus, atlas_skill, camofox, fare_extract, flight_sites
 from app.tools.atlas_skill import AtlasSkillError
+from app.tools.frankfurter import rates as fx_rates
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +175,11 @@ class FlightAgent(BaseAgent):
         bypass_cache: bool = False,
     ) -> tuple[list[Option], dict[str, Any]]:
         cache_key = (
-            f"flight:v2:{origin}:{destination}:{depart}:{request.travellers}"
+            # Version prefix: bump it whenever the *shape* of a result changes —
+            # the site list, the extractor, the currency handling. Those are code
+            # changes the key cannot otherwise see, and a stale hit silently
+            # serves the old behaviour long after the new one ships.
+            f"flight:v3:{origin}:{destination}:{depart}:{request.travellers}"
             f":{request.budget_currency}"
         )
 
@@ -185,7 +191,14 @@ class FlightAgent(BaseAgent):
             atlas_raw, amadeus_raw, camofox_raw = await asyncio.gather(
                 self._try_atlas(request, origin, destination, depart),
                 self._try_amadeus(request, origin, destination, depart),
-                self._try_camofox(origin, destination, depart),
+                self._try_camofox(
+                    origin,
+                    destination,
+                    depart,
+                    return_date=str(request.end_date) if request.end_date else None,
+                    adults=max(1, request.travellers),
+                    currency=request.budget_currency or "MYR",
+                ),
             )
 
             report = {
@@ -195,6 +208,10 @@ class FlightAgent(BaseAgent):
                     "count": len(camofox_raw["options"]),
                     "status": camofox_raw["status"],
                     "pages_read": camofox_raw["sources"],
+                    "sites": camofox_raw.get("sites", {}),
+                    "cheapest_site": camofox_raw.get("cheapest_site"),
+                    "sites_read": camofox_raw.get("sites_read", 0),
+                    "sites_failed": camofox_raw.get("sites_failed", []),
                 },
             }
             merged = [*atlas_raw, *amadeus_raw, *camofox_raw["options"]]
@@ -316,62 +333,339 @@ class FlightAgent(BaseAgent):
         origin: str,
         destination: str,
         depart: str,
+        *,
+        return_date: str | None = None,
+        adults: int = 1,
+        currency: str = "MYR",
     ) -> dict[str, Any]:
-        """Crawl the live Google Flights results and read each flight.
+        """Compare the fare sites a person would actually open.
 
-        This is the real crawl: it opens the results page for the exact route and
-        date, waits for the fares to render, and parses per-flight rows — airline,
-        departure/arrival, stops, and price. Only if the page can't be parsed does
-        it fall back to surfacing fare-page links. Nothing is bookable/verified
-        (that stays Atlas's job), but the prices and times are read live.
+        Crawling only Google Flights is why a KUL→BKI search recommended the
+        AirAsia site while Cheapflights was cheaper: one page is one opinion, and
+        an airline's own site can only ever quote itself.
+
+        So this opens the metasearch engines concurrently — Google Flights,
+        Skyscanner, Kayak, Cheapflights, Wego, Trip.com and the relevant carriers
+        — lets each render, scrolls them so the lazy-loaded fare lists exist, and
+        reads every result block. Google Flights keeps its dedicated parser
+        because its layout is known; the rest go through the generic extractor.
+
+        Discovery, not truth: nothing here is ever marked verified or bookable —
+        that stays Atlas's job.
         """
-        empty: dict[str, Any] = {"options": [], "sources": [], "status": "unavailable"}
+        empty: dict[str, Any] = {
+            "options": [],
+            "sources": [],
+            "status": "unavailable",
+            "sites": {},
+        }
         if not await camofox.available():
             return empty
         if depart == "flexible":
             return await self._camofox_links(origin, destination, depart)
 
-        url = _google_flights_results_url(origin, destination, depart)
-        self.emit("working", f"Camofox: crawling live flights {origin}→{destination} on {depart}")
-        snapshot = await camofox.browse(url, ready=r"ringgit|MYR|\$", attempts=12, delay=2.0)
-        flights = _parse_google_flights(snapshot or "")
-
-        if not flights:
-            self.emit("active", "Camofox: results page not parseable — surfacing fare-page links")
+        depart_date = _parse_iso_date(depart)
+        if depart_date is None:
             return await self._camofox_links(origin, destination, depart)
 
+        targets = flight_sites.build_targets(
+            origin,
+            destination,
+            depart_date,
+            return_date=_parse_iso_date(return_date) if return_date else None,
+            adults=max(1, adults),
+            currency=currency,
+            limit=6,
+        )
+        if not targets:
+            return await self._camofox_links(origin, destination, depart)
+
+        names = ", ".join(str(t["label"]) for t in targets)
+        self.emit(
+            "working",
+            f"Camofox: comparing {len(targets)} fare sites — {names}",
+            data={"sites": [t["slug"] for t in targets]},
+        )
+
+        # A price token is the signal that a results page has actually rendered.
+        pages = await camofox.read_many(
+            targets, scrolls=4, ready=r"RM\s?\d|MYR|ringgit|\$\s?\d|USD"
+        )
+
+        fares: list[dict[str, Any]] = []
+        read_urls: list[str] = []
+        failures: list[str] = []
+
+        for page in pages:
+            label = str(page.get("label") or "")
+            if not page.get("ok"):
+                failures.append(f"{label}: {page.get('error', 'unreadable')}")
+                continue
+            url = str(page.get("url") or "")
+            snapshot = page.get("snapshot") or ""
+            read_urls.append(url)
+
+            if page.get("slug") == "google_flights":
+                # Known layout — the structured parser reads it far better than
+                # the generic one, and keeps airline/times/stops intact.
+                for flight in _parse_google_flights(snapshot):
+                    fares.append(
+                        {
+                            "price_amount": flight["price"],
+                            "price_currency": flight["currency"],
+                            "airline": flight["airline"],
+                            "departure_time": flight.get("dep24") or flight.get("dep"),
+                            "arrival_time": flight.get("arr"),
+                            "duration_hours": flight.get("duration_hours"),
+                            "stops": flight.get("stops"),
+                            "site": label,
+                            "source_url": url,
+                            "confidence": "high",
+                        }
+                    )
+                continue
+
+            fares.extend(
+                fare_extract.extract_fares(snapshot, source_url=url, site_name=label, max_results=5)
+            )
+
+        if failures:
+            logger.info("Camofox could not read: %s", "; ".join(failures[:5]))
+
+        # Sites geolocate the container, so some quote USD even when asked for
+        # MYR. Comparing mixed currencies is meaningless, so anything off-target
+        # is converted — and every converted fare says so and keeps its original.
+        fares, converted = await self._normalise_currency(fares, currency)
+
+        summary = fare_extract.summarise_sites(fares)
+        options = self._fares_to_options(fares, origin, destination, depart)
+
+        # Sites we may not crawl are still worth offering: robots.txt governs
+        # automated fetching, not whether a person may click a link. Adding them
+        # keeps the comparison honest — the traveller can check the big engines
+        # themselves even though we did not read them.
+        options.extend(self._link_only_options(origin, destination, depart, offset=len(options)))
+
+        if not fares:
+            # Every readable page yielded nothing (consent wall, bot check, or a
+            # layout change). Say so, and still hand over the links.
+            self.emit(
+                "active",
+                f"Camofox: read {len(read_urls)} site(s), none exposed parseable fares",
+            )
+            discovered = await self._camofox_links(origin, destination, depart)
+            merged = options + [
+                option
+                for option in discovered.get("options", [])
+                if option.get("source_url") not in {o.get("source_url") for o in options}
+            ]
+            return {
+                "options": merged,
+                "sources": list(dict.fromkeys(read_urls + discovered.get("sources", [])))[:10],
+                "status": "links_only" if merged else "no_results",
+                "sites": {},
+                "sites_read": len(read_urls),
+                "sites_failed": failures[:6],
+            }
+
+        cheapest = summary.get("cheapest_site")
+        self.emit(
+            "active",
+            (
+                f"Camofox: {len(options)} advertised fare(s) across "
+                f"{summary['sites_with_fares']} site(s)"
+                + (f" — cheapest on {cheapest}" if cheapest else "")
+            ),
+            data={"per_site": summary["per_site"]},
+        )
+
+        return {
+            "options": options,
+            "sources": list(dict.fromkeys(read_urls))[:10],
+            "status": "ok",
+            "sites": summary["per_site"],
+            "cheapest_site": cheapest,
+            "sites_read": len(read_urls),
+            "sites_failed": failures[:6],
+        }
+
+    async def _normalise_currency(
+        self,
+        fares: list[dict[str, Any]],
+        target: str,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Convert research fares into the traveller's currency.
+
+        Several sites ignore the currency parameter and quote whatever their
+        geolocation suggests, which makes "cheapest" meaningless across a mixed
+        list. Rates come from Frankfurter (no key). A fare that cannot be
+        converted keeps its original currency rather than being silently
+        relabelled — a wrong number in the right currency is worse than an
+        honest foreign one.
+        """
+        target = (target or "MYR").upper()
+        foreign = {
+            (fare.get("price_currency") or "").upper()
+            for fare in fares
+            if fare.get("price_currency") and fare["price_currency"].upper() != target
+        }
+        if not foreign:
+            return fares, 0
+
+        rates = await fx_rates(target)
+        if not rates:
+            self.emit(
+                "waiting",
+                f"Could not fetch FX rates — leaving {', '.join(sorted(foreign))} fares as quoted",
+            )
+            return fares, 0
+
+        converted = 0
+        for fare in fares:
+            source = (fare.get("price_currency") or "").upper()
+            if not source or source == target:
+                continue
+            rate = rates.get(source)
+            if not rate:
+                continue
+            original = float(fare["price_amount"])
+            # `rates(base=target)` reads "1 target buys N of source", so
+            # converting *into* target divides.
+            fare["price_amount"] = round(original / rate, 2)
+            fare["price_currency"] = target
+            fare["converted_from"] = {"currency": source, "amount": original}
+            converted += 1
+
+        if converted:
+            self.emit(
+                "working",
+                f"Converted {converted} fare(s) into {target} at today's rate",
+            )
+        return fares, converted
+
+    @staticmethod
+    def _link_only_options(
+        origin: str,
+        destination: str,
+        depart: str,
+        *,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Offer the robots-disallowed engines as links we never crawled.
+
+        Google Flights, Kayak and Expedia all disallow their flight-search paths,
+        and §8 commits us to honouring that. Omitting them entirely would be
+        worse for the traveller than saying plainly: here is the link, we did not
+        read it.
+        """
+        depart_date = _parse_iso_date(depart)
+        if depart_date is None:
+            return []
+
         options: list[dict[str, Any]] = []
-        for index, fl in enumerate(flights, start=1):
+        for index, site in enumerate(flight_sites.link_only_sites(origin, destination), 1):
+            try:
+                url = site.url_for(origin, destination, depart_date)
+            except Exception:  # noqa: BLE001
+                continue
             options.append(
                 {
-                    "id": f"CFX-{index:03d}",
-                    "title": f"{fl['airline']} · {fl['dep']}–{fl['arr']} · {fl['stops_label']}",
-                    "price_amount": fl["price"],
-                    "price_currency": fl["currency"],
-                    "provider": "Camofox · Google Flights (live)",
+                    "id": f"CFX-L{offset + index:02d}",
+                    "title": f"{site.name} — open {origin}→{destination} ({depart})",
+                    "price_amount": None,
+                    "price_currency": None,
+                    "provider": f"{site.name} (not crawled)",
                     "source": "camofox",
                     "source_url": url,
                     "booking_url": url,
                     "reasoning": (
-                        f"Read live from Google Flights for {depart} — "
-                        f"{fl['airline']} departing {fl['dep']}. Open to book."
+                        f"{site.name}'s robots.txt disallows automated access to its "
+                        "results, so Journava did not read it. Open the link to compare "
+                        "yourself."
                     ),
                     "verified": False,
                     "bookable": False,
-                    "raw": {
-                        "source": "camofox",
-                        "kind": "live_flight",
-                        "stops": fl["stops"],
-                        "departure_time": fl["dep24"],
-                        "arrival_time": fl["arr"],
-                        "duration_hours": fl.get("duration_hours"),
-                        "airline": fl["airline"],
-                    },
+                    "raw": {"source": "camofox", "kind": "link_only", "site": site.slug},
                 }
             )
+        return options
 
-        self.emit("active", f"Camofox: read {len(options)} live flight(s) from Google Flights")
-        return {"options": options, "sources": [url], "status": "ok"}
+    @staticmethod
+    def _fares_to_options(
+        fares: list[dict[str, Any]],
+        origin: str,
+        destination: str,
+        depart: str,
+    ) -> list[dict[str, Any]]:
+        """Shape extracted fares into option dicts, keeping every citation.
+
+        Cheapest first, and de-duplicated across sites: the same fare listed on
+        four aggregators is one choice, not four, so the cheapest listing wins and
+        the others are recorded as `also_on`.
+        """
+        best: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for fare in sorted(fares, key=lambda f: f["price_amount"]):
+            key = (
+                (fare.get("airline") or "").lower(),
+                fare.get("departure_time"),
+                round(float(fare["price_amount"]) / 10)
+                if fare.get("airline")
+                else fare["price_amount"],
+            )
+            if key in best:
+                seen_on = best[key]["raw"].setdefault("also_on", [])
+                entry = {
+                    "site": fare.get("site"),
+                    "price": fare["price_amount"],
+                    "url": fare.get("source_url"),
+                }
+                if entry not in seen_on:
+                    seen_on.append(entry)
+                continue
+
+            airline = fare.get("airline")
+            stops = fare.get("stops")
+            shape = "direct" if stops == 0 else (f"{stops} stop" if stops else "routing unstated")
+            title = " \u00b7 ".join(
+                bit
+                for bit in (
+                    airline or "Advertised fare",
+                    f"{origin}\u2192{destination}",
+                    fare.get("departure_time"),
+                    shape,
+                )
+                if bit
+            )
+            best[key] = {
+                "id": f"CFX-{len(best) + 1:03d}",
+                "title": title,
+                "price_amount": fare["price_amount"],
+                "price_currency": fare.get("price_currency") or "MYR",
+                "provider": f"Camofox \u00b7 {fare.get('site') or 'research'}",
+                "source": "camofox",
+                "source_url": fare.get("source_url"),
+                "booking_url": fare.get("source_url"),
+                "reasoning": (
+                    f"Advertised on {fare.get('site') or 'a public page'} for {depart} "
+                    f"({fare.get('confidence', 'low')}-confidence read). Not a held "
+                    "fare \u2014 open the source to confirm."
+                ),
+                "verified": False,
+                "bookable": False,
+                "raw": {
+                    "source": "camofox",
+                    "kind": "compared_fare",
+                    "site": fare.get("site"),
+                    "stops": stops,
+                    "duration_hours": fare.get("duration_hours"),
+                    "departure_time": fare.get("departure_time"),
+                    "arrival_time": fare.get("arrival_time"),
+                    "extraction_confidence": fare.get("confidence"),
+                    "converted_from": fare.get("converted_from"),
+                    "also_on": [],
+                },
+            }
+        return list(best.values())
 
     async def _camofox_links(
         self,
@@ -751,9 +1045,29 @@ class FlightAgent(BaseAgent):
         parts = [f"{len(options)} option(s) {origin} → {destination}"]
         if bookable:
             parts.append(f"{bookable} bookable via Atlas")
-        crawled = sum(1 for o in options if o.source == "camofox")
-        if crawled:
-            parts.append(f"{crawled} read live from Google Flights")
+        # Name the sites actually read, and count only options carrying a price.
+        # Saying "read live from Google Flights" while Google Flights was never
+        # opened (its robots.txt disallows it) is the kind of claim that makes a
+        # whole result untrustworthy.
+        camofox_report = report.get("camofox") or {}
+        priced_research = sum(
+            1
+            for option in options
+            if option.source == "camofox" and option.price_amount is not None
+        )
+        site_names = [
+            name for name, info in (camofox_report.get("sites") or {}).items() if info.get("count")
+        ]
+        if priced_research and site_names:
+            listed = ", ".join(site_names[:3])
+            more = f" +{len(site_names) - 3}" if len(site_names) > 3 else ""
+            parts.append(f"{priced_research} compared from {listed}{more}")
+        elif priced_research:
+            parts.append(f"{priced_research} from public fare pages")
+
+        link_only = sum(1 for o in options if o.raw.get("kind") == "link_only")
+        if link_only:
+            parts.append(f"{link_only} link(s) not crawled")
         cheapest = min(
             (o for o in options if o.price_amount is not None),
             key=lambda o: float(o.price_amount),
@@ -924,7 +1238,9 @@ def _parse_google_flights(snapshot: str) -> list[dict[str, Any]]:
                 "dep24": _to_24h(dep),
                 "stops": stops,
                 "stops_label": (
-                    "Nonstop" if stops == 0 else (f"{stops} stop" if stops == 1 else f"{stops} stops")
+                    "Nonstop"
+                    if stops == 0
+                    else (f"{stops} stop" if stops == 1 else f"{stops} stops")
                 ),
             }
         )
@@ -1078,3 +1394,13 @@ def _airport_code(value: str | None) -> str | None:
         if name in text.lower():
             return code
     return text
+
+
+def _parse_iso_date(value: str | None) -> _date | None:
+    """Parse an ISO date, or None for "flexible" / anything unparseable."""
+    if not value or value == "flexible":
+        return None
+    try:
+        return _date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None

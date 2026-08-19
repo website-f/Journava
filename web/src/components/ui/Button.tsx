@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { Slot } from "@radix-ui/react-slot";
+import { Slot, Slottable } from "@radix-ui/react-slot";
 import { cn } from "@/lib/cn";
 import { Spinner } from "./Spinner";
 
@@ -68,14 +68,20 @@ export function Button({
     className,
   );
 
-  // asChild: Radix Slot requires EXACTLY one element child. The spinner/span
-  // wrapper (and a `false` from `loading && …`) would make that two children and
-  // trip `Children.only` → "Slot failed to slot onto its children". A link also
-  // has no use for `disabled`/`loading`, so pass the child straight through.
+  // asChild renders the caller's element (a router <Link>, an <a>) instead of a
+  // <button>, and Radix `Slot` merges props onto exactly ONE element child.
+  //
+  // Rendering the spinner as a plain sibling made that two children and tripped
+  // `Children.only` — "Slot failed to slot onto its children". `Slottable` is the
+  // supported way out: it marks which child is the element to merge onto, so the
+  // spinner can still render *inside* it. That keeps the loading state working on
+  // link-shaped buttons and makes the failure mode structurally impossible rather
+  // than a rule every call site has to remember.
   if (asChild) {
     return (
-      <Slot {...props} className={classes}>
-        {children}
+      <Slot {...props} className={classes} aria-busy={loading || undefined}>
+        {loading && <Spinner className="h-4 w-4" />}
+        <Slottable>{children}</Slottable>
       </Slot>
     );
   }

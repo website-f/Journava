@@ -656,3 +656,31 @@ def _interests(text: str) -> list[str]:
         if any(word in text for word in words)
     ]
     return found
+
+
+def to_iata(value: str | None) -> str | None:
+    """Normalise a place into an IATA code where we confidently can.
+
+    The Chief's LLM parse returns whatever the traveller typed — "KLIA",
+    "Kuala Lumpur", "kul". Downstream every agent and the booking API want a
+    three-letter code, so normalising once here keeps one canonical value
+    instead of each consumer guessing. Anything unrecognised passes through
+    unchanged rather than being mangled.
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    if lowered in CITY_CODES:
+        return CITY_CODES[lowered]
+    if len(text) == 3 and text.isalpha():
+        return text.upper()
+    match = re.search(r"\(([A-Za-z]{3})\)", text)
+    if match:
+        return match.group(1).upper()
+    for name, code in CITY_CODES.items():
+        if name in lowered:
+            return code
+    return text

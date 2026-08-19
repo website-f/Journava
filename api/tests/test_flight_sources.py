@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.flight import FlightAgent, _airport_code, _is_red_eye, _stops_label
-from app.tools import atlas_skill
+from app.tools import atlas_skill, fare_extract
 from app.tools.atlas_skill import AtlasEnvelope
 
 # --------------------------------------------------------------------------- #
@@ -188,40 +188,96 @@ Terms apply. Save RM 5 with the app.
 """
 
 
+SNAPSHOT_BLOCKS = """
+AirAsia
+20:15 KUL - 22:55 BKI
+2h 40m  nonstop
+RM 214
+Batik Air Malaysia
+07:30 KUL - 10:15 BKI
+2h 45m  nonstop
+RM 289
+Terms apply. Save RM 5 with the app.
+"""
+
+
 def test_research_fares_carry_their_source_url():
     """A crawled price the traveller cannot check is barely better than a guess."""
-    fares = FlightAgent._parse_researched_fares(  # noqa: SLF001
-        SNAPSHOT, ["https://www.skyscanner.net/kul-bki"], "KUL", "BKI", 0
+    fares = fare_extract.extract_fares(
+        SNAPSHOT_BLOCKS,
+        source_url="https://www.cheapflights.com/flights/KUL-BKI/2026-11-06",
+        site_name="Cheapflights",
     )
     assert fares
     for fare in fares:
-        assert fare["source"] == "camofox"
-        assert fare["source_url"] == "https://www.skyscanner.net/kul-bki"
-        assert fare["verified"] is False
-        assert fare["bookable"] is False
+        assert fare["source_url"] == "https://www.cheapflights.com/flights/KUL-BKI/2026-11-06"
+        assert fare["site"] == "Cheapflights"
 
 
 def test_research_fares_reject_implausible_numbers():
-    """ "Save RM 5" is page furniture, not a fare."""
-    fares = FlightAgent._parse_researched_fares(  # noqa: SLF001
-        SNAPSHOT, ["https://example.com"], "KUL", "BKI", 0
+    """ "Save RM 5 with the app" is page furniture, not a fare."""
+    fares = fare_extract.extract_fares(
+        SNAPSHOT_BLOCKS, source_url="https://example.com", site_name="X"
     )
     amounts = [fare["price_amount"] for fare in fares]
     assert 5 not in amounts
-    assert all(30 <= amount <= 30_000 for amount in amounts)
+    assert all(30 <= amount <= 40_000 for amount in amounts)
 
 
-def test_research_fares_are_capped_and_deduplicated():
-    repeated = "RM 214 " * 20
-    fares = FlightAgent._parse_researched_fares(  # noqa: SLF001
-        repeated, ["https://example.com"], "KUL", "BKI", 0
+def test_a_promo_line_does_not_kill_the_whole_block():
+    """A banner sits beside results, not instead of them."""
+    fares = fare_extract.extract_fares(
+        SNAPSHOT_BLOCKS, source_url="https://example.com", site_name="X"
     )
-    assert len(fares) == 1  # deduplicated by amount
+    assert {fare["price_amount"] for fare in fares} == {214.0, 289.0}
 
 
-def test_research_fares_without_sources_have_no_citation():
-    fares = FlightAgent._parse_researched_fares(SNAPSHOT, [], "KUL", "BKI", 0)  # noqa: SLF001
-    assert all(fare["source_url"] is None for fare in fares)
+def test_airline_is_attributed_by_position_not_dict_order():
+    """The carrier heading a block wins over one mentioned later."""
+    fares = fare_extract.extract_fares(
+        SNAPSHOT_BLOCKS, source_url="https://example.com", site_name="X"
+    )
+    by_price = {fare["price_amount"]: fare["airline"] for fare in fares}
+    assert by_price[214.0] == "AirAsia"
+    assert by_price[289.0] == "Batik Air"
+
+
+def test_a_lone_number_is_not_a_fare():
+    """A price needs corroborating flight detail, or it is a coincidence.
+
+    This exact text appeared on a DuckDuckGo results page and was previously
+    reported as a KLM fare for a Kuala Lumpur–Kota Kinabalu search.
+    """
+    snapshot = "KLM Royal Dutch Airlines\nBook flights from USD 56\nExplore destinations"
+    assert fare_extract.extract_fares(snapshot, site_name="DuckDuckGo") == []
+
+
+def test_research_fares_are_deduplicated_by_price():
+    repeated = "AirAsia 20:15 nonstop RM 214\n" * 20
+    fares = fare_extract.extract_fares(repeated, source_url="https://example.com", site_name="X")
+    assert len(fares) == 1
+
+
+def test_summarise_names_the_cheapest_site():
+    """The point of comparing sites is being able to say which one won."""
+    fares = [
+        {
+            "price_amount": 289.0,
+            "price_currency": "MYR",
+            "site": "Skyscanner",
+            "source_url": "https://s",
+        },
+        {
+            "price_amount": 214.0,
+            "price_currency": "MYR",
+            "site": "Cheapflights",
+            "source_url": "https://c",
+        },
+    ]
+    summary = fare_extract.summarise_sites(fares)
+    assert summary["cheapest_site"] == "Cheapflights"
+    assert summary["cheapest_amount"] == 214.0
+    assert summary["sites_with_fares"] == 2
 
 
 # --------------------------------------------------------------------------- #

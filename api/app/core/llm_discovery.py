@@ -52,10 +52,26 @@ _OPENAI_COMPATIBLE: dict[str, tuple[str, str]] = {
 #: Substrings that mark a non-chat model. Offering these would produce a
 #: confusing failure at call time rather than at selection time.
 _NON_CHAT_MARKERS = (
-    "whisper", "tts", "embed", "embedding", "rerank", "moderation",
-    "guard", "orpheus", "stable-diffusion", "dall-e", "flux", "sora",
-    "distil-whisper", "audio", "speech", "transcribe", "image",
-    "prompt-guard", "safeguard", "vision-encoder",
+    "whisper",
+    "tts",
+    "embed",
+    "embedding",
+    "rerank",
+    "moderation",
+    "guard",
+    "orpheus",
+    "stable-diffusion",
+    "dall-e",
+    "flux",
+    "sora",
+    "distil-whisper",
+    "audio",
+    "speech",
+    "transcribe",
+    "image",
+    "prompt-guard",
+    "safeguard",
+    "vision-encoder",
 )
 
 
@@ -107,9 +123,7 @@ async def _get(
     if response.status_code == 429:
         raise DiscoveryError("Rate-limited while listing models — try again shortly.")
     if response.status_code >= 400:
-        raise DiscoveryError(
-            f"Provider returned {response.status_code}: {response.text[:160]}"
-        )
+        raise DiscoveryError(f"Provider returned {response.status_code}: {response.text[:160]}")
     try:
         return response.json()
     except ValueError as exc:
@@ -139,18 +153,20 @@ async def _openai_compatible(
         model_id = str(entry.get("id") or entry.get("name") or "").strip()
         if not model_id or not _is_chat_model(model_id):
             continue
-        models.append({
-            "value": f"{prefix}/{model_id}",
-            "label": entry.get("name") or model_id,
-            "id": model_id,
-            "context": (
-                entry.get("context_length")
-                or entry.get("context_window")
-                or (entry.get("top_provider") or {}).get("context_length")
-            ),
-            "free": ":free" in model_id,
-            "owned_by": entry.get("owned_by"),
-        })
+        models.append(
+            {
+                "value": f"{prefix}/{model_id}",
+                "label": entry.get("name") or model_id,
+                "id": model_id,
+                "context": (
+                    entry.get("context_length")
+                    or entry.get("context_window")
+                    or (entry.get("top_provider") or {}).get("context_length")
+                ),
+                "free": ":free" in model_id,
+                "owned_by": entry.get("owned_by"),
+            }
+        )
     return _sorted(models)
 
 
@@ -170,14 +186,16 @@ async def _gemini(api_key: str | None) -> list[dict[str, Any]]:
         model_id = raw.removeprefix("models/")
         if not model_id or not _is_chat_model(model_id):
             continue
-        models.append({
-            "value": f"gemini/{model_id}",
-            "label": entry.get("displayName") or model_id,
-            "id": model_id,
-            "context": entry.get("inputTokenLimit"),
-            "free": False,
-            "owned_by": "google",
-        })
+        models.append(
+            {
+                "value": f"gemini/{model_id}",
+                "label": entry.get("displayName") or model_id,
+                "id": model_id,
+                "context": entry.get("inputTokenLimit"),
+                "free": False,
+                "owned_by": "google",
+            }
+        )
     return _sorted(models)
 
 

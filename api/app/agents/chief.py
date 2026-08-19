@@ -16,7 +16,7 @@ import logging
 from typing import Any
 
 from app.agents.base import BaseAgent
-from app.agents.goal_parser import parse_goal
+from app.agents.goal_parser import parse_goal, to_iata
 from app.agents.prompts import chief_messages
 from app.agents.schemas import AgentResult, TravelerProfile, TripRequest
 from app.core.llm import LLMUnavailableError, complete
@@ -70,10 +70,13 @@ class ChiefAgent(BaseAgent):
 
         # Fill gaps in the request; never overwrite what the user typed explicitly.
         enriched: dict[str, Any] = {}
+        # Normalise to IATA here so every downstream agent, the UI and the
+        # booking API all see one canonical code rather than "KLIA" in one place
+        # and "KUL" in another.
         if merged.get("origin") and not request.origin:
-            enriched["origin"] = merged["origin"]
+            enriched["origin"] = to_iata(merged["origin"])
         if merged.get("destination") and not request.destination:
-            enriched["destination"] = merged["destination"]
+            enriched["destination"] = to_iata(merged["destination"])
         if merged.get("start_date") and not request.start_date:
             enriched["start_date"] = merged["start_date"]
         if merged.get("end_date") and not request.end_date:

@@ -43,14 +43,16 @@ async def test_chief_enrichment_reaches_specialists(request_venice):
     results = await supervisor.run_plan(request_venice, TravelerProfile())
 
     chief_data = results["chief"]["data"]
-    assert chief_data["destination"] == "Venice"
+    # Normalised to IATA by the Chief, so every downstream consumer sees one
+    # canonical code instead of "Venice" here and "VCE" in the flight agent.
+    assert chief_data["destination"] == "VCE"
     # Canonical mirror used by the UI and the disruption endpoint.
-    assert chief_data["resolved_request"]["destination"] == "Venice"
+    assert chief_data["resolved_request"]["destination"] == "VCE"
 
     # Downstream agents describe the real destination, never "unknown".
-    assert "Venice" in results["research"]["summary"]
-    assert results["weather_risk"]["data"]["destination"] == "Venice"
-    assert results["visa"]["data"]["destination"] == "Venice"
+    assert "VCE" in results["research"]["summary"]
+    assert results["weather_risk"]["data"]["destination"] == "VCE"
+    assert results["visa"]["data"]["destination"] == "VCE"
 
 
 def test_apply_chief_enrichment_coerces_iso_dates():
