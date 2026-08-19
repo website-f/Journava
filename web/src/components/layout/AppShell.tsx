@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -13,14 +13,18 @@ import {
   Download,
   History as HistoryIcon,
   KeyRound,
-} from "lucide-react";
+  LogOut,
+  Menu,
+} from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import { useTheme } from "@/lib/theme";
+import { useAuth } from "@/providers/AuthProvider";
 import { useIsDesktop, useIsMobile } from "@/hooks/useMediaQuery";
 import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Button } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { AgentStreamColumn, AgentStreamDrawer } from "./AgentStreamPanel";
+import { MobileMoreSheet } from "./MobileMoreSheet";
 
 /**
  * Primary navigation. `mobile: false` keeps a link out of the bottom tab bar —
@@ -40,6 +44,10 @@ const LINKS = [
 
 const MOBILE_LINKS = LINKS.filter((link) => link.mobile);
 
+//: Surfaces only a platform admin may open — hidden from the nav for everyone
+//: else (and gated in the router too).
+const ADMIN_ONLY = new Set<string>(["/engine", "/vault"]);
+
 /**
  * Responsive shell — spec §10.7.
  * Desktop: sidebar + main + optional right panel.
@@ -52,6 +60,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const { events } = useAgentStream();
   const { canInstall, install } = useInstallPrompt();
+  const { user, isPlatformAdmin, signOut } = useAuth();
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const visibleLinks = LINKS.filter(
+    (link) => !ADMIN_ONLY.has(link.to) || isPlatformAdmin,
+  );
+  // Everything not in the mobile bottom bar (Profile always; Engine/Vault for
+  // admins) lives behind the mobile "More" sheet so it's reachable on a phone.
+  const secondaryLinks = visibleLinks.filter((link) => !link.mobile);
 
   // Global toast when any agent emits an "error" status
   const lastErrorId = useRef<string | null>(null);
@@ -101,7 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             Journava
           </h1>
           <nav className="flex flex-col gap-1">
-            {LINKS.map(({ to, label, icon: Icon }) => (
+            {visibleLinks.map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -120,12 +137,28 @@ export function AppShell({ children }: { children: ReactNode }) {
               </NavLink>
             ))}
           </nav>
-          <div className="mt-auto flex flex-col gap-1">
+          <div className="mt-auto flex flex-col gap-2">
             {canInstall && (
               <Button variant="ghost" size="sm" onClick={install} className="text-xs">
                 <Download className="h-4 w-4" /> Install App
               </Button>
             )}
+            <div className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] p-2">
+              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--brand-400)_18%,transparent)] text-xs font-semibold text-[var(--brand-500)]">
+                {(user?.display_name || user?.email || "?").slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium">{user?.display_name ?? "Account"}</p>
+                <p className="truncate text-[0.65rem] text-[var(--muted)]">{user?.email}</p>
+              </div>
+              <button
+                onClick={() => signOut()}
+                aria-label="Sign out"
+                className="shrink-0 rounded-[var(--r-sm)] p-1.5 text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
             <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
               {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
@@ -136,9 +169,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           <h1 className="font-[family-name:var(--font-display)] text-lg tracking-tight">
             Journava
           </h1>
-          <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
-            {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
+              {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => signOut()} aria-label="Sign out">
+              <LogOut className="h-5 w-5" />
+            </Button>
+          </div>
         </header>
       )}
 
@@ -163,7 +201,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav
           className="sticky bottom-0 z-40 grid border-t border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]"
           style={{
-            gridTemplateColumns: `repeat(${MOBILE_LINKS.length}, minmax(0, 1fr))`,
+            gridTemplateColumns: `repeat(${MOBILE_LINKS.length + 1}, minmax(0, 1fr))`,
           }}
         >
           {MOBILE_LINKS.map(({ to, label, icon: Icon }) => {
@@ -182,8 +220,22 @@ export function AppShell({ children }: { children: ReactNode }) {
               </NavLink>
             );
           })}
+          <button
+            onClick={() => setMoreOpen(true)}
+            className={cn(
+              "flex flex-col items-center gap-0.5 py-2 text-[0.65rem] font-medium",
+              secondaryLinks.some((l) => l.to === location.pathname)
+                ? "text-[var(--brand-500)]"
+                : "text-[var(--muted)]",
+            )}
+          >
+            <Menu className="h-5 w-5" />
+            More
+          </button>
         </nav>
       )}
+
+      <MobileMoreSheet open={moreOpen} onOpenChange={setMoreOpen} links={secondaryLinks} />
     </div>
   );
 }

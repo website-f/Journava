@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { API_BASE } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth";
 import { openAgentStream, type AgentEvent, type StreamHandle } from "@/lib/sse";
 
 const MAX_EVENTS = 200;
@@ -38,7 +39,13 @@ function emit(next: Partial<StreamState>) {
 
 function connect() {
   if (handle) return;
-  handle = openAgentStream(`${API_BASE}/events`, {
+  // EventSource can't send an Authorization header, so the access token rides in
+  // the query string (the auth middleware accepts it for /events only).
+  const token = getAccessToken();
+  const url = token
+    ? `${API_BASE}/events?token=${encodeURIComponent(token)}`
+    : `${API_BASE}/events`;
+  handle = openAgentStream(url, {
     onOpen: () => emit({ connected: true }),
     onError: () => emit({ connected: false }),
     onEvent: (event) => {

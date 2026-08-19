@@ -47,21 +47,15 @@ class MemoryAgent(BaseAgent):
         *,
         context: dict[str, Any] | None = None,
     ) -> AgentResult:
-        # 1. Keep the standing preferences in long-term memory (§3.5). Only write
-        # when they actually changed — Gnosion appends entries, so an
-        # unconditional write per run would pile up identical copies and inflate
-        # the brain graph's weights with no new information.
-        current = profile.model_dump_json()
-        if self._stored_profile_json() != current:
-            gnosion_client.remember(PROFILE_DOMAIN, key="current", value=current)
-
-        # 2. Capture this run's experience so the next trip starts smarter.
+        # Capture this run's experience so the next trip starts smarter. The
+        # standing profile itself is written per-user by the /profile endpoint,
+        # never re-seeded here — so one user's run can't clobber another's.
         written = self._capture_experience(request, context or {})
 
         snapshot = gnosion_client.snapshot()
         return AgentResult(
             agent=self.slug,
-            summary=(f"Profile seeded · {written} memories written ({snapshot['backend']})"),
+            summary=(f"{written} memories written ({snapshot['backend']})"),
             data={
                 "brain_available": gnosion_client.available(),
                 "backend": snapshot["backend"],
@@ -73,15 +67,6 @@ class MemoryAgent(BaseAgent):
     # ---------------------------------------------------------------------- #
     # Experience capture
     # ---------------------------------------------------------------------- #
-
-    @staticmethod
-    def _stored_profile_json() -> str | None:
-        """The raw profile JSON currently in the brain, if any."""
-        stored = gnosion_client.recall(PROFILE_DOMAIN, "current")
-        if not stored:
-            return None
-        raw = stored["value"] if isinstance(stored, dict) else stored
-        return raw if isinstance(raw, str) else None
 
     def _capture_experience(
         self,
@@ -155,9 +140,15 @@ class MemoryAgent(BaseAgent):
     # ---------------------------------------------------------------------- #
 
     @staticmethod
-    def load_profile() -> TravelerProfile:
-        """Recall the stored profile; an empty profile means "search globally"."""
-        stored = gnosion_client.recall(PROFILE_DOMAIN, "current")
+    def _profile_key(user_id: str | None) -> str:
+        """The brain key for a user's profile. Falls back to a shared key for
+        unauthenticated/legacy callers so nothing breaks without a user id."""
+        return f"user:{user_id}" if user_id else "current"
+
+    @staticmethod
+    def load_profile(user_id: str | None = None) -> TravelerProfile:
+        """Recall a user's stored profile; an empty profile means "search globally"."""
+        stored = gnosion_client.recall(PROFILE_DOMAIN, MemoryAgent._profile_key(user_id))
         if not stored:
             return TravelerProfile()
         try:
@@ -166,6 +157,15 @@ class MemoryAgent(BaseAgent):
         except Exception as exc:  # noqa: BLE001 — a bad record must not break a run
             logger.warning("Stored profile unreadable (%s) — searching globally", exc)
             return TravelerProfile()
+
+    @staticmethod
+    def save_profile(profile: TravelerProfile, user_id: str | None = None) -> None:
+        """Persist a user's standing preferences (seed of long-term memory, §3.5)."""
+        gnosion_client.remember(
+            PROFILE_DOMAIN,
+            key=MemoryAgent._profile_key(user_id),
+            value=profile.model_dump_json(),
+        )
 
     @staticmethod
     def record_outcome(

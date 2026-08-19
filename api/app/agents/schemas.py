@@ -59,7 +59,7 @@ class TripRequest(BaseModel):
 
 #: Where an option came from. Surfaced as a badge so the traveller can tell a
 #: bookable API fare from something an agent read on a web page (§5).
-OptionSource = Literal["atlas", "amadeus", "camofox", "llm", "mock", "research"]
+OptionSource = Literal["atlas", "amadeus", "camofox", "llm", "mock", "research", "supplier"]
 
 
 class Option(BaseModel):

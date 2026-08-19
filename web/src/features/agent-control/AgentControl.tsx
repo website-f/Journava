@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -9,9 +9,10 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Brain } from "lucide-react";
+import { Brain, Bot, Activity, GitCompareArrows } from "@/components/ui/icons";
 
 import { cn } from "@/lib/cn";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import type { AgentStatus } from "@/lib/sse";
 import { useIsMobile } from "@/hooks/useMediaQuery";
@@ -185,40 +186,49 @@ export function AgentControl() {
     );
   }, [statusMap, setNodes]);
 
-  if (isMobile) {
-    // Simplified list view on mobile
-    return (
-      <div className="mx-auto w-full max-w-lg">
-        <ControlHeader connected={connected} />
-        <div className="space-y-2 mb-6">
-          {AGENTS.map((agent) => {
-            const latest = statusMap[agent.slug];
-            const status: AgentStatus = latest?.status ?? "idle";
-            return (
-              <div key={agent.slug} className="surface-card p-3 flex items-center gap-3">
-                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: STATUS_COLORS[status] }} />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{agent.name}</p>
-                  <p className="text-xs text-[var(--muted)] truncate">{latest?.message ?? agent.role}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <EventStream events={events} />
-      </div>
-    );
-  }
+  const roster = (
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      {AGENTS.map((agent) => {
+        const latest = statusMap[agent.slug];
+        const status: AgentStatus = latest?.status ?? "idle";
+        return (
+          <div key={agent.slug} className="surface-card p-3 flex items-center gap-3">
+            <span
+              className="h-2.5 w-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: STATUS_COLORS[status] }}
+            />
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{agent.name}</p>
+              <p className="text-xs text-[var(--muted)] truncate">{latest?.message ?? agent.role}</p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="mx-auto w-full max-w-6xl">
       <ControlHeader connected={connected} />
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
-        {/* React Flow graph + Brain Graph */}
-        <div className="space-y-4">
-          {/* Agent Topology */}
-          <div className="surface-card overflow-hidden" style={{ height: 480 }}>
+      <Tabs defaultValue={isMobile ? "roster" : "topology"}>
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="topology">
+            <GitCompareArrows className="h-4 w-4" /> Topology
+          </TabsTrigger>
+          <TabsTrigger value="roster">
+            <Bot className="h-4 w-4" /> Roster
+          </TabsTrigger>
+          <TabsTrigger value="live">
+            <Activity className="h-4 w-4" /> Live
+          </TabsTrigger>
+          <TabsTrigger value="brain">
+            <Brain className="h-4 w-4" /> Brain
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="topology">
+          <div className="surface-card overflow-hidden" style={{ height: isMobile ? 360 : 480 }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -234,14 +244,20 @@ export function AgentControl() {
               <Background />
             </ReactFlow>
           </div>
+        </TabsContent>
 
-          {/* Brain Graph — collapsible panel */}
-          <BrainGraphPanel />
-        </div>
+        <TabsContent value="roster">{roster}</TabsContent>
 
-        {/* Event stream */}
-        <EventStream events={events} />
-      </div>
+        <TabsContent value="live">
+          <EventStream events={events} />
+        </TabsContent>
+
+        <TabsContent value="brain">
+          <div className="surface-card p-3">
+            <BrainGraph />
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -314,32 +330,3 @@ function AgentNodeComponent({ data }: { data: { label: string; status: AgentStat
   );
 }
 
-/** Collapsible Brain Graph panel below the agent topology. */
-function BrainGraphPanel() {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-      <button
-        onClick={() => setOpen(!open)}
-        className={cn(
-          "w-full flex items-center justify-between px-4 py-3 text-sm font-medium transition-colors",
-          "hover:bg-[color-mix(in_srgb,var(--brand-400)_6%,transparent)]",
-        )}
-      >
-        <span className="flex items-center gap-2">
-          <Brain className="h-4 w-4 text-[var(--brand-500)]" />
-          Brain — Knowledge Graph
-        </span>
-        <span className="text-xs text-[var(--muted)]">
-          {open ? "Hide" : "Show"}
-        </span>
-      </button>
-      {open && (
-        <div className="px-3 pb-3">
-          <BrainGraph />
-        </div>
-      )}
-    </div>
-  );
-}

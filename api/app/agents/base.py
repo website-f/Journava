@@ -22,6 +22,12 @@ class BaseAgent(ABC):
     name: str = "Agent"
     #: One-line role description.
     role: str = ""
+    #: Which pack this agent belongs to. Travel is the first pack; the runtime is
+    #: domain-agnostic, so future packs (email, finance…) declare their own.
+    domain: str = "travel"
+    #: Declarative capability tags the orchestrator/catalog route on, so a new
+    #: agent is discovered by what it can do rather than by a hardcoded branch.
+    capabilities: tuple[str, ...] = ()
 
     def emit(
         self,

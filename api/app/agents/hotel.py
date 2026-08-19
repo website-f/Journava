@@ -17,6 +17,7 @@ from app.agents.schemas import AgentResult, Option, Scope, TravelerProfile, Trip
 from app.core.cache import cached
 from app.core.llm import LLMUnavailableError, complete
 from app.core.settings import settings
+from app.supplier import store as supplier_store
 
 logger = logging.getLogger(__name__)
 
@@ -49,16 +50,66 @@ class HotelAgent(BaseAgent):
 
         options = await self._search(request, profile, destination)
 
+        # Partner (direct) inventory ranks alongside the crawled/LLM options but
+        # is bookable and keeps the guest relationship with the property — the
+        # B2B side of the marketplace (no OTA commission).
+        direct = await self._supplier_options(destination)
+        options = direct + options
+
         # Build ranking buckets (spec §5 reconciliation pattern)
         ranking = self._rank(options)
 
+        direct_note = f" · {len(direct)} direct from partners" if direct else ""
         return AgentResult(
             agent=self.slug,
-            summary=f"{len(options)} hotel options found in {destination}",
+            summary=f"{len(options)} hotel options found in {destination}{direct_note}",
             options=options,
             applied_preferences=applied,
-            data={"ranking": ranking},
+            data={"ranking": ranking, "direct_count": len(direct)},
         )
+
+    async def _supplier_options(self, destination: str) -> list[Option]:
+        """Bookable direct listings from partner suppliers for this destination."""
+        try:
+            listings = await supplier_store.search_for_destination(destination)
+        except Exception as exc:  # noqa: BLE001 — a partner miss never breaks a run
+            logger.debug("supplier search failed: %s", exc)
+            return []
+
+        options: list[Option] = []
+        for item in listings:
+            price = item.get("price_amount")
+            options.append(
+                Option(
+                    id=f"SUP-{item['listing_id'][:8]}",
+                    kind="hotel",
+                    title=f"{item['property_name']} — {item['title']}",
+                    price_amount=Decimal(str(price)) if price is not None else None,
+                    price_currency=item.get("price_currency", "MYR"),
+                    provider=f"Direct · {item['property_name']}",
+                    reasoning=(
+                        "Direct from the property — no OTA commission; booking connects "
+                        "you straight to the hotel."
+                    ),
+                    verified=True,
+                    source="supplier",
+                    bookable=True,
+                    raw={
+                        "source": "supplier",
+                        "direct": True,
+                        "listing_id": item["listing_id"],
+                        "property_id": item["property_id"],
+                        "org_id": item["org_id"],
+                        "halal_friendly": item.get("halal_friendly"),
+                        "perks": item.get("perks", []),
+                        "near_transit": False,
+                        "stars": 0,
+                    },
+                )
+            )
+        if options:
+            self.emit("active", f"{len(options)} direct listing(s) from partner properties")
+        return options
 
     async def _search(
         self,

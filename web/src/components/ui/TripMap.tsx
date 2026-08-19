@@ -10,7 +10,7 @@
 import { useEffect, useRef, useMemo } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Navigation } from "lucide-react";
+import { Navigation } from "@/components/ui/icons";
 import { usePlanStore } from "@/stores/planStore";
 
 /** Default center: Venice (our demo destination) */

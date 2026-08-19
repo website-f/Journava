@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -16,6 +16,12 @@ from pydantic import BaseModel
 from app.agents import REGISTRY
 from app.agents.memory import MemoryAgent
 from app.agents.schemas import TravelerProfile, TripRequest
+from app.auth import store as auth_store
+from app.auth.deps import current_user_id
+from app.auth.middleware import AuthMiddleware
+from app.auth.router import router as auth_router
+from app.runtime.router import router as runtime_router
+from app.supplier.router import router as supplier_router
 from app.brain import bookings, gnosion_client, history, outcomes, trip_store
 from app.brain.demo_trip import get_demo_trip
 from app.brain.trip_store import reconstruct_request
@@ -48,6 +54,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Warm the optional dependencies; none of them are required to boot."""
     logger.info("Journava API starting (%s)", settings.environment)
     await db.init_schema()
+    await auth_store.seed_demo_users()
     await cache.get_redis()
     # Restore the last trip from Postgres, or seed the demo trip so My Trip has
     # something to render on a cold first boot.
@@ -69,6 +76,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Auth gate is added BEFORE CORS so CORS ends up outermost — a 401/403 from the
+# auth middleware still carries the CORS headers the browser needs to read it.
+app.add_middleware(AuthMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -76,6 +87,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+app.include_router(runtime_router)
+app.include_router(supplier_router)
 
 
 # --------------------------------------------------------------------------- #
@@ -162,20 +177,20 @@ class PlanResponse(BaseModel):
 
 
 @app.post(f"{settings.api_prefix}/plan", response_model=PlanResponse, tags=["planning"])
-async def plan(request: PlanRequest) -> PlanResponse:
+async def plan(body: PlanRequest, request: Request) -> PlanResponse:
     """Run a planning pass for one scope.
 
-    The profile is read first: a preference narrows scope, its absence means
-    global search (§7.5). The result is persisted as the active trip, and
-    recorded in history so it can be reopened without replaying the agents.
+    The signed-in user's profile is read first: a preference narrows scope, its
+    absence means global search (§7.5). The result is persisted as the active
+    trip, and recorded in history so it can be reopened without replaying agents.
     """
     import time
 
-    scope = scopes.get(request.scope)
+    scope = scopes.get(body.scope)
     trip_request = TripRequest.model_validate(
-        request.model_dump(exclude={"scope"}, exclude_none=True)
+        body.model_dump(exclude={"scope"}, exclude_none=True)
     )
-    profile = MemoryAgent.load_profile()
+    profile = MemoryAgent.load_profile(current_user_id(request))
 
     started = time.monotonic()
     results = await run_plan(trip_request, profile, scope=scope)
@@ -325,14 +340,14 @@ async def disruption(request: DisruptionRequest) -> DisruptionResponse:
 
 
 @app.get(f"{settings.api_prefix}/profile", response_model=TravelerProfile, tags=["profile"])
-async def get_profile() -> TravelerProfile:
-    return MemoryAgent.load_profile()
+async def get_profile(request: Request) -> TravelerProfile:
+    return MemoryAgent.load_profile(current_user_id(request))
 
 
 @app.post(f"{settings.api_prefix}/profile", response_model=TravelerProfile, tags=["profile"])
-async def save_profile(profile: TravelerProfile) -> TravelerProfile:
-    """Persist standing preferences into Gnosion (seed of long-term memory)."""
-    gnosion_client.remember("traveler_profile", key="current", value=profile.model_dump_json())
+async def save_profile(profile: TravelerProfile, request: Request) -> TravelerProfile:
+    """Persist the signed-in user's standing preferences (§3.5)."""
+    MemoryAgent.save_profile(profile, current_user_id(request))
     sse.publish("memory", "active", "Traveler profile updated")
     return profile
 

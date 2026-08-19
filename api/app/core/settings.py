@@ -58,6 +58,25 @@ class Settings(BaseSettings):
     # the DB password would make the whole vault unreadable.
     vault_encryption_key: str | None = None
 
+    # --- Auth ---
+    # HS256 signing secret for access tokens. If unset, a key is derived from the
+    # vault key / DB URL so single-operator dev works out of the box — set an
+    # explicit value in production.
+    jwt_secret: str | None = None
+    access_token_ttl_minutes: int = 30
+    refresh_token_ttl_days: int = 14
+    auth_cookie_name: str = "journava_refresh"
+    # Send the refresh cookie only over HTTPS. False for local http://localhost;
+    # set true in production (behind the shared Caddy TLS).
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    # Login throttle: max failed attempts per (email+ip) window before lockout.
+    login_max_attempts: int = 8
+    login_window_seconds: int = 900
+    # Seed demo users on boot (dev/hackathon). Disable in a real deployment.
+    seed_demo_users: bool = True
+    seed_demo_password: str = "Journava!2026"
+
     # --- Brain (Gnosion) ---
     gnosion_brain_path: str = "data/journava.gnosion"
     gnosion_mcp_url: str | None = None

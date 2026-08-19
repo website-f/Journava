@@ -1,4 +1,4 @@
-import { ArrowLeft, Briefcase, Cloud, RotateCcw, ShieldAlert, TrendingUp } from "lucide-react";
+import { ArrowLeft, Briefcase, Cloud, RotateCcw, ShieldAlert, TrendingUp } from "@/components/ui/icons";
 import { Badge, Button, OptionCard } from "@/components/ui";
 import { SourceTrustRow } from "@/components/ui/SourceBadge";
 import { FlightResults } from "@/features/flights/FlightResults";

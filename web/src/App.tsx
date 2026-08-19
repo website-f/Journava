@@ -1,9 +1,11 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, type ReactNode } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AppShell } from "@/components/layout/AppShell";
-import { Skeleton } from "@/components/ui";
+import { Skeleton, Spinner } from "@/components/ui";
 import { CommandCenter } from "@/features/command-center/CommandCenter";
+import { LoginPage } from "@/features/auth/LoginPage";
+import { useAuth } from "@/providers/AuthProvider";
 
 /*
  * The Command Center is the landing surface, so it stays in the main bundle.
@@ -57,6 +59,23 @@ function RouteFallback() {
 
 export function App() {
   const location = useLocation();
+  const { status, isPlatformAdmin } = useAuth();
+
+  // Auth wall (spec §1): restoring a session, then either the app or login.
+  if (status === "loading") {
+    return (
+      <div className="min-h-[100dvh] grid place-items-center bg-[var(--bg)]">
+        <Spinner className="h-6 w-6 text-[var(--brand-500)]" />
+      </div>
+    );
+  }
+  if (status === "guest") {
+    return <LoginPage />;
+  }
+
+  // Admin-only surfaces are gated in the router too, not just hidden in the nav.
+  const adminEl = (el: ReactNode) =>
+    isPlatformAdmin ? el : <Navigate to="/" replace />;
 
   return (
     <AppShell>
@@ -75,8 +94,8 @@ export function App() {
               <Route path="/research" element={<ResearchBoard />} />
               <Route path="/trip" element={<MyTrip />} />
               <Route path="/agents" element={<AgentControl />} />
-              <Route path="/engine" element={<EngineSettings />} />
-              <Route path="/vault" element={<ApiVault />} />
+              <Route path="/engine" element={adminEl(<EngineSettings />)} />
+              <Route path="/vault" element={adminEl(<ApiVault />)} />
               <Route path="/history" element={<History />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="*" element={<Navigate to="/" replace />} />

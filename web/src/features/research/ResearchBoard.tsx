@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import {
   Compass, Globe, ShieldAlert, Newspaper, ThumbsUp, ThumbsDown,
   TrendingUp, GitCompareArrows, BadgeCheck, ShieldQuestion,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge, Skeleton } from "@/components/ui";
 import type { ItineraryItem, PlanOption } from "@/stores/planStore";
 import { useActiveTrip } from "@/hooks/useActiveTrip";

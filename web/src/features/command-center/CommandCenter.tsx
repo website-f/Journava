@@ -5,7 +5,8 @@ import { LoadingOverlay, Skeleton, confirm } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { usePlanStore } from "@/stores/planStore";
-import type { PlanResponse, Scope } from "@/lib/types";
+import type { Scope } from "@/lib/types";
+import { PersonalHome } from "@/features/home/PersonalHome";
 import { ScopePicker } from "./ScopePicker";
 import { ScopedConsole } from "./ScopedConsole";
 import { ScopedResults } from "./ScopedResults";
@@ -29,14 +30,13 @@ export function CommandCenter() {
   const { events } = useAgentStream();
 
   const [scopes, setScopes] = useState<Scope[] | null>(null);
-  const [running, setRunning] = useState(false);
 
   const results = usePlanStore((s) => s.results);
   const activeScope = usePlanStore((s) => s.activeScope);
-  const setResults = usePlanStore((s) => s.setResults);
-  const setError = usePlanStore((s) => s.setError);
   const inputs = usePlanStore((s) => s.inputs);
   const resetInputs = usePlanStore((s) => s.resetInputs);
+  const jobRunning = usePlanStore((s) => s.jobRunning);
+  const runPlanJob = usePlanStore((s) => s.runPlanJob);
 
   const scopeSlug = searchParams.get("scope");
   const scope = scopes?.find((entry) => entry.slug === scopeSlug) ?? null;
@@ -66,35 +66,28 @@ export function CommandCenter() {
 
   const runPlan = async () => {
     if (!scope) return;
-    setRunning(true);
-    try {
-      const payload: Record<string, unknown> = {
-        goal: inputs.goal.trim(),
-        scope: scope.slug,
-        travellers: inputs.travellers,
-        budget_currency: inputs.budget_currency,
-      };
-      // Only send what the traveller actually filled in — an empty string would
-      // fail date validation, and a zero budget is not the same as "no budget".
-      if (inputs.start_date) payload.start_date = inputs.start_date;
-      if (inputs.end_date) payload.end_date = inputs.end_date;
-      if (inputs.budget_amount) payload.budget_amount = Number(inputs.budget_amount);
-      if (scope.inputs.includes("pace")) payload.pace = inputs.pace;
+    const payload: Record<string, unknown> = {
+      goal: inputs.goal.trim(),
+      scope: scope.slug,
+      travellers: inputs.travellers,
+      budget_currency: inputs.budget_currency,
+    };
+    // Only send what the traveller actually filled in — an empty string would
+    // fail date validation, and a zero budget is not the same as "no budget".
+    if (inputs.start_date) payload.start_date = inputs.start_date;
+    if (inputs.end_date) payload.end_date = inputs.end_date;
+    if (inputs.budget_amount) payload.budget_amount = Number(inputs.budget_amount);
+    if (scope.inputs.includes("pace")) payload.pace = inputs.pace;
 
-      const response = await api.post<PlanResponse>("/plan", payload);
-      setResults(response.results, response.scope, {
-        durationMs: response.duration_ms,
-        historyId: response.history_id,
-      });
+    // Dispatch a background job (agents run off-request) and poll it in the
+    // store, so navigating to the Agents Workspace doesn't cancel the run.
+    await runPlanJob(payload);
 
-      const seconds = (response.duration_ms / 1000).toFixed(1);
-      toast.success(`${scope.label} done in ${seconds}s`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Planning failed";
-      setError(message);
-      toast.error(message);
-    } finally {
-      setRunning(false);
+    const { error: runError, lastDurationMs } = usePlanStore.getState();
+    if (runError) {
+      toast.error(runError);
+    } else if (lastDurationMs != null) {
+      toast.success(`${scope.label} done in ${(lastDurationMs / 1000).toFixed(1)}s`);
     }
   };
 
@@ -129,16 +122,36 @@ export function CommandCenter() {
 
   return (
     <>
-      <LoadingOverlay open={running} events={events} onCancel={cancel} />
+      <LoadingOverlay
+        open={jobRunning}
+        events={events}
+        onCancel={cancel}
+        onWatch={() => navigate("/agents")}
+      />
 
-      {phase === "pick" && <ScopePicker scopes={scopes} onPick={pickScope} />}
+      {phase === "pick" && (
+        <div className="space-y-9">
+          <PersonalHome
+            onLaunch={(slug, goal) => {
+              resetInputs(goal ?? "");
+              setSearchParams({ scope: slug });
+            }}
+          />
+          <div className="mx-auto w-full max-w-5xl">
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+              Or choose a mode
+            </h2>
+            <ScopePicker scopes={scopes} onPick={pickScope} />
+          </div>
+        </div>
+      )}
 
       {phase === "ask" && scope && (
         <ScopedConsole
           scope={scope}
           onBack={backToPicker}
           onRun={() => void runPlan()}
-          running={running}
+          running={jobRunning}
         />
       )}
 

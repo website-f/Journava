@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2, ShieldAlert, ShieldCheck, Newspaper } from "lucide-react";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2, ShieldAlert, ShieldCheck, Newspaper } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
 
 // MapLibre is ~1MB; load it only when this page actually renders.

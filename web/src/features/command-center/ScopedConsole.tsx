@@ -1,4 +1,4 @@
-import { ArrowLeft, Mic, Paperclip, Image as ImageIcon, Sparkles, Video } from "lucide-react";
+import { ArrowLeft, Mic, Paperclip, Image as ImageIcon, Sparkles, Video } from "@/components/ui/icons";
 import { toast } from "sonner";
 import { Badge, Button, Select } from "@/components/ui";
 import { cn } from "@/lib/cn";

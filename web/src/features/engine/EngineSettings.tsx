@@ -13,7 +13,7 @@ import {
   Save,
   Trash2,
   Zap,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { toast } from "sonner";
 import {
   Badge,

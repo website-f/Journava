@@ -3,7 +3,7 @@
  * price, halal badge, and verified indicator (spec §3.2 explainability).
  */
 
-import { CheckCircle, AlertTriangle } from "lucide-react";
+import { CheckCircle, AlertTriangle } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import { Badge } from "./Badge";
 import type { PlanOption } from "@/stores/planStore";

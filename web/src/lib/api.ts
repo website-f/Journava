@@ -3,6 +3,12 @@
  * All calls go through /api (Vite proxies it in dev, Caddy routes it in prod).
  */
 
+import {
+  emitAuthFailure,
+  getAccessToken,
+  refreshAccessToken,
+} from "./auth";
+
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "/api/v1";
 
 export class ApiError extends Error {
@@ -22,7 +28,11 @@ type RequestOptions = Omit<RequestInit, "body"> & {
   params?: Record<string, string | number | boolean | undefined>;
 };
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  options: RequestOptions = {},
+  retried = false,
+): Promise<T> {
   const { body, params, headers, ...rest } = options;
 
   const url = new URL(
@@ -33,14 +43,25 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (value !== undefined) url.searchParams.set(key, String(value));
   }
 
+  const token = getAccessToken();
   const res = await fetch(url.toString().replace(url.origin, ""), {
     ...rest,
+    credentials: "include",
     headers: {
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+
+  // Access token expired mid-session: refresh once against the cookie, retry.
+  // A second 401 means the session is truly gone — bounce to the login screen.
+  if (res.status === 401 && !retried && !path.startsWith("/auth/")) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) return request<T>(path, options, true);
+    emitAuthFailure();
+  }
 
   if (res.status === 204) return undefined as T;
 

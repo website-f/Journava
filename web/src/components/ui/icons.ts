@@ -1,0 +1,90 @@
+/**
+ * Icon set — Phosphor, aliased to the names the app already uses.
+ *
+ * Journava's icons are Phosphor (distinctive, consistent weights) rather than
+ * the ubiquitous default set. Re-exporting under the previous names means every
+ * call site (`<Home />`, `<Search />`, …) keeps working — only the import source
+ * changed to `@/components/ui/icons`. If a mapping is ever wrong, it fails here,
+ * in one file, not scattered across the app.
+ */
+
+import type { Icon } from "@phosphor-icons/react";
+
+/** A Phosphor icon component — replaces the old `LucideIcon` type. */
+export type IconType = Icon;
+export type { Icon };
+
+export {
+  Pulse as Activity,
+  Warning as AlertTriangle,
+  Warning as TriangleAlert,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  SealCheck as BadgeCheck,
+  Robot as Bot,
+  Brain,
+  Briefcase,
+  Buildings as Building2,
+  Bus,
+  CalendarBlank as Calendar,
+  Check,
+  CheckCircle,
+  CheckCircle as CheckCircle2,
+  CaretDown as ChevronDown,
+  Circle,
+  Clock,
+  Cloud,
+  Compass,
+  Cpu,
+  CreditCard,
+  DownloadSimple as Download,
+  ArrowSquareOut as ExternalLink,
+  Eye,
+  FileText as FileCheck2,
+  Flask as FlaskConical,
+  GitDiff as GitCompareArrows,
+  Globe,
+  DotsSixVertical as GripHorizontal,
+  ClockCounterClockwise as History,
+  House as Home,
+  Image,
+  Info,
+  Key as KeyRound,
+  List as Menu,
+  CircleNotch as Loader2,
+  SignIn as LogIn,
+  SignOut as LogOut,
+  Microphone as Mic,
+  Moon,
+  NavigationArrow as Navigation,
+  Newspaper,
+  SidebarSimple as PanelsTopLeft,
+  Paperclip,
+  AirplaneTilt as Plane,
+  Plug,
+  Plus,
+  ArrowsClockwise as RefreshCw,
+  ArrowCounterClockwise as RotateCcw,
+  FloppyDisk as Save,
+  MagnifyingGlass as Search,
+  ShieldWarning as ShieldAlert,
+  ShieldCheck,
+  Question as ShieldQuestion,
+  ShoppingCart,
+  Sparkle as Sparkles,
+  Sun,
+  ThumbsDown,
+  ThumbsUp,
+  Ticket,
+  Trash as Trash2,
+  TrendUp as TrendingUp,
+  User,
+  UserPlus,
+  ForkKnife as Utensils,
+  VideoCamera as Video,
+  Wallet,
+  X,
+  Lightning as Zap,
+} from "@phosphor-icons/react";

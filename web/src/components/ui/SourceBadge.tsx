@@ -1,4 +1,4 @@
-import { BadgeCheck, ExternalLink, FlaskConical, Globe, Sparkles } from "lucide-react";
+import { BadgeCheck, ExternalLink, FlaskConical, Globe, Sparkles } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import type { OptionSource, PlanOption } from "@/lib/types";
 

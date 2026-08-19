@@ -6,7 +6,7 @@ import {
   Info,
   Plane,
   ShoppingCart,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { Badge, Button } from "@/components/ui";
 import { SourceTrustRow } from "@/components/ui/SourceBadge";
 import { cn } from "@/lib/cn";

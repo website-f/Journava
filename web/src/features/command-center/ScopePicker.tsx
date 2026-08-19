@@ -9,8 +9,8 @@ import {
   Sparkles,
   Utensils,
   Wallet,
-  type LucideIcon,
-} from "lucide-react";
+  type IconType,
+} from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import { Badge } from "@/components/ui";
 import type { Scope } from "@/lib/types";
@@ -27,7 +27,7 @@ import type { Scope } from "@/lib/types";
  * is visible before it is made.
  */
 
-const ICONS: Record<string, LucideIcon> = {
+const ICONS: Record<string, IconType> = {
   sparkles: Sparkles,
   plane: Plane,
   utensils: Utensils,

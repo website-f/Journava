@@ -26,6 +26,9 @@ dependencies = [
     # The Atlas Flight Booking CLI (`atlas-flight`) that tools/atlas_skill.py shells
     # out to. Without it, `atlas-flight: not found` and Atlas is always EMPTY.
     "atlas-flight-booking>=0.3.12,<1",
+    # Auth: Argon2id password hashing + JWT access/refresh tokens.
+    "argon2-cffi>=23,<25",
+    "pyjwt>=2.9,<3",
 ]
 
 [project.optional-dependencies]

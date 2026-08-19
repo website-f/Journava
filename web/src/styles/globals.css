@@ -64,24 +64,25 @@
    Journava design tokens — "Aurora"  (spec §10.1)
    ========================================================================= */
 :root {
-  /* Brand */
-  --brand-600: #4338ca;
-  --brand-500: #4f46e5;
-  --brand-400: #6366f1;
-  --accent: #22d3ee; /* aqua */
-  --warm: #fb7185; /* coral */
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --info: #3b82f6;
+  /* Brand — flat "Pine & Sand": a confident deep teal + one warm accent.
+     Deliberately not the indigo/aqua gradient look; solid fills only. */
+  --brand-600: #0b5c52;
+  --brand-500: #0f766e;
+  --brand-400: #14b8a6;
+  --accent: #e0973b; /* sand / amber — the single warm accent */
+  --warm: #e2653c; /* terracotta, used sparingly */
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #2563eb;
 
-  /* Light surfaces */
-  --bg: #f6f7fb;
+  /* Light surfaces — warm paper neutrals, not blue-gray */
+  --bg: #f7f6f2;
   --surface: #ffffff;
   --elevated: #ffffff;
-  --text: #0b1020;
-  --muted: #5b6478;
-  --border: #e6e8f0;
+  --text: #17201c;
+  --muted: #667069;
+  --border: #e6e3db;
 
   /* Radii / elevation / motion */
   --r-sm: 10px;
@@ -104,12 +105,13 @@
 }
 
 :root[data-theme="dark"] {
-  --bg: #0b1020;
-  --surface: #141b31;
-  --elevated: #1b2440;
-  --text: #e6e9f2;
-  --muted: #94a0b8;
-  --border: #232c47;
+  /* Deep warm charcoal-green, so the teal brand still reads on dark. */
+  --bg: #0e1512;
+  --surface: #141c19;
+  --elevated: #1a2420;
+  --text: #e9ece7;
+  --muted: #93a09a;
+  --border: #26302c;
   --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
@@ -221,13 +223,14 @@ h4 {
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(var(--brand-400), var(--accent));
+  background: color-mix(in srgb, var(--brand-400) 55%, transparent);
   border-radius: var(--r-pill);
   border: 2px solid transparent;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
   background: var(--brand-500);
+  background-clip: content-box;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
@@ -241,7 +244,7 @@ h4 {
   width: 100%;
   transform-origin: 0 50%;
   transform: scaleX(var(--p, 0));
-  background: linear-gradient(90deg, var(--brand-500), var(--accent));
+  background: var(--brand-500);
   z-index: 60;
   pointer-events: none;
 }

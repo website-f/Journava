@@ -10,7 +10,7 @@ import {
   Save,
   ShieldCheck,
   Trash2,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { toast } from "sonner";
 import { Badge, Button, EmptyState, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger, confirm } from "@/components/ui";
 import { StatusPill } from "@/components/ui/SourceBadge";

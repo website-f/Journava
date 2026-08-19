@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, ChevronDown, GripHorizontal, X } from "lucide-react";
+import { Activity, ChevronDown, GripHorizontal, X } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import type { AgentEvent } from "@/lib/sse";

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Clock, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { X, Clock, CheckCircle2, Circle, Loader2, PanelsTopLeft } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import { useScrollLock } from "@/hooks/useScrollLock";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
@@ -17,6 +17,9 @@ type OverlayProps = {
   events?: AgentEvent[];
   /** Called when the user clicks Cancel or confirms navigation. */
   onCancel?: () => void;
+  /** Called to background the run and open the Agents Workspace. When provided,
+   *  a "Watch in workspace" action is shown — the run keeps going after it. */
+  onWatch?: () => void;
 };
 
 /* Phase metadata emitted by the supervisor in SSE data payloads. */
@@ -70,7 +73,7 @@ function agentLabel(slug: string): string {
  *
  * Replaces the old static "Journava is working…" card.
  */
-export function LoadingOverlay({ open, events, onCancel }: OverlayProps) {
+export function LoadingOverlay({ open, events, onCancel, onWatch }: OverlayProps) {
   useScrollLock(open);
   const trapRef = useFocusTrap<HTMLDivElement>(open);
   const logRef = useRef<HTMLDivElement>(null);
@@ -179,20 +182,36 @@ export function LoadingOverlay({ open, events, onCancel }: OverlayProps) {
                   </p>
                 </div>
               </div>
-              {onCancel && (
-                <button
-                  onClick={onCancel}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-[var(--r-pill)] px-3 py-1.5",
-                    "text-xs font-medium transition-colors",
-                    "bg-[var(--danger)]/10 text-[var(--danger)]",
-                    "hover:bg-[var(--danger)]/20",
-                  )}
-                >
-                  <X className="h-3.5 w-3.5" />
-                  Cancel
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {onWatch && (
+                  <button
+                    onClick={onWatch}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-[var(--r-pill)] px-3 py-1.5",
+                      "text-xs font-medium transition-colors",
+                      "bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-[var(--brand-500)]",
+                      "hover:bg-[color-mix(in_srgb,var(--brand-400)_20%,transparent)]",
+                    )}
+                  >
+                    <PanelsTopLeft className="h-3.5 w-3.5" />
+                    Watch in workspace
+                  </button>
+                )}
+                {onCancel && (
+                  <button
+                    onClick={onCancel}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-[var(--r-pill)] px-3 py-1.5",
+                      "text-xs font-medium transition-colors",
+                      "bg-[var(--danger)]/10 text-[var(--danger)]",
+                      "hover:bg-[var(--danger)]/20",
+                    )}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* ── Progress bar ── */}

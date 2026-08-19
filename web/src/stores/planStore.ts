@@ -7,7 +7,24 @@
  */
 
 import { create } from "zustand";
+import { api } from "@/lib/api";
 import type { PlanResults, ScopeMeta } from "@/lib/types";
+
+/** The `/jobs/{id}` record for a backgrounded plan run. */
+interface PlanJobRecord {
+  id: string;
+  status: "queued" | "running" | "done" | "error";
+  result: {
+    results: PlanResults;
+    scope: string;
+    history_id: string | null;
+    duration_ms: number;
+  } | null;
+  error: string | null;
+}
+
+const POLL_INTERVAL_MS = 2000;
+const POLL_TIMEOUT_MS = 180_000;
 
 export type {
   AgentPlanResult,
@@ -68,6 +85,12 @@ export interface PlanState {
   loading: boolean;
   error: string | null;
 
+  /** A backgrounded plan job is in flight — drives the "agents working" modal.
+   *  Lives in the store (not a component) so it survives navigation: the user
+   *  can jump to the Agents Workspace and the run keeps going. */
+  jobRunning: boolean;
+  jobId: string | null;
+
   inputs: PlanInputs;
 
   recovery: DisruptionRecovery | null;
@@ -79,6 +102,9 @@ export interface PlanState {
   }) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  /** Dispatch a background plan job and poll it to completion. Never throws —
+   *  it sets `results` on success or `error` on failure. */
+  runPlanJob: (payload: Record<string, unknown>) => Promise<void>;
   setInputs: (patch: Partial<PlanInputs>) => void;
   resetInputs: (goal?: string) => void;
   setRecovery: (recovery: DisruptionRecovery | null) => void;
@@ -100,6 +126,8 @@ export const usePlanStore = create<PlanState>((set, get) => ({
   lastHistoryId: null,
   loading: false,
   error: null,
+  jobRunning: false,
+  jobId: null,
   inputs: { ...EMPTY_INPUTS },
   recovery: null,
   recoveryLoading: false,
@@ -120,6 +148,47 @@ export const usePlanStore = create<PlanState>((set, get) => ({
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error, loading: false }),
 
+  runPlanJob: async (payload) => {
+    set({ jobRunning: true, error: null });
+    try {
+      const created = await api.post<{ id: string }>("/jobs/plan", payload);
+      set({ jobId: created.id });
+
+      const startedAt = Date.now();
+      // Poll until the job finishes. A newer run (different jobId) or a clear()
+      // supersedes this loop, so stale polls can't overwrite fresh results.
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        if (get().jobId !== created.id) return;
+
+        const job = await api.get<PlanJobRecord>(`/jobs/${created.id}`);
+        if (job.status === "done" && job.result) {
+          const { results, scope, history_id, duration_ms } = job.result;
+          get().setResults(results, scope, {
+            durationMs: duration_ms,
+            historyId: history_id,
+          });
+          set({ jobRunning: false, jobId: null });
+          return;
+        }
+        if (job.status === "error") {
+          set({ jobRunning: false, jobId: null, error: job.error ?? "Planning failed" });
+          return;
+        }
+        if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+          set({ jobRunning: false, jobId: null, error: "Timed out waiting for the plan." });
+          return;
+        }
+      }
+    } catch (error) {
+      set({
+        jobRunning: false,
+        jobId: null,
+        error: error instanceof Error ? error.message : "Planning failed",
+      });
+    }
+  },
+
   setInputs: (patch) =>
     set((state) => ({ inputs: { ...state.inputs, ...patch } })),
   resetInputs: (goal = "") => set({ inputs: { ...EMPTY_INPUTS, goal } }),
@@ -137,6 +206,8 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       recovery: null,
       loading: false,
       error: null,
+      jobRunning: false,
+      jobId: null,
       lastDurationMs: null,
       lastHistoryId: null,
     }),

@@ -12,7 +12,7 @@ import {
   Ticket,
   TriangleAlert,
   X,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { toast } from "sonner";
 import { Badge, Button, confirm } from "@/components/ui";
 import { StatusPill } from "@/components/ui/SourceBadge";

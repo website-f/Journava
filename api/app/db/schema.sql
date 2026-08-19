@@ -247,3 +247,95 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 
 CREATE INDEX IF NOT EXISTS llm_usage_provider_created_idx
     ON llm_usage (provider_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Auth & multi-tenant identity (Phase 1). Extends the existing `users` table
+-- with credentials + a platform-admin flag, and adds organizations, org
+-- memberships (roles), and refresh-token sessions for rotation/revocation.
+-- ---------------------------------------------------------------------------
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE TABLE IF NOT EXISTS organizations (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        TEXT NOT NULL,
+    slug        TEXT UNIQUE NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'personal',  -- personal | agency | platform
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS memberships (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id      UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    role        TEXT NOT NULL DEFAULT 'member',     -- owner | admin | staff | member
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, org_id)
+);
+CREATE INDEX IF NOT EXISTS memberships_user_idx ON memberships (user_id);
+CREATE INDEX IF NOT EXISTS memberships_org_idx ON memberships (org_id);
+
+-- Refresh-token sessions. Only the SHA-256 of the token is stored, so a DB leak
+-- never yields a usable token; rotation revokes the old row and inserts a new one.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    refresh_hash  TEXT NOT NULL,
+    expires_at    TIMESTAMPTZ NOT NULL,
+    revoked_at    TIMESTAMPTZ,
+    user_agent    TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_hash_idx ON auth_sessions (refresh_hash);
+CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions (user_id);
+
+-- ---------------------------------------------------------------------------
+-- B2B Supplier Portal (Phase 4). A travel agency/hotel/attraction org lists
+-- properties + bookable listings; those surface as a "direct" source in the
+-- Hotel Agent (owns the guest, no OTA commission). Travelers create leads the
+-- supplier then works. Everything is org-scoped via the memberships table.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS supplier_properties (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    kind           TEXT NOT NULL DEFAULT 'hotel',   -- hotel | attraction
+    city           TEXT NOT NULL,
+    country        TEXT,
+    description    TEXT,
+    halal_friendly BOOLEAN NOT NULL DEFAULT FALSE,
+    image_url      TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS supplier_properties_city_idx ON supplier_properties (lower(city));
+CREATE INDEX IF NOT EXISTS supplier_properties_org_idx ON supplier_properties (org_id);
+
+CREATE TABLE IF NOT EXISTS supplier_listings (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    property_id    UUID NOT NULL REFERENCES supplier_properties(id) ON DELETE CASCADE,
+    org_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    title          TEXT NOT NULL,                   -- room type / ticket name
+    price_amount   NUMERIC(12,2),
+    price_currency TEXT NOT NULL DEFAULT 'MYR',
+    capacity       INTEGER,
+    perks          TEXT[] NOT NULL DEFAULT '{}',
+    available      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS supplier_listings_property_idx ON supplier_listings (property_id);
+
+CREATE TABLE IF NOT EXISTS supplier_leads (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    property_id      UUID REFERENCES supplier_properties(id) ON DELETE SET NULL,
+    listing_id       UUID REFERENCES supplier_listings(id) ON DELETE SET NULL,
+    traveler_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    traveler_email   TEXT,
+    note             TEXT,
+    status           TEXT NOT NULL DEFAULT 'new',   -- new | contacted | booked | closed
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS supplier_leads_org_idx ON supplier_leads (org_id, created_at DESC);
