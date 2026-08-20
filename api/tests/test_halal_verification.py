@@ -121,6 +121,8 @@ async def test_verified_flag_tracks_certification_only():
             ],
         },
         "MYR",
+        "Kuala Lumpur",
+        sourced=False,
     )
     assert options[0].verified is True
     assert options[1].verified is False

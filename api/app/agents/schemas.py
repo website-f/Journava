@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # --------------------------------------------------------------------------- #
 # Traveler profile & preference scoping (§7.5)
@@ -14,6 +14,55 @@ from pydantic import BaseModel, Field
 
 Scope = Literal["hard_filter", "soft_ranking", "not_applicable"]
 HalalConfidence = Literal["certified", "muslim_friendly", "unverified"]
+
+#: Free-form values agents/LLMs commonly emit, mapped onto the strict enum.
+_HALAL_ALIASES: dict[str, HalalConfidence] = {
+    "certified": "certified",
+    "halal_certified": "certified",
+    "certified_halal": "certified",
+    "jakim": "certified",
+    "muis": "certified",
+    "mui": "certified",
+    "muslim_friendly": "muslim_friendly",
+    "muslimfriendly": "muslim_friendly",
+    "friendly": "muslim_friendly",
+    "halal_friendly": "muslim_friendly",
+    "halal": "muslim_friendly",
+    "high": "muslim_friendly",
+    "medium": "muslim_friendly",
+    "moderate": "muslim_friendly",
+    "likely": "muslim_friendly",
+    "yes": "muslim_friendly",
+    "true": "muslim_friendly",
+    "unverified": "unverified",
+    "unknown": "unverified",
+    "unsure": "unverified",
+    "low": "unverified",
+    "maybe": "unverified",
+    "no": "unverified",
+    "false": "unverified",
+}
+
+
+def coerce_halal_confidence(value: Any) -> HalalConfidence | None:
+    """Normalise a free-form halal signal onto the strict :data:`HalalConfidence`.
+
+    Agents — and the LLMs behind them — routinely emit values the schema does not
+    allow ('high', 'medium', 'halal certified', ``True``). That used to raise a
+    ``ValidationError`` and abort the entire trip plan. We map the common ones and
+    fall back to the conservative 'unverified' for anything unrecognised. Empty /
+    null stays ``None`` (meaning "not assessed / not applicable"). A model's own
+    confidence ('high'/'medium') is deliberately capped at 'muslim_friendly' — only
+    a named certification body earns 'certified' (enforced downstream in §7.5).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "muslim_friendly" if value else "unverified"
+    text = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if not text or text in {"null", "none", "n/a", "na"}:
+        return None
+    return _HALAL_ALIASES.get(text, "unverified")
 
 
 class TravelerProfile(BaseModel):
@@ -87,6 +136,12 @@ class Option(BaseModel):
     #: True when this option can be carried into a real booking flow.
     bookable: bool = False
     raw: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("halal_confidence", mode="before")
+    @classmethod
+    def _normalise_halal(cls, v: Any) -> Any:
+        # A bad halal label must never 500 the whole plan — coerce, don't reject.
+        return coerce_halal_confidence(v)
 
 
 class ItineraryItem(BaseModel):

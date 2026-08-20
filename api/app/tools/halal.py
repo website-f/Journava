@@ -73,7 +73,14 @@ async def check_certification(
         result.update(heuristic)
         return result
 
-    result["notes"] = "No certification found in public directories"
+    # 4. Last resort — a live Camofox crawl for the long tail of local eateries
+    #    the directories don't index. Same browser the Research agent drives.
+    camo = await _check_camofox(restaurant_name, country)
+    if camo:
+        result.update(camo)
+        return result
+
+    result["notes"] = "No certification found in public directories or live crawl"
     return result
 
 
@@ -140,6 +147,53 @@ async def _check_halaltrip(name: str) -> dict[str, Any] | None:
         return await cached(key, fetch, ttl=settings.cache_ttl_long)
     except Exception as exc:
         logger.debug("HalalTrip check failed for '%s': %s", name, exc)
+        return None
+
+
+async def _check_camofox(name: str, country: str | None) -> dict[str, Any] | None:
+    """Last-resort halal signal via a live Camofox crawl.
+
+    For the long tail of local eateries no directory indexes. This is the same
+    hardened browser the Research agent uses, so a halal recommendation can be
+    grounded in real web results rather than an LLM guess. Conservative by design:
+    a named certification body on the page → 'certified'; a plain halal mention →
+    'muslim_friendly'; nothing → None. Cached (24h) like the other tiers.
+    """
+    if not name:
+        return None
+
+    async def fetch() -> dict[str, Any] | None:
+        # Imported lazily to keep this tool importable without the browser stack.
+        from app.tools import camofox
+
+        if not await camofox.available():
+            return None
+        where = f" in {country}" if country else ""
+        snapshot = await camofox.search(f"{name}{where} halal certified")
+        if not snapshot or "halal" not in snapshot.lower():
+            return None
+        text = snapshot.lower()
+        # Only unambiguous certification-body substrings earn 'certified'.
+        for kw, body in (("jakim", "JAKIM"), ("muis", "MUIS")):
+            if kw in text:
+                return {
+                    "confidence": "certified",
+                    "source": "camofox",
+                    "cert_body": body,
+                    "notes": f"{body} halal listing found via live crawl",
+                }
+        return {
+            "confidence": "muslim_friendly",
+            "source": "camofox",
+            "cert_body": None,
+            "notes": "Halal mentioned in live web results (no certifying body named)",
+        }
+
+    key = f"halal:camofox:{(country or '').lower()}:{name.lower()}"
+    try:
+        return await cached(key, fetch, ttl=settings.cache_ttl_long)
+    except Exception as exc:
+        logger.debug("Camofox halal check failed for '%s': %s", name, exc)
         return None
 
 
