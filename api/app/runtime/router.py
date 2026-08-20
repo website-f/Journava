@@ -36,10 +36,13 @@ async def agents_catalog() -> dict[str, Any]:
 
 
 @router.get("/recommendations")
-async def recommendations_feed(request: Request) -> dict[str, Any]:
-    """Personalized home cards derived from the traveller's own history."""
+async def recommendations_feed(request: Request, limit: int = 12) -> dict[str, Any]:
+    """Personalized home cards derived from the traveller's own history.
+
+    The home shows the first few; a `limit` up to 24 backs the "See more" drawer.
+    """
     claims = getattr(request.state, "auth", {}) or {}
-    items = await recommendations.build(claims.get("sub"))
+    items = await recommendations.build(claims.get("sub"), limit=max(1, min(limit, 24)))
     return {"recommendations": items}
 
 
@@ -87,6 +90,11 @@ async def _run_plan_job(body: PlanJobRequest, user_id: str | None) -> dict[str, 
     started = time.monotonic()
     results = await run_plan(trip_request, profile, scope=scope)
     duration_ms = int((time.monotonic() - started) * 1000)
+
+    # Document what the agents just learned into the knowledge library.
+    from app.brain import knowledge
+
+    await knowledge.record_from_plan(results)
 
     if scope.slug in ("full_trip", "itinerary_only"):
         await trip_store.save_trip_durable(results)

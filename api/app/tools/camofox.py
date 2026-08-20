@@ -64,7 +64,15 @@ _MACRO_URLS = {
     "@yelp_search": "https://www.yelp.com/search?find_desc={q}",
     "@bing_search": "https://www.bing.com/search?q={q}",
     "@duckduckgo_search": "https://html.duckduckgo.com/html/?q={q}",
+    # Crawl-friendly fallbacks (no-JS HTML endpoints) — used when the primary
+    # engine is throttled, so a rate-limit on one never blanks the whole search.
+    "@ddg_lite": "https://lite.duckduckgo.com/lite/?q={q}",
+    "@mojeek_search": "https://www.mojeek.com/search?q={q}",
 }
+
+#: Tried in order for a general web search until one returns content — the
+#: scrapy "retry-with-fallback" idea applied to search engines.
+_WEB_ENGINES = ("@duckduckgo_search", "@ddg_lite", "@mojeek_search")
 
 #: The default search engine.
 #:
@@ -274,17 +282,22 @@ async def search(query: str, macro: str = DEFAULT_SEARCH_MACRO) -> str | None:
     cache so a repeated query never re-hits the engine. `cached` never stores a
     `None`, so a throttle is retried next time rather than remembered as empty.
     """
-    template = _MACRO_URLS.get(macro, _MACRO_URLS[DEFAULT_SEARCH_MACRO])
-    url = template.format(q=quote_plus(query))
+    # A general web search rotates through several crawl-friendly engines; a
+    # site-specific macro (youtube/wikipedia/…) stays on its own engine.
+    engines = list(_WEB_ENGINES) if macro == DEFAULT_SEARCH_MACRO else [macro]
+    encoded = quote_plus(query)
     cache_key = f"camofox:search:{macro}:{query.strip().lower()}"
 
     async def fetch() -> str | None:
-        for attempt in range(3):
-            snapshot = await browse(url)
-            if snapshot:
-                return snapshot
-            if attempt < 2:
-                await asyncio.sleep(random.uniform(2.0, 4.0) * (attempt + 1))  # noqa: S311
+        for engine in engines:
+            template = _MACRO_URLS.get(engine, _MACRO_URLS[DEFAULT_SEARCH_MACRO])
+            url = template.format(q=encoded)
+            for attempt in range(2):
+                snapshot = await browse(url)
+                if snapshot:
+                    return snapshot
+                if attempt == 0:
+                    await asyncio.sleep(random.uniform(1.5, 3.0))  # noqa: S311 — human-paced backoff
         return None
 
     return await cached(cache_key, fetch, ttl=6 * 3600)

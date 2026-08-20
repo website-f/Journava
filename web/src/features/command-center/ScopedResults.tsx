@@ -5,13 +5,18 @@ import {
   Cloud,
   Compass,
   ExternalLink,
+  FileCheck2,
   RotateCcw,
   ShieldAlert,
+  ShieldCheck,
   TrendingUp,
   Utensils,
 } from "@/components/ui/icons";
+import { useState } from "react";
+import { toast } from "sonner";
 import { Badge, Button, OptionCard } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { api } from "@/lib/api";
 import { FlightResults } from "@/features/flights/FlightResults";
 import { PlaceCard } from "./PlaceCard";
 import { PlacesSection } from "./PlacesSection";
@@ -70,6 +75,68 @@ export function ScopedResults({
           <Panel key={panel} name={panel} results={results} onOpenTrip={onOpenTrip} />
         ))}
       </div>
+
+      <AddToTripBar results={results} onOpenTrip={onOpenTrip} />
+    </div>
+  );
+}
+
+/** Bottom-of-results CTA: adopt this whole plan as the traveller's active trip. */
+function AddToTripBar({
+  results,
+  onOpenTrip,
+}: {
+  results: PlanResults;
+  onOpenTrip: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState(false);
+
+  const add = async () => {
+    setBusy(true);
+    try {
+      await api.post("/trip/save", { results });
+      setAdded(true);
+      toast.success("Added to your trip — open it any time from Trip.");
+    } catch {
+      toast.error("Could not add this to your trip.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-8 flex flex-col items-center gap-2 rounded-[var(--r-lg)] border border-[var(--brand-400)]/40 bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] p-5 text-center">
+      <p className="text-sm font-semibold">Happy with this plan?</p>
+      <p className="text-xs text-[var(--muted)]">
+        Add it to your trip — your agents keep monitoring flights, weather and safety after.
+      </p>
+      <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+        {added ? (
+          <Button variant="secondary" onClick={onOpenTrip}>
+            Open My Trip
+          </Button>
+        ) : (
+          <Button loading={busy} onClick={() => void add()}>
+            <CheckCircle2 className="h-4 w-4" />
+            Add to my trip
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The plan's booking/detail sections, reused by My Trip so the saved trip shows
+ *  the full plan (flights, stays, food, places, visa, insurance) — not just the
+ *  itinerary/budget/weather cards. */
+export function TripExtraPanels({ results }: { results: PlanResults }) {
+  const panels = ["flights", "hotels", "activities", "dining", "visa", "insurance"];
+  return (
+    <div className="space-y-8">
+      {panels.map((panel) => (
+        <Panel key={panel} name={panel} results={results} onOpenTrip={() => {}} />
+      ))}
     </div>
   );
 }
@@ -124,7 +191,9 @@ function Panel({
     case "transport":
       return <DataPanel result={results.transport} title="Getting around" />;
     case "visa":
-      return <DataPanel result={results.visa} title="Visa & entry" />;
+      return <VisaPanel result={results.visa} />;
+    case "insurance":
+      return <InsurancePanel result={results.insurance} />;
     case "crowd":
       return <DataPanel result={results.crowd} title="Crowds" />;
     case "social":
@@ -546,6 +615,132 @@ function ReportTile({ label, value }: { label: string; value: string }) {
       <p className="text-[0.6rem] uppercase tracking-wide text-[var(--muted)]">{label}</p>
       <p className="mt-0.5 text-xs font-semibold capitalize">{value}</p>
     </div>
+  );
+}
+
+/** Visa & entry — leads with a clear required / visa-free verdict. */
+function VisaPanel({ result }: { result?: AgentPlanResult }) {
+  if (!result) return null;
+  const d = result.data as {
+    visa_required?: boolean | null;
+    visa_type?: string;
+    documents?: string[];
+    processing_time?: string;
+    max_stay?: string;
+    cost?: string;
+  };
+  const required = d.visa_required;
+  const tone = required === false ? "success" : required === true ? "warning" : "muted";
+  const label =
+    required === false
+      ? "Visa-free — no visa needed"
+      : required === true
+        ? `Visa required${d.visa_type && d.visa_type !== "unknown" ? ` · ${d.visa_type}` : ""}`
+        : "Check visa requirements with the embassy";
+  const toneCls: Record<string, string> = {
+    success: "border-[var(--success)]/40 bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-[var(--success)]",
+    warning: "border-[var(--warning)]/40 bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] text-[var(--warning)]",
+    muted: "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]",
+  };
+  const rows: Array<[string, string | undefined]> = [
+    ["Processing", d.processing_time],
+    ["Max stay", d.max_stay],
+    ["Cost", d.cost],
+  ];
+
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
+        <FileCheck2 className="h-5 w-5 text-[var(--brand-500)]" />
+        Visa & entry
+      </h3>
+      <div className={cn("flex items-center gap-3 rounded-[var(--r-md)] border p-3", toneCls[tone])}>
+        {required === false ? (
+          <CheckCircle2 className="h-6 w-6 shrink-0" />
+        ) : (
+          <FileCheck2 className="h-6 w-6 shrink-0" />
+        )}
+        <p className="text-sm font-semibold">{label}</p>
+      </div>
+      <div className="mt-3 surface-card space-y-2 p-4">
+        <p className="text-sm text-[var(--muted)]">{result.summary}</p>
+        {(d.documents ?? []).length > 0 && (
+          <div>
+            <p className="mb-1 text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">Documents</p>
+            <div className="flex flex-wrap gap-1.5">
+              {d.documents!.map((doc) => (
+                <Badge key={doc}>{doc}</Badge>
+              ))}
+            </div>
+          </div>
+        )}
+        {rows.some(([, v]) => v) && (
+          <dl className="grid gap-2 pt-1 sm:grid-cols-3">
+            {rows
+              .filter(([, v]) => v)
+              .map(([k, v]) => (
+                <div key={k}>
+                  <dt className="text-[0.6rem] uppercase tracking-wide text-[var(--muted)]">{k}</dt>
+                  <dd className="text-xs font-medium">{v}</dd>
+                </div>
+              ))}
+          </dl>
+        )}
+        {result.warnings.map((w, i) => (
+          <p key={i} className="text-xs text-[var(--warning)]">
+            {w}
+          </p>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Travel insurance — recommended coverage + notes. */
+function InsurancePanel({ result }: { result?: AgentPlanResult }) {
+  if (!result) return null;
+  const d = result.data as {
+    recommended_coverage?: string[];
+    notes?: string;
+    providers?: string[];
+  };
+  if (!(d.recommended_coverage ?? []).length && !result.summary) return null;
+
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
+        <ShieldCheck className="h-5 w-5 text-[var(--brand-500)]" />
+        Travel insurance
+      </h3>
+      <div className="surface-card space-y-2 p-4">
+        <p className="text-sm text-[var(--muted)]">{result.summary}</p>
+        {(d.recommended_coverage ?? []).length > 0 && (
+          <div>
+            <p className="mb-1 text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
+              Recommended coverage
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {d.recommended_coverage!.map((c) => (
+                <Badge key={c} variant="brand">
+                  {c.replace(/_/g, " ")}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+        {d.notes && <p className="text-xs italic text-[var(--muted)]">{d.notes}</p>}
+        {(d.providers ?? []).length > 0 && (
+          <p className="text-[0.7rem] text-[var(--muted)]">
+            Compare: {d.providers!.join(", ")}
+          </p>
+        )}
+        {result.warnings.map((w, i) => (
+          <p key={i} className="text-xs text-[var(--warning)]">
+            {w}
+          </p>
+        ))}
+      </div>
+    </section>
   );
 }
 

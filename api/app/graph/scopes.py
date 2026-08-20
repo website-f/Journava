@@ -163,6 +163,8 @@ SCOPES: dict[str, Scope] = {
                 "budget",
                 "weather",
                 "risk",
+                "visa",
+                "insurance",
                 "research",
                 "practical",
             ),

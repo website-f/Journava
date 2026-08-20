@@ -141,6 +141,47 @@ CREATE INDEX IF NOT EXISTS api_credentials_category_idx
     ON api_credentials (category, provider);
 
 -- ---------------------------------------------------------------------------
+-- Notification bots (Telegram). Multiple bots, each toggleable — a background
+-- plan pings every enabled one. Token is Fernet-encrypted; only a hint is
+-- returned by the API.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notification_bots (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    label            TEXT NOT NULL,
+    platform         TEXT NOT NULL DEFAULT 'telegram',
+    token_encrypted  TEXT NOT NULL,
+    token_hint       TEXT NOT NULL DEFAULT '',
+    chat_id          TEXT NOT NULL,
+    enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Knowledge base — durable findings the agents document from every plan, so the
+-- Research page reads like a growing library ("Tokyo hotels run RM…", "Australia
+-- refuses passports renewed >10y ago") and future plans get smarter by reading it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS knowledge_notes (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- Natural key so re-observing a fact updates it instead of duplicating.
+    dedup_key    TEXT NOT NULL UNIQUE,
+    category     TEXT NOT NULL,        -- flights|hotels|visa|food|activities|weather|safety|budget|transport|general
+    destination  TEXT,
+    title        TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    tags         TEXT[] NOT NULL DEFAULT '{}',
+    confidence   TEXT NOT NULL DEFAULT 'observed',
+    source       TEXT,
+    seen_count   INT NOT NULL DEFAULT 1,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS knowledge_category_idx
+    ON knowledge_notes (category, destination);
+
+-- ---------------------------------------------------------------------------
 -- Flight bookings (Atlas). Mirrors the CLI's opaque identifiers so a booking
 -- can be resumed: search → verify → confirm price → order → pay → ticket.
 -- Passenger details are deliberately NOT stored: the CLI treats them as

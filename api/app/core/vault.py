@@ -326,17 +326,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
             category="email",
             docs_url="https://resend.com/",
         ),
-        ProviderSpec(
-            slug="telegram",
-            label="Telegram notifications",
-            category="email",
-            extra_fields=("chat_id",),
-            docs_url="https://t.me/BotFather",
-            note=(
-                "Create a bot with @BotFather for the token, then message your bot "
-                "and get your chat id from @userinfobot. Managed from Account → Integrate."
-            ),
-        ),
         # --- Free / open-source / keyless ------------------------------------ #
         # These need no key (or a generous free tier) and are listed so the
         # operator can see the full breadth of what the agents can draw on.

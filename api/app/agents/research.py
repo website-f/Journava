@@ -30,6 +30,7 @@ from urllib.parse import quote_plus
 from app.agents.base import BaseAgent
 from app.agents.prompts import research_messages
 from app.agents.schemas import AgentResult, Option, Scope, TravelerProfile, TripRequest
+from app.brain import knowledge
 from app.core.llm import LLMUnavailableError, complete
 from app.tools import camofox, halal, reddit, youtube
 
@@ -376,6 +377,17 @@ class ResearchAgent(BaseAgent):
         """Synthesize crawled data + LLM into structured intelligence."""
         try:
             messages = research_messages(request, profile)
+
+            # Feed back what the library already knows about this destination, so
+            # picks build on prior findings instead of starting cold each time.
+            learned = await knowledge.recall_text(request.destination)
+            if learned:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": learned + "\n\nBuild on these prior findings; don't contradict them without reason.",
+                    }
+                )
 
             # Inject crawled data as additional context if available
             if crawled_sources:

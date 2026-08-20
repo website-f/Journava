@@ -58,9 +58,6 @@ export interface DisruptionRecovery {
 /** Extra inputs the scoped Command Center collects alongside the goal. */
 export interface PlanInputs {
   goal: string;
-  origin: string;
-  destination: string;
-  destination_city: string;
   start_date: string;
   end_date: string;
   travellers: number;
@@ -71,9 +68,6 @@ export interface PlanInputs {
 
 export const EMPTY_INPUTS: PlanInputs = {
   goal: "",
-  origin: "",
-  destination: "",
-  destination_city: "",
   start_date: "",
   end_date: "",
   travellers: 1,

@@ -23,6 +23,11 @@ fi
 
 cd "$PROJECT_DIR"
 
+# Ports (match docker-compose.yml defaults; override in .env).
+API_PORT="$(grep -E '^JOURNAVA_API_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d ' ')"; API_PORT="${API_PORT:-8400}"
+WEB_PORT="$(grep -E '^JOURNAVA_WEB_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d ' ')"; WEB_PORT="${WEB_PORT:-8401}"
+DOMAIN="$(grep -E '^JOURNAVA_DOMAIN=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d ' ')"; DOMAIN="${DOMAIN:-journava.example.com}"
+
 # --- Parse flags --------------------------------------------------------------
 NO_CACHE=""
 TAIL_LOGS=false
@@ -53,7 +58,7 @@ docker compose -f "$COMPOSE_FILE" up -d
 echo "==> Waiting for the API to serve /health..."
 RETRIES=0
 MAX_RETRIES=60
-until curl -sf http://127.0.0.1:8400/health > /dev/null 2>&1; do
+until curl -sf "http://127.0.0.1:${API_PORT}/health" > /dev/null 2>&1; do
     RETRIES=$((RETRIES + 1))
     if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
         echo "ERROR: API did not answer /health within ${MAX_RETRIES}s"
@@ -64,12 +69,12 @@ until curl -sf http://127.0.0.1:8400/health > /dev/null 2>&1; do
     sleep 1
 done
 
-HEALTH="$(curl -s http://127.0.0.1:8400/health)"
+HEALTH="$(curl -s "http://127.0.0.1:${API_PORT}/health")"
 
 echo ""
-echo "==> Journava is running"
-echo "    Web:  http://127.0.0.1:8401"
-echo "    API:  http://127.0.0.1:8400"
+echo "==> Journava is running (single public entry point = web)"
+echo "    App:  http://127.0.0.1:${WEB_PORT}   ← point ${DOMAIN} here in your reverse proxy"
+echo "    API:  http://127.0.0.1:${API_PORT}/health  (direct, loopback only)"
 echo "    Health: $HEALTH"
 echo ""
 

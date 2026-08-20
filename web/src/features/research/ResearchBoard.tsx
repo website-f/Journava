@@ -8,6 +8,7 @@ import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsConten
 import type { ItineraryItem, PlanOption } from "@/stores/planStore";
 import { useActiveTrip } from "@/hooks/useActiveTrip";
 import { recordOptionOutcome, recordOutcome } from "@/lib/outcomes";
+import { KnowledgeLibrary } from "./KnowledgeLibrary";
 
 type SocialSignal = {
   score: number | null;
@@ -28,6 +29,29 @@ type Contradiction = {
  * Itinerary, and Intelligence. Each pick shows reasoning ("Why this?").
  */
 export function ResearchBoard() {
+  return (
+    <div className="mx-auto w-full max-w-6xl">
+      <Tabs defaultValue="knowledge">
+        <TabsList>
+          <TabsTrigger value="knowledge">
+            <BadgeCheck className="h-4 w-4" /> Knowledge library
+          </TabsTrigger>
+          <TabsTrigger value="trip">
+            <Compass className="h-4 w-4" /> This trip
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="knowledge">
+          <KnowledgeLibrary />
+        </TabsContent>
+        <TabsContent value="trip">
+          <TripResearch />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function TripResearch() {
   // Hydrate from the backend so a reload or a deep link still shows the active
   // trip, instead of an empty state the store happens not to know about.
   const { results, loading } = useActiveTrip();

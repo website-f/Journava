@@ -1,8 +1,9 @@
 import { Suspense, lazy, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Plane, Building2, ShieldAlert, ShieldCheck, Newspaper } from "@/components/ui/icons";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
+import { cn } from "@/lib/cn";
 
 // MapLibre is ~1MB; load it only when this page actually renders.
 const TripMap = lazy(() =>
@@ -10,10 +11,30 @@ const TripMap = lazy(() =>
 );
 import { api } from "@/lib/api";
 import { usePlanStore } from "@/stores/planStore";
-import type { AgentPlanResult, CostDetail, DisruptionRecovery, ItineraryItem } from "@/stores/planStore";
+import type { AgentPlanResult, CostDetail, DisruptionRecovery, ItineraryItem, PlanResults } from "@/stores/planStore";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { useActiveTrip } from "@/hooks/useActiveTrip";
 import { agentEntries } from "@/lib/types";
+import { TripExtraPanels } from "@/features/command-center/ScopedResults";
+
+/** Days-to-go from the trip's start date (found in the chief's resolved request). */
+function tripStartDate(results: Record<string, AgentPlanResult>): Date | null {
+  const data = (results.chief?.data ?? {}) as Record<string, unknown>;
+  const resolved = (data.resolved_request ?? {}) as Record<string, unknown>;
+  const raw = (resolved.start_date ?? data.start_date) as string | undefined;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function countdownLabel(start: Date | null): string | null {
+  if (!start) return null;
+  const days = Math.ceil((start.getTime() - Date.now()) / 86_400_000);
+  if (days > 1) return `${days} days to go`;
+  if (days === 1) return "Tomorrow!";
+  if (days === 0) return "Today!";
+  return "Trip underway / past";
+}
 
 /**
  * My Trip (spec section 3.3) — day-by-day itinerary, budget tracker, weather,
@@ -38,6 +59,23 @@ export function MyTrip() {
       toast.info("Recovery cancelled.");
     } catch {
       // ignore
+    }
+  };
+
+  const handleDeleteTrip = async () => {
+    const ok = await confirm({
+      title: "Remove this trip?",
+      body: "Your active trip is cleared. Past searches stay in History.",
+      confirmText: "Remove trip",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.del("/trip");
+      usePlanStore.getState().clear();
+      toast.success("Trip removed.");
+    } catch {
+      toast.error("Could not remove the trip.");
     }
   };
 
@@ -83,7 +121,7 @@ export function MyTrip() {
         onCancel={handleCancelRecovery}
       />
 
-      <TripHeader />
+      <TripHeader results={results} onDelete={handleDeleteTrip} />
       <TripSummary results={results} />
       <RiskBanner results={results} />
       <Suspense fallback={<Skeleton className="mb-6 h-64 w-full" />}>
@@ -92,6 +130,11 @@ export function MyTrip() {
       <BudgetCard results={results} />
       <WeatherCard results={results} />
       <ItinerarySection results={results} />
+      {/* The full plan — flights, stays, food, places, visa, insurance — so the
+          saved trip shows everything the agents produced, not just the summary. */}
+      <div className="mt-8">
+        <TripExtraPanels results={results as PlanResults} />
+      </div>
       <DisruptionSection recovery={recovery} setRecovery={setRecovery} setRecoveryLoading={setRecoveryLoading} recoveryLoading={recoveryLoading} />
     </div>
   );
@@ -101,13 +144,36 @@ export function MyTrip() {
 // Sub-components
 // --------------------------------------------------------------------------- //
 
-function TripHeader() {
+function TripHeader({
+  results,
+  onDelete,
+}: {
+  results?: Record<string, AgentPlanResult>;
+  onDelete?: () => void;
+}) {
+  const countdown = results ? countdownLabel(tripStartDate(results)) : null;
   return (
-    <header className="pt-2 pb-6">
-      <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">My Trip</h2>
-      <p className="mt-1 text-sm text-[var(--muted)]">
-        Itinerary, budget and weather — your agents keep monitoring after checkout.
-      </p>
+    <header className="flex flex-wrap items-start justify-between gap-3 pt-2 pb-6">
+      <div className="min-w-0">
+        <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">My Trip</h2>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          The full plan — your agents keep monitoring flights, weather and safety after checkout.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        {countdown && (
+          <span className="inline-flex items-center gap-1.5 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-3 py-1.5 text-sm font-semibold text-[var(--brand-600)]">
+            <Clock className="h-4 w-4" />
+            {countdown}
+          </span>
+        )}
+        {onDelete && (
+          <Button variant="ghost" size="sm" onClick={onDelete}>
+            <Trash2 className="h-4 w-4 text-[var(--danger)]" />
+            Remove
+          </Button>
+        )}
+      </div>
     </header>
   );
 }
@@ -335,10 +401,12 @@ function WeatherCard({ results }: { results: Record<string, AgentPlanResult> }) 
 }
 
 function ItinerarySection({ results }: { results: Record<string, AgentPlanResult> }) {
-  const items = results.itinerary?.items ?? [];
+  const setResults = usePlanStore((s) => s.setResults);
+  const [items, setItems] = useState<ItineraryItem[]>(results.itinerary?.items ?? []);
+  const [refining, setRefining] = useState(false);
+
   if (items.length === 0) return null;
 
-  // Group by day
   const days = new Map<number, ItineraryItem[]>();
   for (const item of items) {
     const list = days.get(item.day_index) ?? [];
@@ -346,68 +414,130 @@ function ItinerarySection({ results }: { results: Record<string, AgentPlanResult
     days.set(item.day_index, list);
   }
 
-  // Flights and hotels for the header
-  const flights = results.flight?.options ?? [];
-  const hotels = results.hotel?.options ?? [];
+  const persist = async (next: ItineraryItem[]) => {
+    setItems(next);
+    try {
+      await api.post("/trip/itinerary", { items: next });
+    } catch {
+      toast.error("Couldn't save the new order.");
+    }
+  };
+
+  // Reorder within a day, then splice that day's items back into the flat list.
+  const reorderDay = (dayIndex: number, from: number, to: number) => {
+    const dayItems = items.filter((i) => i.day_index === dayIndex);
+    const [moved] = dayItems.splice(from, 1);
+    dayItems.splice(to, 0, moved);
+    let di = 0;
+    const next = items.map((i) => (i.day_index === dayIndex ? dayItems[di++] : i));
+    void persist(next);
+  };
+
+  const refine = async () => {
+    setRefining(true);
+    try {
+      const res = await api.post<{ trip: Record<string, AgentPlanResult> }>(
+        "/trip/itinerary/refine",
+        {},
+      );
+      if (res.trip) {
+        setResults(res.trip);
+        setItems(res.trip.itinerary?.items ?? []);
+        toast.success("Your agents added ideas and realigned the schedule.");
+      }
+    } catch {
+      toast.error("Couldn't refine the itinerary.");
+    } finally {
+      setRefining(false);
+    }
+  };
 
   return (
     <section className="mb-6">
-      <h3 className="flex items-center gap-2 text-lg font-semibold mb-3">
-        <Calendar className="h-5 w-5 text-[var(--brand-500)]" />
-        Itinerary
-        <Badge variant="brand">{items.length} items</Badge>
-      </h3>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h3 className="flex items-center gap-2 text-lg font-semibold">
+          <Calendar className="h-5 w-5 text-[var(--brand-500)]" />
+          Itinerary
+          <Badge variant="brand">{items.length} items</Badge>
+        </h3>
+        <div className="min-w-0 flex-1" />
+        <Button variant="secondary" size="sm" loading={refining} onClick={() => void refine()}>
+          <Sparkles className="h-4 w-4" />
+          Ask agents to add & realign
+        </Button>
+      </div>
+      <p className="mb-3 text-xs text-[var(--muted)]">
+        Drag items to reorder within a day — changes save automatically.
+      </p>
 
-      {/* Flight pick */}
-      {flights.length > 0 && (
-        <div className="mb-4">
-          <h4 className="flex items-center gap-1 text-sm font-medium mb-2">
-            <Plane className="h-4 w-4 text-[var(--info)]" /> Flight
-          </h4>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {flights.slice(0, 2).map((opt) => <OptionCard key={opt.id} option={opt} />)}
-          </div>
-        </div>
-      )}
-
-      {/* Hotel pick */}
-      {hotels.length > 0 && (
-        <div className="mb-4">
-          <h4 className="flex items-center gap-1 text-sm font-medium mb-2">
-            <Building2 className="h-4 w-4 text-[var(--info)]" /> Hotel
-          </h4>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {hotels.slice(0, 2).map((opt) => <OptionCard key={opt.id} option={opt} />)}
-          </div>
-        </div>
-      )}
-
-      {/* Day-by-day */}
       <div className="space-y-4">
-        {Array.from(days.entries()).map(([dayIndex, dayItems]) => (
-          <div key={dayIndex}>
-            <h4 className="text-sm font-semibold text-[var(--brand-500)] mb-2">Day {dayIndex}</h4>
-            <ol className="space-y-1.5 border-l-2 border-[var(--border)] pl-4 ml-2">
-              {dayItems.map((item, idx) => (
-                <li key={idx} className="relative">
-                  <span className="absolute -left-[1.25rem] top-1.5 h-2 w-2 rounded-full bg-[var(--brand-400)]" />
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <div className="flex items-center gap-2 text-xs text-[var(--muted)] mt-0.5">
-                    <Badge>{item.kind}</Badge>
-                    {item.starts_at && <span>{item.starts_at}{item.ends_at ? ` – ${item.ends_at}` : ""}</span>}
-                    {item.cost_amount != null && (
-                      <span className="text-[var(--brand-500)] font-medium">
-                        {item.cost_currency ?? "MYR"} {Number(item.cost_amount).toLocaleString()}
-                      </span>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </div>
-        ))}
+        {[...days.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([dayIndex, dayItems]) => (
+            <DayItinerary
+              key={dayIndex}
+              dayIndex={dayIndex}
+              dayItems={dayItems}
+              onReorder={(from, to) => reorderDay(dayIndex, from, to)}
+            />
+          ))}
       </div>
     </section>
+  );
+}
+
+function DayItinerary({
+  dayIndex,
+  dayItems,
+  onReorder,
+}: {
+  dayIndex: number;
+  dayItems: ItineraryItem[];
+  onReorder: (from: number, to: number) => void;
+}) {
+  const [drag, setDrag] = useState<number | null>(null);
+  return (
+    <div>
+      <h4 className="mb-2 text-sm font-semibold text-[var(--brand-500)]">Day {dayIndex}</h4>
+      <ol className="space-y-1.5">
+        {dayItems.map((item, idx) => (
+          <li
+            key={idx}
+            draggable
+            onDragStart={() => setDrag(idx)}
+            onDragEnd={() => setDrag(null)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (drag !== null && drag !== idx) onReorder(drag, idx);
+              setDrag(null);
+            }}
+            className={cn(
+              "surface-card flex cursor-grab items-start gap-2 p-3 active:cursor-grabbing",
+              drag === idx && "opacity-50",
+            )}
+          >
+            <GripHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-[var(--muted)]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{item.title}</p>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+                <Badge>{item.kind}</Badge>
+                {item.starts_at && (
+                  <span>
+                    {item.starts_at}
+                    {item.ends_at ? ` – ${item.ends_at}` : ""}
+                  </span>
+                )}
+                {item.cost_amount != null && (
+                  <span className="font-medium text-[var(--brand-500)]">
+                    {item.cost_currency ?? "MYR"} {Number(item.cost_amount).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 

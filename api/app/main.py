@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -13,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.agents import REGISTRY
+from app.agents import REGISTRY, goal_parser
 from app.agents.memory import MemoryAgent
 from app.agents.schemas import TravelerProfile, TripRequest
 from app.auth import store as auth_store
@@ -196,6 +197,10 @@ async def plan(body: PlanRequest, request: Request) -> PlanResponse:
     results = await run_plan(trip_request, profile, scope=scope)
     duration_ms = int((time.monotonic() - started) * 1000)
 
+    from app.brain import knowledge
+
+    await knowledge.record_from_plan(results)
+
     # A full trip becomes *the* active trip; a narrow lookup should not replace
     # the itinerary the traveller is actually working from.
     if scope.slug in ("full_trip", "itinerary_only"):
@@ -239,6 +244,65 @@ async def get_trip() -> dict[str, object]:
     if trip is None:
         return {"trip": None}
     return {"trip": trip}
+
+
+class TripSave(BaseModel):
+    results: dict[str, object]
+
+
+@app.post(f"{settings.api_prefix}/trip/save", tags=["trip"])
+async def save_active_trip(request: TripSave) -> dict[str, object]:
+    """Adopt a plan as the active trip — the 'Add to my trip' action."""
+    trip_id = await trip_store.save_trip_durable(request.results)
+    return {"ok": True, "trip_id": trip_id}
+
+
+@app.delete(f"{settings.api_prefix}/trip", tags=["trip"])
+async def delete_active_trip() -> dict[str, object]:
+    """Remove the active trip (My Trip goes back to empty)."""
+    await trip_store.delete_active()
+    return {"deleted": True}
+
+
+class ItineraryUpdate(BaseModel):
+    items: list[dict[str, object]]
+
+
+@app.post(f"{settings.api_prefix}/trip/itinerary", tags=["trip"])
+async def save_itinerary(request: ItineraryUpdate) -> dict[str, object]:
+    """Persist a reordered / edited itinerary for the active trip."""
+    updated = await trip_store.update_itinerary(list(request.items))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No active trip to edit")
+    return {"trip": updated}
+
+
+class ItineraryRefine(BaseModel):
+    instruction: str | None = None
+
+
+@app.post(f"{settings.api_prefix}/trip/itinerary/refine", tags=["trip"])
+async def refine_itinerary(request: ItineraryRefine) -> dict[str, object]:
+    """Ask the agents to add activities and realign the schedule."""
+    updated = await trip_store.refine_itinerary(request.instruction)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No active trip to refine")
+    return {"trip": updated}
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge library — findings the agents documented, grouped by category
+# --------------------------------------------------------------------------- #
+
+
+@app.get(f"{settings.api_prefix}/knowledge", tags=["knowledge"])
+async def knowledge_library(category: str | None = None, destination: str | None = None) -> dict[str, object]:
+    """Documented travel findings. Grouped by category unless filtered."""
+    from app.brain import knowledge
+
+    if category or destination:
+        return {"notes": await knowledge.list_notes(category, destination)}
+    return {"grouped": await knowledge.grouped(), "categories": list(knowledge.CATEGORIES)}
 
 
 # --------------------------------------------------------------------------- #
@@ -658,73 +722,90 @@ async def vault_delete(provider: str) -> dict[str, object]:
 
 
 # --------------------------------------------------------------------------- #
-# Integrations - Telegram notifications (user-facing, not admin-gated)
+# Integrations - notification bots (Telegram, multiple, user-facing)
 # --------------------------------------------------------------------------- #
 
 
-class TelegramConfig(BaseModel):
-    #: Optional on update — omit to keep the stored token and just change chat id.
-    bot_token: str | None = None
+class BotCreate(BaseModel):
+    label: str
+    bot_token: str
     chat_id: str
+    enabled: bool = True
 
 
-async def _telegram_status() -> dict[str, object]:
-    resolved = await vault.resolve("telegram")
-    extra = (resolved or {}).get("extra") or {}
-    return {
-        "configured": bool(resolved and resolved.get("secret") and extra.get("chat_id")),
-        "chat_id": extra.get("chat_id"),
-        "has_token": bool(resolved and resolved.get("secret")),
-    }
+class BotUpdate(BaseModel):
+    label: str | None = None
+    bot_token: str | None = None  # omit to keep the stored token
+    chat_id: str | None = None
+    enabled: bool | None = None
 
 
-@app.get(f"{settings.api_prefix}/integrations/telegram", tags=["integrations"])
-async def telegram_get() -> dict[str, object]:
-    """Current Telegram connection status (never returns the token)."""
-    return await _telegram_status()
+_WELCOME = "🎉 <b>Journava connected!</b>\nThis bot will ping you when a background trip plan is ready."
+_TEST_MSG = "✅ Journava test message — you're all set."
 
 
-@app.post(f"{settings.api_prefix}/integrations/telegram", tags=["integrations"])
-async def telegram_save(config: TelegramConfig) -> dict[str, object]:
-    """Save the bot token + chat id, then send a confirmation message."""
+@app.get(f"{settings.api_prefix}/integrations/bots", tags=["integrations"])
+async def bots_list() -> list[dict[str, object]]:
+    """Every notification bot (tokens masked)."""
+    from app.core import bots
+
+    return await bots.list_bots()
+
+
+@app.post(f"{settings.api_prefix}/integrations/bots", tags=["integrations"])
+async def bots_create(request: BotCreate) -> dict[str, object]:
+    """Add a bot, then send it a confirmation message."""
+    from app.core import bots
     from app.tools import telegram as telegram_tool
 
-    stored = await vault.upsert_credential(
-        "telegram",
-        secret=config.bot_token,  # None keeps the existing token
-        extra={"chat_id": config.chat_id},
-        status="untested",
+    created = await bots.create_bot(
+        request.label.strip() or "Telegram bot",
+        request.bot_token.strip(),
+        request.chat_id.strip(),
+        enabled=request.enabled,
     )
-    if stored is None:
-        raise HTTPException(status_code=503, detail="Could not save — the database is unavailable.")
-    vault.invalidate_cache("telegram")
+    if created is None:
+        raise HTTPException(status_code=503, detail="Could not save the bot.")
+    ok, detail = await telegram_tool.send(request.bot_token.strip(), request.chat_id.strip(), _WELCOME)
+    return {**created, "test": {"ok": ok, "message": detail}}
 
-    ok = await telegram_tool.notify(
-        "🎉 <b>Journava connected!</b>\nYou'll get a ping here when a background trip plan is ready."
+
+@app.patch(f"{settings.api_prefix}/integrations/bots/{{bot_id}}", tags=["integrations"])
+async def bots_update(bot_id: str, request: BotUpdate) -> dict[str, object]:
+    """Edit a bot or flip its enabled toggle."""
+    from app.core import bots
+
+    updated = await bots.update_bot(
+        bot_id,
+        label=request.label,
+        token=request.bot_token,
+        chat_id=request.chat_id,
+        enabled=request.enabled,
     )
-    await vault.set_status("telegram", "healthy" if ok else "invalid",
-                           "Connected" if ok else "Saved, but the test message failed — check the token & chat id.")
-    return {**await _telegram_status(), "test": {"ok": ok}}
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    return updated
 
 
-@app.post(f"{settings.api_prefix}/integrations/telegram/test", tags=["integrations"])
-async def telegram_test() -> dict[str, object]:
-    """Send a test message with the stored credentials."""
+@app.delete(f"{settings.api_prefix}/integrations/bots/{{bot_id}}", tags=["integrations"])
+async def bots_delete(bot_id: str) -> dict[str, object]:
+    from app.core import bots
+
+    if not await bots.delete_bot(bot_id):
+        raise HTTPException(status_code=404, detail="Bot not found")
+    return {"deleted": True, "id": bot_id}
+
+
+@app.post(f"{settings.api_prefix}/integrations/bots/{{bot_id}}/test", tags=["integrations"])
+async def bots_test(bot_id: str) -> dict[str, object]:
+    from app.core import bots
     from app.tools import telegram as telegram_tool
 
-    creds = await telegram_tool._creds()
+    creds = await bots.credentials(bot_id)
     if creds is None:
-        raise HTTPException(status_code=400, detail="Add your bot token and chat id first.")
-    ok, detail = await telegram_tool.send(creds[0], creds[1], "✅ Journava test message — you're all set.")
-    await vault.set_status("telegram", "healthy" if ok else "invalid", detail)
+        raise HTTPException(status_code=400, detail="Bot not found or missing credentials.")
+    ok, detail = await telegram_tool.send(creds[0], creds[1], _TEST_MSG)
     return {"ok": ok, "message": detail}
-
-
-@app.delete(f"{settings.api_prefix}/integrations/telegram", tags=["integrations"])
-async def telegram_delete() -> dict[str, object]:
-    await vault.delete_credential("telegram")
-    vault.invalidate_cache("telegram")
-    return {"disconnected": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -736,6 +817,65 @@ async def telegram_delete() -> dict[str, object]:
 async def list_scopes() -> list[dict[str, object]]:
     """Preset scopes: what each one runs, and how long it should take."""
     return scopes.catalogue()
+
+
+#: Country → suggested cities, used only to ask "which city?" when a prompt names
+#: a whole country but no city (a flight needs an airport).
+_CLARIFY_COUNTRIES: dict[str, dict[str, object]] = {
+    "japan": {"label": "Japan", "cities": ["Tokyo", "Osaka", "Kyoto", "Fukuoka", "Sapporo"]},
+    "thailand": {"label": "Thailand", "cities": ["Bangkok", "Phuket", "Chiang Mai"]},
+    "indonesia": {"label": "Indonesia", "cities": ["Bali (Denpasar)", "Jakarta", "Surabaya"]},
+    "malaysia": {"label": "Malaysia", "cities": ["Kuala Lumpur", "Penang", "Kota Kinabalu", "Langkawi"]},
+    "south korea": {"label": "South Korea", "cities": ["Seoul", "Busan", "Jeju"]},
+    "korea": {"label": "South Korea", "cities": ["Seoul", "Busan", "Jeju"]},
+    "vietnam": {"label": "Vietnam", "cities": ["Ho Chi Minh City", "Hanoi", "Da Nang"]},
+    "china": {"label": "China", "cities": ["Shanghai", "Beijing", "Guangzhou"]},
+    "taiwan": {"label": "Taiwan", "cities": ["Taipei", "Kaohsiung"]},
+    "philippines": {"label": "Philippines", "cities": ["Manila", "Cebu"]},
+    "australia": {"label": "Australia", "cities": ["Sydney", "Melbourne", "Brisbane"]},
+    "india": {"label": "India", "cities": ["Delhi", "Mumbai", "Bangalore"]},
+    "united kingdom": {"label": "UK", "cities": ["London", "Manchester"]},
+    "france": {"label": "France", "cities": ["Paris", "Nice"]},
+    "italy": {"label": "Italy", "cities": ["Rome", "Milan", "Venice"]},
+    "turkey": {"label": "Turkey", "cities": ["Istanbul", "Antalya"]},
+    "uae": {"label": "UAE", "cities": ["Dubai", "Abu Dhabi"]},
+    "brazil": {"label": "Brazil", "cities": ["Rio de Janeiro", "São Paulo", "Brasília"]},
+}
+
+
+class ClarifyRequest(BaseModel):
+    goal: str
+    scope: str
+
+
+@app.post(f"{settings.api_prefix}/plan/clarify", tags=["planning"])
+async def plan_clarify(request: ClarifyRequest) -> dict[str, object]:
+    """Check a prompt before running: does it need an origin, or a city for a
+    country-only destination? Drives the just-in-time clarification popup so the
+    CTA is always clickable and questions appear only when something's missing."""
+    scope = scopes.get(request.scope)
+    needs_flights = bool(scope and "route" in scope.inputs)
+    text = request.goal.lower()
+
+    parsed = goal_parser.parse_goal(request.goal)
+    origin = parsed.get("origin")
+    has_from = bool(re.search(r"\bfrom\s+[a-z0-9]", text))
+    needs_origin = needs_flights and not origin and not has_from
+
+    country_only: dict[str, object] | None = None
+    for key, info in _CLARIFY_COUNTRIES.items():
+        if re.search(rf"\b{re.escape(key)}\b", text):
+            cities = info["cities"]
+            named_city = any(str(c).split(" (")[0].lower() in text for c in cities)  # type: ignore[union-attr]
+            if not named_city:
+                country_only = {"country": info["label"], "cities": cities}
+            break
+
+    return {
+        "needs_clarification": bool(needs_origin or country_only),
+        "needs_origin": needs_origin,
+        "country_only": country_only,
+    }
 
 
 # --------------------------------------------------------------------------- #

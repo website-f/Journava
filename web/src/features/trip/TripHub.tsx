@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Briefcase,
@@ -11,6 +11,7 @@ import {
   CreditCard,
   ShoppingCart,
   Loader2,
+  Trash2,
 } from "@/components/ui/icons";
 import {
   Badge,
@@ -21,6 +22,7 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
+  confirm,
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import { usePlanStore, type PlanResults } from "@/stores/planStore";
@@ -122,11 +124,46 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   const currentScope = usePlanStore((s) => s.activeScope);
   const lastHistoryId = usePlanStore((s) => s.lastHistoryId);
   const [opening, setOpening] = useState<string | null>(null);
+  const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["trips"],
     queryFn: () => api.get<HistoryEntry[]>("/history/searches"),
   });
+
+  const deleteTrip = async (entry: HistoryEntry) => {
+    const ok = await confirm({
+      title: "Delete this trip?",
+      body: "It's removed from your trips and history. This can't be undone.",
+      confirmText: "Delete",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/history/searches/${entry.id}`);
+      await qc.invalidateQueries({ queryKey: ["trips"] });
+      toast.success("Trip deleted.");
+    } catch {
+      toast.error("Could not delete that trip.");
+    }
+  };
+
+  const removeCurrent = async () => {
+    const ok = await confirm({
+      title: "Remove the active trip?",
+      body: "Your active trip is cleared. Past searches stay in History.",
+      confirmText: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.del("/trip");
+      usePlanStore.getState().clear();
+      toast.success("Active trip removed.");
+    } catch {
+      toast.error("Could not remove the trip.");
+    }
+  };
 
   const trips = (data ?? []).filter(
     (e) => TRIP_SCOPES.has(e.scope) && e.id !== lastHistoryId,
@@ -182,6 +219,7 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
           band={bandFor("current")}
           badge="Active"
           onClick={() => onOpen(current!)}
+          onDelete={() => void removeCurrent()}
         />
       )}
       {trips.map((entry) => (
@@ -194,6 +232,7 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
           optionCount={entry.option_count}
           loading={opening === entry.id}
           onClick={() => void openHistory(entry)}
+          onDelete={() => void deleteTrip(entry)}
         />
       ))}
     </div>
@@ -209,6 +248,7 @@ function TripCard({
   badge,
   loading,
   onClick,
+  onDelete,
 }: {
   title: string;
   subtitle?: string;
@@ -218,43 +258,58 @@ function TripCard({
   badge?: string;
   loading?: boolean;
   onClick: () => void;
+  onDelete?: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={loading}
-      className="surface-card group relative overflow-hidden p-0 text-left transition-colors hover:border-[var(--brand-400)] disabled:opacity-70"
-    >
-      {/* Flat colour banner "thumbnail" */}
-      <div className="relative flex h-24 items-end p-3" style={{ background: band }}>
-        <Plane className="absolute right-3 top-3 h-6 w-6 text-white/70" />
-        <span className="font-[family-name:var(--font-display)] text-lg leading-tight text-white drop-shadow-sm">
-          {title}
-        </span>
-        {badge && (
-          <span className="absolute left-3 top-3 rounded-[var(--r-pill)] bg-white/25 px-2 py-0.5 text-[0.6rem] font-semibold uppercase text-white backdrop-blur-sm">
-            {badge}
+    <div className="surface-card group relative overflow-hidden p-0 transition-colors hover:border-[var(--brand-400)]">
+      <button
+        onClick={onClick}
+        disabled={loading}
+        className="block w-full text-left disabled:opacity-70"
+      >
+        {/* Flat colour banner "thumbnail" */}
+        <div className="relative flex h-24 items-end p-3" style={{ background: band }}>
+          <Plane className="absolute right-3 top-3 h-6 w-6 text-white/70" />
+          <span className="font-[family-name:var(--font-display)] text-lg leading-tight text-white drop-shadow-sm">
+            {title}
           </span>
-        )}
-      </div>
-      <div className="p-3">
-        {subtitle && <p className="line-clamp-2 text-sm font-medium">{subtitle}</p>}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {typeof optionCount === "number" && optionCount > 0 && (
-            <Badge>{optionCount} options</Badge>
-          )}
-          {when && (
-            <span className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">
-              <Clock className="h-3 w-3" /> {when}
+          {badge && (
+            <span className="absolute left-3 top-3 rounded-[var(--r-pill)] bg-white/25 px-2 py-0.5 text-[0.6rem] font-semibold uppercase text-white backdrop-blur-sm">
+              {badge}
             </span>
           )}
         </div>
-      </div>
+        <div className="p-3">
+          {subtitle && <p className="line-clamp-2 text-sm font-medium">{subtitle}</p>}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {typeof optionCount === "number" && optionCount > 0 && (
+              <Badge>{optionCount} options</Badge>
+            )}
+            {when && (
+              <span className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">
+                <Clock className="h-3 w-3" /> {when}
+              </span>
+            )}
+          </div>
+        </div>
+      </button>
+      {onDelete && (
+        <button
+          aria-label="Remove trip"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          className="absolute bottom-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-[var(--surface)]/90 text-[var(--muted)] opacity-0 shadow transition-opacity hover:text-[var(--danger)] group-hover:opacity-100"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
       {loading && (
         <span className="absolute inset-0 grid place-items-center bg-[var(--surface)]/60">
           <Loader2 className="h-5 w-5 animate-spin text-[var(--brand-500)]" />
         </span>
       )}
-    </button>
+    </div>
   );
 }

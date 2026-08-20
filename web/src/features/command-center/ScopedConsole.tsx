@@ -30,30 +30,6 @@ const CURRENCIES = [
   { value: "JPY", label: "JPY — Yen" },
 ];
 
-//: When the destination is a whole country, we ask which city rather than
-//: guessing — a flight needs an airport. Suggestions per popular country.
-const COUNTRY_CITIES: Record<string, { label: string; cities: string[] }> = {
-  japan: { label: "Japan", cities: ["Tokyo", "Osaka", "Kyoto", "Fukuoka", "Sapporo"] },
-  thailand: { label: "Thailand", cities: ["Bangkok", "Phuket", "Chiang Mai"] },
-  indonesia: { label: "Indonesia", cities: ["Bali (Denpasar)", "Jakarta", "Surabaya"] },
-  malaysia: { label: "Malaysia", cities: ["Kuala Lumpur", "Penang", "Kota Kinabalu", "Langkawi"] },
-  korea: { label: "South Korea", cities: ["Seoul", "Busan", "Jeju"] },
-  "south korea": { label: "South Korea", cities: ["Seoul", "Busan", "Jeju"] },
-  vietnam: { label: "Vietnam", cities: ["Ho Chi Minh City", "Hanoi", "Da Nang"] },
-  china: { label: "China", cities: ["Shanghai", "Beijing", "Guangzhou"] },
-  taiwan: { label: "Taiwan", cities: ["Taipei", "Kaohsiung"] },
-  philippines: { label: "Philippines", cities: ["Manila", "Cebu"] },
-  australia: { label: "Australia", cities: ["Sydney", "Melbourne", "Brisbane"] },
-  india: { label: "India", cities: ["Delhi", "Mumbai", "Bangalore"] },
-  "united kingdom": { label: "UK", cities: ["London", "Manchester"] },
-  uk: { label: "UK", cities: ["London", "Manchester"] },
-  france: { label: "France", cities: ["Paris", "Nice"] },
-  italy: { label: "Italy", cities: ["Rome", "Milan", "Venice"] },
-  turkey: { label: "Turkey", cities: ["Istanbul", "Antalya"] },
-  uae: { label: "UAE", cities: ["Dubai", "Abu Dhabi"] },
-  brazil: { label: "Brazil", cities: ["Rio de Janeiro", "São Paulo", "Brasília"] },
-};
-
 export function ScopedConsole({
   scope,
   onBack,
@@ -69,16 +45,9 @@ export function ScopedConsole({
   const setInputs = usePlanStore((s) => s.setInputs);
 
   const wants = (field: string) => scope.inputs.includes(field as never);
-
-  // Route clarification: when this scope needs a flight, origin + destination are
-  // required. A country destination reveals a city picker (a flight needs an airport).
-  const needsRoute = wants("route");
-  const destInfo = COUNTRY_CITIES[inputs.destination.trim().toLowerCase()];
-  const routeReady = !needsRoute || Boolean(inputs.origin.trim() && inputs.destination.trim());
-  const canRun =
-    !running &&
-    routeReady &&
-    (needsRoute || inputs.goal.trim().length > 2);
+  // "route" is a marker the clarify step reads — it renders no field here; the CTA
+  // is always clickable and the popup asks for origin/city only if the prompt lacks them.
+  const canRun = inputs.goal.trim().length > 2 && !running;
 
   return (
     <div className="mx-auto w-full max-w-3xl">
@@ -138,59 +107,6 @@ export function ScopedConsole({
 
       {/* Only the fields this scope uses */}
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {needsRoute && (
-          <>
-            <Field
-              label="Flying from"
-              hint={!inputs.origin.trim() ? "Where are you flying from? e.g. KLIA / Kuala Lumpur" : undefined}
-            >
-              <input
-                className="input-field"
-                placeholder="e.g. KLIA, Kuala Lumpur"
-                value={inputs.origin}
-                onChange={(event) => setInputs({ origin: event.target.value })}
-                aria-label="Flying from"
-              />
-            </Field>
-            <Field
-              label="Destination"
-              hint={
-                destInfo
-                  ? `${destInfo.label} — pick a city below`
-                  : "City or country — e.g. Osaka, Japan"
-              }
-            >
-              <input
-                className="input-field"
-                placeholder="Where to? e.g. Osaka or Japan"
-                value={inputs.destination}
-                onChange={(event) =>
-                  setInputs({ destination: event.target.value, destination_city: "" })
-                }
-                aria-label="Destination"
-              />
-            </Field>
-            {destInfo && (
-              <Field
-                label={`Which city in ${destInfo.label}?`}
-                hint="A flight needs an airport — pick one, or let the agent choose."
-                className="sm:col-span-2"
-              >
-                <Select
-                  value={inputs.destination_city || "__any__"}
-                  onValueChange={(value) =>
-                    setInputs({ destination_city: value === "__any__" ? "" : value })
-                  }
-                  options={[
-                    { value: "__any__", label: "Let the agent choose" },
-                    ...destInfo.cities.map((city) => ({ value: city, label: city })),
-                  ]}
-                  aria-label="Destination city"
-                />
-              </Field>
-            )}
-          </>
-        )}
         {wants("dates") && (
           <>
             <Field label="Departing">

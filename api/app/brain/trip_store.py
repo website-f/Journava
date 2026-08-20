@@ -194,3 +194,79 @@ def clear_trip() -> None:
     """Discard the in-process active trip (e.g. when the user starts fresh)."""
     global _active_trip
     _active_trip = None
+
+
+async def delete_active() -> None:
+    """Remove the active trip everywhere — cache, brain, and Postgres snapshots."""
+    global _active_trip
+    _active_trip = None
+    try:
+        gnosion_client.remember("active_trip", key="current", value=json.dumps(None))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not clear trip in Gnosion: %s", exc)
+    pool = await db.get_pool()
+    if pool is not None:
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE trips SET plan_snapshot = NULL WHERE plan_snapshot IS NOT NULL")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not clear trip snapshots in Postgres: %s", exc)
+
+
+async def update_itinerary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Replace the active trip's itinerary items (drag-drop reorder / edits)."""
+    trip = await load_trip_durable()
+    if trip is None:
+        return None
+    itinerary = dict(trip.get("itinerary") or {})
+    itinerary["items"] = items
+    trip["itinerary"] = itinerary
+    await save_trip_durable(trip)
+    return trip
+
+
+async def refine_itinerary(instruction: str | None = None) -> dict[str, Any] | None:
+    """Ask the LLM to add activities and realign the day-by-day schedule.
+
+    Falls back to the current items unchanged if the model is unavailable, so the
+    button never dead-ends.
+    """
+    from app.core import llm
+
+    trip = await load_trip_durable()
+    if trip is None:
+        return None
+    itinerary = dict(trip.get("itinerary") or {})
+    items = itinerary.get("items") or []
+    chief_data = (trip.get("chief") or {}).get("data") or {}
+    destination = chief_data.get("destination") or "the destination"
+
+    system = (
+        "You are Journava's itinerary planner. Given a day-by-day itinerary, return an "
+        "IMPROVED version as JSON {\"items\": [...]}. Add 1-2 sensible activities/meals per "
+        "day for the destination, keep existing good picks, and REALIGN start/end times so the "
+        "day flows with no overlaps (realistic travel gaps). Each item: "
+        "{day_index:int, kind:'activity'|'meal'|'transport'|'hotel'|'flight', title, "
+        "starts_at:'HH:MM', ends_at:'HH:MM', cost_amount:number|null, cost_currency, reasoning}."
+    )
+    user = (
+        f"Destination: {destination}\n"
+        f"Instruction: {instruction or 'Add nicer places and rebalance the schedule.'}\n"
+        f"Current itinerary JSON:\n{json.dumps({'items': items}, default=str)[:6000]}"
+    )
+    try:
+        raw = await llm.complete(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+            agent="itinerary",
+        )
+        new_items = json.loads(raw).get("items")
+        if isinstance(new_items, list) and new_items:
+            items = new_items
+    except Exception as exc:  # noqa: BLE001 — refine is best-effort
+        logger.info("Itinerary refine failed, keeping current items: %s", exc)
+
+    itinerary["items"] = items
+    trip["itinerary"] = itinerary
+    await save_trip_durable(trip)
+    return trip

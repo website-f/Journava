@@ -6,22 +6,22 @@
 # `docker compose up -d` works, and `ops/deploy.sh` drives this same file —
 # there is deliberately no second copy under ops/ to drift out of sync.
 #
-# Nothing here terminates TLS. The shared Caddy at /opt/reverse-proxy fronts the
-# stack and reaches it over the external `proxy` network:
-#     journava.<domain>        -> web:80
-#     journava.<domain>/api/*  -> api:8400
-# `web` and `api` therefore MUST join `proxy`, or Caddy cannot resolve them by
-# name and the vhost in ops/Caddyfile.journava.snippet 502s.
+# Nothing here terminates TLS. The stack is a SINGLE public entry point: the
+# `web` container's nginx serves the PWA and reverse-proxies /api/* to `api`
+# internally — so the whole app lives on one port. On the VPS the shared reverse
+# proxy (Caddy / proxy-go / nginx) just forwards the domain to that one loopback
+# port; no shared docker network, no per-app TLS.
 #
-# Host-published ports (127.0.0.1 only) exist so a laptop can curl the stack
-# directly. They are not needed in production — Caddy uses the proxy network —
-# and binding to loopback keeps them off the public interface either way.
-#     8400 -> api   (matches README quick start: http://localhost:8400/health)
-#     8401 -> web
-#     8402 -> postgres, 8403 -> redis  (dev access; drop if not wanted)
+#     <public domain>  ->  127.0.0.1:${JOURNAVA_WEB_PORT:-8401}   (web → serves SPA + /api)
 #
-# ⚠️ TODO(ports): verify 8400–8409 is free against the reverse-proxy port table
-# before first deploy — Sejuk Ops already reserves 8300–8309.
+# Every published port binds to 127.0.0.1 ONLY, so nothing is exposed on the
+# public interface — the reverse proxy is the only thing that reaches them.
+# Journava's allocation is the 8400–8409 block (8000/8100/8200/8300 are taken by
+# other stacks on the box):
+#     8400 -> api (direct health/debug)   8401 -> web (the domain target)
+#     8402 -> postgres    8403 -> redis   (loopback dev access; harmless in prod)
+# Override any of these with JOURNAVA_WEB_PORT / JOURNAVA_API_PORT /
+# POSTGRES_HOST_PORT / REDIS_HOST_PORT in .env if the range clashes.
 
 name: journava
 
@@ -47,11 +47,11 @@ services:
     environment:
       TZ: ${TZ:-Asia/Kuala_Lumpur}
     ports:
-      - "127.0.0.1:8401:80"
+      - "127.0.0.1:${JOURNAVA_WEB_PORT:-8401}:80"
     depends_on:
       api:
         condition: service_started
-    networks: [internal, proxy]
+    networks: [internal]
 
   # ---------------------------------------------------------------------------
   # api — FastAPI + LangGraph orchestrator (21 agents)
@@ -75,7 +75,7 @@ services:
     volumes:
       - api_data:/srv/data
     ports:
-      - "127.0.0.1:8400:8400"
+      - "127.0.0.1:${JOURNAVA_API_PORT:-8400}:8400"
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,7 +89,7 @@ services:
       timeout: 8s
       retries: 5
       start_period: 30s
-    networks: [internal, proxy]
+    networks: [internal]
 
   # ---------------------------------------------------------------------------
   # gnosion — the brain in MCP mode. Library mode runs in-process inside `api`
@@ -145,7 +145,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:8402:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-8402}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-journava} -d ${POSTGRES_DB:-journava}"]
       interval: 10s
@@ -168,7 +168,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "127.0.0.1:8403:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-8403}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -179,10 +179,6 @@ services:
 networks:
   internal:
     driver: bridge
-  # Created and owned by the shared reverse proxy. Never define it here.
-  proxy:
-    external: true
-    name: ${PROXY_NETWORK:-proxy}
 
 volumes:
   postgres_data:

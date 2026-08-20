@@ -10,6 +10,7 @@ import { PersonalHome } from "@/features/home/PersonalHome";
 import { ScopePicker } from "./ScopePicker";
 import { ScopedConsole } from "./ScopedConsole";
 import { ScopedResults } from "./ScopedResults";
+import { ClarifyDialog, type ClarifyState } from "./ClarifyDialog";
 
 /**
  * Command Center — the main surface (spec §3.1), in three states:
@@ -30,6 +31,7 @@ export function CommandCenter() {
   const { events } = useAgentStream();
 
   const [scopes, setScopes] = useState<Scope[] | null>(null);
+  const [clarify, setClarify] = useState<ClarifyState | null>(null);
 
   const results = usePlanStore((s) => s.results);
   const activeScope = usePlanStore((s) => s.activeScope);
@@ -64,21 +66,39 @@ export function CommandCenter() {
     setSearchParams({});
   };
 
+  // The CTA is always clickable. Before running, ask the backend whether the
+  // prompt is missing an origin or names a country without a city — if so, pop the
+  // clarification dialog; otherwise dispatch straight away.
   const runPlan = async () => {
     if (!scope) return;
-    // Fold the clarified route (origin → city, country) into the goal so the
-    // parser resolves a concrete airport instead of guessing from a country name.
-    const destFull = inputs.destination_city
-      ? `${inputs.destination_city}, ${inputs.destination}`.trim()
-      : inputs.destination.trim();
-    const routeClause =
-      inputs.origin.trim() && destFull
-        ? `flights from ${inputs.origin.trim()} to ${destFull}`
-        : "";
-    const goal =
-      [inputs.goal.trim(), routeClause].filter(Boolean).join(". ") ||
-      routeClause ||
-      inputs.goal.trim();
+    try {
+      const check = await api.post<{ needs_clarification: boolean } & ClarifyState>(
+        "/plan/clarify",
+        { goal: inputs.goal.trim(), scope: scope.slug },
+      );
+      if (check.needs_clarification) {
+        setClarify({ needs_origin: check.needs_origin, country_only: check.country_only });
+        return;
+      }
+    } catch {
+      // Clarification is a nicety — if the check fails, just run the plan.
+    }
+    await dispatchPlan();
+  };
+
+  const dispatchPlan = async (extra?: { origin?: string; city?: string; country?: string }) => {
+    if (!scope) return;
+    setClarify(null);
+
+    // Fold the popup answers into the goal so the parser resolves a real airport.
+    const clause: string[] = [];
+    if (extra?.origin?.trim()) clause.push(`flying from ${extra.origin.trim()}`);
+    if (extra?.city?.trim()) {
+      clause.push(`to ${extra.city.trim()}${extra.country ? `, ${extra.country}` : ""}`);
+    }
+    const goal = clause.length
+      ? [inputs.goal.trim(), clause.join(" ")].filter(Boolean).join(" — ")
+      : inputs.goal.trim();
 
     const payload: Record<string, unknown> = {
       goal,
@@ -176,6 +196,14 @@ export function CommandCenter() {
           onAskAgain={() => usePlanStore.setState({ results: null, activeScope: null })}
           onBack={backToPicker}
           onOpenTrip={() => navigate("/trip")}
+        />
+      )}
+
+      {clarify && (
+        <ClarifyDialog
+          state={clarify}
+          onCancel={() => setClarify(null)}
+          onSubmit={(answers) => void dispatchPlan(answers)}
         />
       )}
     </>

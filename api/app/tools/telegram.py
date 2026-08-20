@@ -1,10 +1,9 @@
 """Telegram Bot notifications.
 
-Lets a traveller wire their own bot so Journava pings them when a background trip
-plan finishes (they can fire a plan, walk away, and get told when it's ready).
-
-Credentials live in the vault under provider ``telegram``: the bot token is the
-secret, the chat id is an extra field. Sends via the Bot HTTP API:
+Lets a traveller wire one or more bots so Journava pings them when a background
+trip plan finishes. Bots live in the `notification_bots` table (see
+`app.core.bots`), each independently toggleable; a notification fans out to every
+enabled bot. Sends via the Bot HTTP API:
 ``https://api.telegram.org/bot<token>/sendMessage``.
 """
 
@@ -14,25 +13,12 @@ import logging
 
 import httpx
 
-from app.core import vault
-
 logger = logging.getLogger(__name__)
 _TIMEOUT = httpx.Timeout(12.0)
 
 
 def _url(token: str, method: str) -> str:
     return f"https://api.telegram.org/bot{token}/{method}"
-
-
-async def _creds() -> tuple[str, str] | None:
-    resolved = await vault.resolve("telegram")
-    if not resolved:
-        return None
-    token = resolved.get("secret")
-    chat_id = (resolved.get("extra") or {}).get("chat_id")
-    if not token or not chat_id:
-        return None
-    return str(token), str(chat_id)
 
 
 async def send(token: str, chat_id: str, text: str) -> tuple[bool, str]:
@@ -66,16 +52,21 @@ async def send(token: str, chat_id: str, text: str) -> tuple[bool, str]:
 
 
 async def notify(text: str) -> bool:
-    """Send using the stored credentials. No-op (False) when not configured."""
-    creds = await _creds()
-    if creds is None:
-        return False
-    token, chat_id = creds
-    ok, detail = await send(token, chat_id, text)
-    if not ok:
-        logger.info("Telegram notify failed: %s", detail)
-    return ok
+    """Fan out to every enabled bot. Returns True if at least one delivered."""
+    from app.core import bots
+
+    targets = await bots.enabled_targets()
+    sent = 0
+    for token, chat_id, label in targets:
+        ok, detail = await send(token, chat_id, text)
+        if ok:
+            sent += 1
+        else:
+            logger.info("Telegram notify failed for %s: %s", label, detail)
+    return sent > 0
 
 
 async def configured() -> bool:
-    return (await _creds()) is not None
+    from app.core import bots
+
+    return bool(await bots.enabled_targets())
