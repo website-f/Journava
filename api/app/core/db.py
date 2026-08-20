@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.core.settings import settings
 
@@ -35,6 +37,33 @@ _RETRY_BACKOFF_SECONDS = 30.0
 _CONNECT_TIMEOUT_SECONDS = 5.0
 
 SCHEMA_FILE = Path(__file__).resolve().parent.parent / "db" / "schema.sql"
+
+
+def _resolve_host(dsn: str) -> str | None:
+    """Resolve the DSN's hostname to an IPv4 address on the calling thread.
+
+    asyncpg otherwise resolves the host through the *event-loop* resolver. Under
+    uvicorn's uvloop that path intermittently fails with EAI_NONAME against
+    Docker's embedded DNS (127.0.0.11) — even though the blocking stdlib resolver
+    used here succeeds every time on the same box. Handing asyncpg an explicit
+    `host=<ip>` sidesteps the flaky resolver completely.
+
+    Returns None when the host is absent, already an IP literal, or can't be
+    resolved — callers then fall back to letting asyncpg resolve it (no worse
+    than before).
+    """
+    try:
+        host = urlsplit(dsn).hostname
+        if not host:
+            return None
+        try:
+            socket.inet_aton(host)
+            return None  # already an IPv4 literal — nothing to resolve
+        except OSError:
+            pass
+        return socket.getaddrinfo(host, None, family=socket.AF_INET, type=socket.SOCK_STREAM)[0][4][0]
+    except Exception:  # noqa: BLE001 — best-effort; fall back to asyncpg's resolver
+        return None
 
 
 async def get_pool() -> Any:
@@ -52,18 +81,24 @@ async def get_pool() -> Any:
     try:
         import asyncpg
 
+        # Resolve the host ourselves and pass it explicitly — see _resolve_host.
+        dsn = settings.database_url
+        host_ip = _resolve_host(dsn)
+        host_kwarg: dict[str, Any] = {"host": host_ip} if host_ip else {}
+
         _pool = await asyncio.wait_for(
             asyncpg.create_pool(
-                dsn=settings.database_url,
+                dsn=dsn,
                 min_size=1,
                 max_size=10,
                 command_timeout=30,
                 timeout=_CONNECT_TIMEOUT_SECONDS,
+                **host_kwarg,
             ),
             timeout=_CONNECT_TIMEOUT_SECONDS + 2,
         )
         _retry_after = 0.0
-        logger.info("Postgres pool ready")
+        logger.info("Postgres pool ready%s", f" (host {host_ip})" if host_ip else "")
     except Exception as exc:  # noqa: BLE001 — the app runs without a database
         _pool = None
         _retry_after = time.monotonic() + _RETRY_BACKOFF_SECONDS
