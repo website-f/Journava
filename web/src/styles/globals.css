@@ -153,11 +153,20 @@
 html {
   font-size: clamp(15px, 0.9rem + 0.2vw, 17px);
   -webkit-text-size-adjust: 100%;
+  /* Feel native, not web: no whole-page rubber-banding, no grey tap flash, and
+     never a horizontal scrollbar from a stray wide element. `clip` (not
+     `hidden`) so sticky headers / the floating nav keep working. */
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: clip;
 }
 
 body {
   margin: 0;
   min-height: 100dvh;
+  width: 100%;
+  overflow-x: clip;
+  overscroll-behavior-y: none;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
@@ -166,6 +175,24 @@ body {
   /* PWA safe areas (notch) */
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* -------------------------------------------------------------------------
+   iOS Safari input zoom fix (spec §10 — the PWA must feel like a native app)
+   -------------------------------------------------------------------------
+   iOS Safari zooms the whole viewport whenever a focused form control has a
+   computed font-size below 16px — which our compact 0.875rem fields (login, the
+   trip prompt, every settings input) trip on. On touch devices, float every
+   field to a minimum of 16px so focusing an input never zooms the page.
+   `#root …` gives this enough specificity to beat `.input-field` and Tailwind's
+   `text-sm`/`text-xs` without `!important`; desktop keeps its compact sizing. */
+@media (pointer: coarse) {
+  #root input,
+  #root textarea,
+  #root select,
+  #root [contenteditable="true"] {
+    font-size: 16px;
+  }
 }
 
 *,
