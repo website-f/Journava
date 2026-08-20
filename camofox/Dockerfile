@@ -15,14 +15,19 @@ FROM node:22-slim
 
 WORKDIR /srv
 
-# Install camofox-browser globally (auto-downloads Camoufox ~300MB binary)
-RUN npm install -g @askjo/camofox-browser@latest
-
-# Camoufox needs some system deps for Firefox on slim images
+# System deps, installed BEFORE the npm install:
+#  - python3 + make + g++ : node-gyp compiles camofox-browser's native module
+#    (better-sqlite3) from source when no prebuilt binary exists for this
+#    node/arch. Without them the install dies with "Could not find any Python".
+#  - the Firefox runtime libs Camoufox needs on the slim image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ ca-certificates \
     libgtk-3-0 libdbus-glib-1-2 libxt6 libasound2 libx11-xcb1 \
     fonts-liberation fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
+
+# Install camofox-browser globally (auto-downloads Camoufox ~300MB binary)
+RUN npm install -g @askjo/camofox-browser@latest
 
 ENV CAMOFOX_PORT=9377
 ENV CAMOFOX_CRASH_REPORT_ENABLED=false
