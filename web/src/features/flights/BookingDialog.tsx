@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -82,15 +82,22 @@ const EMPTY_PASSENGER: PassengerForm = {
 };
 
 export function BookingDialog({
-  option,
-  route,
+  option: optionProp,
+  route: routeProp,
+  initialBooking,
   onClose,
 }: {
-  option: PlanOption;
-  route: { origin?: string; destination?: string; depart?: string };
+  option?: PlanOption;
+  route?: { origin?: string; destination?: string; depart?: string };
+  /** Resume an existing booking (from the Orders/Payments tab) instead of
+   *  starting fresh from a search result. */
+  initialBooking?: FlightBooking;
   onClose: () => void;
 }) {
-  const [booking, setBooking] = useState<FlightBooking | null>(null);
+  // Resuming? Derive the display option/route from the stored booking snapshot.
+  const option = optionProp ?? optionFromBooking(initialBooking);
+  const route = routeProp ?? routeFromBooking(initialBooking);
+  const [booking, setBooking] = useState<FlightBooking | null>(initialBooking ?? null);
   const [atlas, setAtlas] = useState<AtlasStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [passenger, setPassenger] = useState<PassengerForm>(EMPTY_PASSENGER);
@@ -320,24 +327,8 @@ export function BookingDialog({
               <PassengerFields value={passenger} onChange={setPassenger} />
             )}
 
-            {booking?.payment_summary && (
-              <div className="mt-4 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-3">
-                <p className="text-xs font-semibold">Payment summary</p>
-                <p className="mt-1 font-[family-name:var(--font-mono)] text-xs text-[var(--muted)]">
-                  {booking.payment_summary}
-                </p>
-                {booking.order_link && (
-                  <a
-                    href={booking.order_link}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-[var(--brand-500)] hover:underline"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    View the order on Atlas
-                  </a>
-                )}
-              </div>
+            {(booking?.order_no || booking?.payment_summary) && (
+              <OrderSummary booking={booking} />
             )}
 
             {booking?.tickets && booking.tickets.length > 0 && (
@@ -379,7 +370,7 @@ export function BookingDialog({
               stage={stage}
               busy={busy}
               hasBooking={Boolean(booking)}
-              readyToPay={Boolean(booking?.ready_to_pay)}
+              readyToPay={Boolean(booking?.ready_to_pay ?? booking?.has_confirmation)}
               passengerReady={passengerReady}
               requiresConfirmation={Boolean(booking?.requires_confirmation)}
               onVerify={() => void verify(false)}
@@ -666,6 +657,104 @@ function PassengerFields({
       </div>
     </div>
   );
+}
+
+/** The order/receipt block. Renders structured fields — never a raw object,
+ *  which is what crashed the page when `payment_summary` became an object. */
+function OrderSummary({ booking }: { booking: FlightBooking }) {
+  const summary = booking.payment_summary;
+  const summaryObj =
+    summary && typeof summary === "object" ? (summary as Record<string, unknown>) : null;
+  const summaryText = typeof summary === "string" ? summary : null;
+  const passengerCount =
+    (summaryObj?.passenger_count as number | undefined) ?? booking.travellers ?? 1;
+  const deadline = booking.payment_deadline ?? (summaryObj?.payment_deadline as string | undefined);
+  const total =
+    booking.total_amount != null
+      ? `${booking.currency ?? ""} ${Number(booking.total_amount).toLocaleString()}`.trim()
+      : null;
+
+  return (
+    <div className="mt-4 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-3">
+      <p className="text-xs font-semibold">Order summary</p>
+      <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        {booking.order_no && (
+          <Row label="Order no.">
+            <span className="font-[family-name:var(--font-mono)]">{booking.order_no}</span>
+          </Row>
+        )}
+        {total && <Row label="Total">{total}</Row>}
+        <Row label="Passengers">{passengerCount}</Row>
+        <Row label="Environment">{booking.environment === "production" ? "Production" : "Sandbox"}</Row>
+        {deadline && <Row label="Pay by">{deadline}</Row>}
+      </dl>
+      {summaryText && (
+        <p className="mt-2 font-[family-name:var(--font-mono)] text-[0.65rem] text-[var(--muted)]">
+          {summaryText}
+        </p>
+      )}
+      {booking.order_link && (
+        <a
+          href={booking.order_link}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="mt-2 inline-flex items-center gap-1 text-xs text-[var(--brand-500)] hover:underline"
+        >
+          <ExternalLink className="h-3 w-3" />
+          View the order on Atlas
+        </a>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="text-[var(--muted)]">{label}</dt>
+      <dd className="text-right font-medium">{children}</dd>
+    </>
+  );
+}
+
+/** Reconstruct a display PlanOption from a stored booking's offer snapshot,
+ *  so a resumed booking shows its flight without the original search result. */
+function optionFromBooking(booking?: FlightBooking): PlanOption {
+  const snap = (booking?.payload?.offer ?? {}) as {
+    id?: string;
+    title?: string;
+    raw?: Record<string, unknown>;
+  };
+  return {
+    id: snap.id ?? booking?.offer_id ?? booking?.id ?? "resume",
+    kind: "flight",
+    title: snap.title ?? booking?.route ?? "Flight",
+    price_amount: booking?.total_amount ?? null,
+    price_currency: booking?.currency ?? "MYR",
+    provider: booking?.environment === "sandbox" ? "Atlas Sandbox" : "Atlas Flight Booking",
+    booking_url: null,
+    reasoning: null,
+    halal_confidence: null,
+    verified: false,
+    last_checked: null,
+    source: "atlas",
+    source_url: null,
+    bookable: true,
+    raw: { ...(snap.raw ?? {}), offer_id: booking?.offer_id ?? snap.id },
+  };
+}
+
+function routeFromBooking(booking?: FlightBooking): {
+  origin?: string;
+  destination?: string;
+  depart?: string;
+} {
+  const [origin, destination] = (booking?.route ?? "").split("-");
+  return {
+    origin: origin || undefined,
+    destination: destination || undefined,
+    depart: booking?.depart_date ?? undefined,
+  };
 }
 
 function describeDetail(detail: unknown): string {

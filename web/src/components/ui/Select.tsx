@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
@@ -21,6 +22,12 @@ type SelectProps = {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /**
+   * Custom trigger display for the selected value. Use when the full option
+   * label is too long for a narrow trigger (e.g. show the currency code "MYR"
+   * in the trigger while the dropdown keeps "MYR — Ringgit").
+   */
+  renderValue?: (value: string | undefined) => ReactNode;
   "aria-label"?: string;
 };
 
@@ -32,6 +39,7 @@ export function Select({
   placeholder = "Choose…",
   disabled,
   className,
+  renderValue,
   ...aria
 }: SelectProps) {
   return (
@@ -43,7 +51,7 @@ export function Select({
       <SelectPrimitive.Trigger
         aria-label={aria["aria-label"]}
         className={cn(
-          "h-11 w-full rounded-[var(--r-md)] border border-[var(--border)]",
+          "h-11 w-full overflow-hidden rounded-[var(--r-md)] border border-[var(--border)]",
           "bg-[var(--surface)] px-4 flex items-center justify-between gap-2",
           "text-left text-[var(--text)] transition-colors duration-[var(--dur)]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
@@ -53,8 +61,15 @@ export function Select({
           className,
         )}
       >
-        <SelectPrimitive.Value placeholder={placeholder} />
-        <SelectPrimitive.Icon>
+        {/* min-w-0 + truncate keep a long label (e.g. "MYR — Ringgit") from
+            wrapping and overflowing a narrow trigger. */}
+        <SelectPrimitive.Value
+          placeholder={placeholder}
+          className="min-w-0 flex-1 truncate"
+        >
+          {renderValue ? renderValue(value) : undefined}
+        </SelectPrimitive.Value>
+        <SelectPrimitive.Icon className="shrink-0">
           <ChevronDown className="h-4 w-4 opacity-60" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
@@ -64,7 +79,9 @@ export function Select({
           position="popper"
           sideOffset={6}
           className={cn(
-            "radix-panel z-[70] min-w-[var(--radix-select-trigger-width)]",
+            // Above dialogs (engine modal content is z-71) so the popover is
+            // never hidden behind a modal.
+            "radix-panel z-[95] min-w-[var(--radix-select-trigger-width)]",
             "max-h-[min(20rem,var(--radix-select-content-available-height))]",
             "overflow-hidden rounded-[var(--r-md)] border border-[var(--border)]",
             "bg-[var(--elevated)] shadow-[var(--shadow-2)] p-1",

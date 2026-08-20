@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Compass, Globe, ShieldAlert, Newspaper, ThumbsUp, ThumbsDown,
@@ -96,11 +96,7 @@ export function ResearchBoard() {
           {flights.length === 0 ? (
             <p className="text-sm text-[var(--muted)] py-6">No flight options yet.</p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {flights.map((opt) => (
-                <OptionCard key={opt.id} option={opt} />
-              ))}
-            </div>
+            <PagedOptionCards items={flights} label="flight options" />
           )}
         </TabsContent>
 
@@ -108,11 +104,7 @@ export function ResearchBoard() {
           {hotels.length === 0 ? (
             <p className="text-sm text-[var(--muted)] py-6">No hotel options yet.</p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {hotels.map((opt) => (
-                <OptionCard key={opt.id} option={opt} />
-              ))}
-            </div>
+            <PagedOptionCards items={hotels} label="hotel options" />
           )}
         </TabsContent>
 
@@ -198,13 +190,11 @@ export function ResearchBoard() {
                   Labels are re-derived from JAKIM / MUIS / HalalTrip. A claim no
                   certification body corroborates is shown downgraded, never as certified.
                 </p>
-                <div className="space-y-2">
-                  {results.research.options
-                    .filter((o) => o.kind === "restaurant")
-                    .map((opt) => (
-                      <DiningRow key={opt.id} option={opt} />
-                    ))}
-                </div>
+                <PagedRows
+                  items={results.research.options.filter((o) => o.kind === "restaurant")}
+                  label="halal-checked places"
+                  render={(opt) => <DiningRow key={opt.id} option={opt} />}
+                />
                 {(results.research.warnings ?? []).length > 0 && (
                   <ul className="mt-3 space-y-1 border-t border-[var(--border)] pt-2">
                     {results.research.warnings.map((w, i) => (
@@ -222,13 +212,11 @@ export function ResearchBoard() {
             {(results?.research?.options ?? []).some((o) => o.kind === "activity") && (
               <div className="surface-card p-4">
                 <h4 className="text-sm font-semibold mb-3">Attractions — Why Journava Chose These</h4>
-                <div className="space-y-2">
-                  {results.research.options
-                    .filter((o) => o.kind === "activity")
-                    .map((opt) => (
-                      <AttractionRow key={opt.id} option={opt} />
-                    ))}
-                </div>
+                <PagedRows
+                  items={results.research.options.filter((o) => o.kind === "activity")}
+                  label="attractions"
+                  render={(opt) => <AttractionRow key={opt.id} option={opt} />}
+                />
               </div>
             )}
 
@@ -252,6 +240,99 @@ export function ResearchBoard() {
 // --------------------------------------------------------------------------- //
 // Sub-components
 // --------------------------------------------------------------------------- //
+
+// --------------------------------------------------------------------------- //
+// Pagination — research runs can be data-heavy, so grids/lists page rather than
+// rendering hundreds of cards at once.
+// --------------------------------------------------------------------------- //
+
+function Pager({
+  page,
+  pages,
+  setPage,
+  total,
+  label,
+}: {
+  page: number;
+  pages: number;
+  setPage: (n: number) => void;
+  total: number;
+  label: string;
+}) {
+  return (
+    <div className="mt-4 flex items-center justify-between">
+      <span className="text-[0.65rem] text-[var(--muted)]">
+        {total} {label}
+      </span>
+      {pages > 1 && (
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" disabled={page === 0} onClick={() => setPage(page - 1)}>
+            Prev
+          </Button>
+          <span className="px-1 text-xs tabular-nums text-[var(--muted)]">
+            {page + 1} / {pages}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={page >= pages - 1}
+            onClick={() => setPage(page + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PagedOptionCards({
+  items,
+  label,
+  pageSize = 9,
+}: {
+  items: PlanOption[];
+  label: string;
+  pageSize?: number;
+}) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(items.length / pageSize));
+  const p = Math.min(page, pages - 1);
+  const slice = items.slice(p * pageSize, p * pageSize + pageSize);
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {slice.map((opt) => (
+          <OptionCard key={opt.id} option={opt} />
+        ))}
+      </div>
+      <Pager page={p} pages={pages} setPage={setPage} total={items.length} label={label} />
+    </>
+  );
+}
+
+function PagedRows<T extends { id: string }>({
+  items,
+  render,
+  label,
+  pageSize = 6,
+}: {
+  items: T[];
+  render: (item: T) => ReactNode;
+  label: string;
+  pageSize?: number;
+}) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(items.length / pageSize));
+  const p = Math.min(page, pages - 1);
+  const slice = items.slice(p * pageSize, p * pageSize + pageSize);
+  return (
+    <>
+      <div className="space-y-2">{slice.map(render)}</div>
+      <Pager page={p} pages={pages} setPage={setPage} total={items.length} label={label} />
+    </>
+  );
+}
 
 function ResearchHeader() {
   return (

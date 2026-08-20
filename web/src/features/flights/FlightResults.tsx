@@ -7,7 +7,7 @@ import {
   Plane,
   ShoppingCart,
 } from "@/components/ui/icons";
-import { Badge, Button } from "@/components/ui";
+import { Badge, Button, NumberField, Select } from "@/components/ui";
 import { SourceTrustRow } from "@/components/ui/SourceBadge";
 import { cn } from "@/lib/cn";
 import type { AgentPlanResult, PlanOption } from "@/lib/types";
@@ -63,8 +63,27 @@ const RANKING_LABELS: Record<string, string> = {
   best_time: "Fastest",
 };
 
+type StopsFilter = "any" | "direct" | "max1";
+type SortMode = "relevance" | "cheapest" | "fastest";
+type SourceFilter = "all" | "atlas" | "camofox" | "amadeus" | "sim";
+
+const SOURCE_MATCH: Record<SourceFilter, (o: PlanOption) => boolean> = {
+  all: () => true,
+  atlas: (o) => o.source === "atlas",
+  camofox: (o) => o.source === "camofox" || o.source === "research",
+  amadeus: (o) => o.source === "amadeus",
+  sim: (o) => o.source === "llm" || o.source === "mock" || !o.source,
+};
+
 export function FlightResults({ result }: { result: AgentPlanResult }) {
   const [booking, setBooking] = useState<PlanOption | null>(null);
+
+  // Post-search filters (applied client-side over the returned options).
+  const [maxBudget, setMaxBudget] = useState<number | null>(null);
+  const [stops, setStops] = useState<StopsFilter>("any");
+  const [onlyBookable, setOnlyBookable] = useState(false);
+  const [sort, setSort] = useState<SortMode>("relevance");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
   const options = result.options ?? [];
   const ranking = (result.data?.ranking ?? {}) as Record<string, string | null>;
@@ -88,10 +107,48 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
     return map;
   }, [ranking]);
 
+  const stopsOf = (o: PlanOption) => Number((o.raw as { stops?: number })?.stops ?? 0);
+  const durationOf = (o: PlanOption) => Number((o.raw as { duration_hours?: number })?.duration_hours ?? 99);
+
+  const filtered = useMemo(() => {
+    let list = options.slice();
+    if (sourceFilter !== "all") list = list.filter(SOURCE_MATCH[sourceFilter]);
+    if (onlyBookable) list = list.filter((o) => o.bookable);
+    if (maxBudget != null) {
+      // A budget filter is about price, so unpriced link cards drop out.
+      list = list.filter((o) => o.price_amount != null && Number(o.price_amount) <= maxBudget);
+    }
+    if (stops !== "any") {
+      list = list.filter((o) => (stops === "direct" ? stopsOf(o) === 0 : stopsOf(o) <= 1));
+    }
+    if (sort === "cheapest") {
+      list.sort((a, b) => (a.price_amount ?? Infinity) - (b.price_amount ?? Infinity));
+    } else if (sort === "fastest") {
+      list.sort((a, b) => durationOf(a) - durationOf(b));
+    }
+    return list;
+  }, [options, sourceFilter, onlyBookable, maxBudget, stops, sort]);
+
   const groups = SOURCE_GROUPS.map((group) => ({
     ...group,
-    options: options.filter(group.match),
+    options: filtered.filter(group.match),
   })).filter((group) => group.options.length > 0);
+
+  // How many the search returned per source — powers the Source dropdown labels.
+  const sourceCounts = useMemo(() => {
+    const count = (f: SourceFilter) => options.filter(SOURCE_MATCH[f]).length;
+    return { atlas: count("atlas"), camofox: count("camofox"), amadeus: count("amadeus"), sim: count("sim") };
+  }, [options]);
+
+  const filtersActive =
+    sourceFilter !== "all" || onlyBookable || maxBudget != null || stops !== "any" || sort !== "relevance";
+  const resetFilters = () => {
+    setSourceFilter("all");
+    setOnlyBookable(false);
+    setMaxBudget(null);
+    setStops("any");
+    setSort("relevance");
+  };
 
   const pagesRead = sources.camofox?.pages_read ?? [];
 
@@ -108,7 +165,9 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
             </span>
           )}
         </h3>
-        <Badge variant="brand">{options.length}</Badge>
+        <Badge variant="brand">
+          {filtersActive ? `${filtered.length}/${options.length}` : options.length}
+        </Badge>
       </header>
 
       <p className="text-sm text-[var(--muted)]">{result.summary}</p>
@@ -122,6 +181,88 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
           </Badge>
         ))}
       </div>
+
+      {/* Post-search filters — narrow the results by budget, stops and more. */}
+      {options.length > 0 && (
+        <div className="surface-card flex flex-wrap items-end gap-3 p-3">
+          <label className="block">
+            <span className="mb-1 block text-[0.65rem] font-medium text-[var(--muted)]">
+              Max budget
+            </span>
+            <div className="w-28">
+              <NumberField
+                min={0}
+                placeholder="any"
+                value={maxBudget}
+                onValueChange={setMaxBudget}
+                aria-label="Maximum budget"
+              />
+            </div>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[0.65rem] font-medium text-[var(--muted)]">Source</span>
+            <div className="w-40">
+              <Select
+                value={sourceFilter}
+                onValueChange={(v) => setSourceFilter(v as SourceFilter)}
+                options={[
+                  { value: "all", label: "All sources" },
+                  { value: "atlas", label: `Atlas Sandbox (${sourceCounts.atlas})` },
+                  { value: "camofox", label: `Camofox (${sourceCounts.camofox})` },
+                  { value: "amadeus", label: `Amadeus (${sourceCounts.amadeus})` },
+                  { value: "sim", label: `Simulated (${sourceCounts.sim})` },
+                ]}
+                aria-label="Filter by source"
+              />
+            </div>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[0.65rem] font-medium text-[var(--muted)]">Stops</span>
+            <div className="w-36">
+              <Select
+                value={stops}
+                onValueChange={(v) => setStops(v as StopsFilter)}
+                options={[
+                  { value: "any", label: "Any" },
+                  { value: "direct", label: "Direct only" },
+                  { value: "max1", label: "Up to 1 stop" },
+                ]}
+                aria-label="Stops"
+              />
+            </div>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[0.65rem] font-medium text-[var(--muted)]">Sort by</span>
+            <div className="w-36">
+              <Select
+                value={sort}
+                onValueChange={(v) => setSort(v as SortMode)}
+                options={[
+                  { value: "relevance", label: "Recommended" },
+                  { value: "cheapest", label: "Cheapest" },
+                  { value: "fastest", label: "Fastest" },
+                ]}
+                aria-label="Sort by"
+              />
+            </div>
+          </label>
+          <Button
+            variant={onlyBookable ? undefined : "secondary"}
+            size="sm"
+            onClick={() => setOnlyBookable((v) => !v)}
+          >
+            Bookable only
+          </Button>
+          {filtersActive && (
+            <Button variant="ghost" size="sm" onClick={resetFilters}>
+              Reset
+            </Button>
+          )}
+          <span className="ml-auto self-center text-xs text-[var(--muted)]">
+            Showing {filtered.length} of {options.length}
+          </span>
+        </div>
+      )}
 
       {result.warnings?.length > 0 && (
         <ul className="surface-card space-y-1.5 p-3">
@@ -153,6 +294,15 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
           </div>
         </div>
       ))}
+
+      {groups.length === 0 && options.length > 0 && (
+        <div className="surface-card p-6 text-center text-sm text-[var(--muted)]">
+          No flights match these filters.{" "}
+          <button onClick={resetFilters} className="text-[var(--brand-500)] hover:underline">
+            Reset filters
+          </button>
+        </div>
+      )}
 
       {/* Every page the research agent actually read. */}
       {pagesRead.length > 0 && (

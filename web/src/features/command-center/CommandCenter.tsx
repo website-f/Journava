@@ -66,8 +66,22 @@ export function CommandCenter() {
 
   const runPlan = async () => {
     if (!scope) return;
+    // Fold the clarified route (origin → city, country) into the goal so the
+    // parser resolves a concrete airport instead of guessing from a country name.
+    const destFull = inputs.destination_city
+      ? `${inputs.destination_city}, ${inputs.destination}`.trim()
+      : inputs.destination.trim();
+    const routeClause =
+      inputs.origin.trim() && destFull
+        ? `flights from ${inputs.origin.trim()} to ${destFull}`
+        : "";
+    const goal =
+      [inputs.goal.trim(), routeClause].filter(Boolean).join(". ") ||
+      routeClause ||
+      inputs.goal.trim();
+
     const payload: Record<string, unknown> = {
-      goal: inputs.goal.trim(),
+      goal,
       scope: scope.slug,
       travellers: inputs.travellers,
       budget_currency: inputs.budget_currency,
@@ -76,7 +90,7 @@ export function CommandCenter() {
     // fail date validation, and a zero budget is not the same as "no budget".
     if (inputs.start_date) payload.start_date = inputs.start_date;
     if (inputs.end_date) payload.end_date = inputs.end_date;
-    if (inputs.budget_amount) payload.budget_amount = Number(inputs.budget_amount);
+    if (inputs.budget_amount != null) payload.budget_amount = inputs.budget_amount;
     if (scope.inputs.includes("pace")) payload.pace = inputs.pace;
 
     // Dispatch a background job (agents run off-request) and poll it in the

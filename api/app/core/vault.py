@@ -111,13 +111,17 @@ PROVIDERS: dict[str, ProviderSpec] = {
             slug="atlas",
             label="Atlas Flight Booking",
             category="flights",
-            docs_url="https://github.com/atlas-doc/atlas-flight-booking-skill",
+            docs_url="https://www.atriptech.com/#/login",
             note=(
-                "The CLI normally authorises through the browser and stores the "
-                "credential in the OS keychain. A sandbox token here is passed to "
-                "the CLI as ATLAS_API_KEY for headless hosts."
+                "Sandbox mode: paste your ATRIP access key + secret key. The agents "
+                "then search live sandbox fares and run the full verify → book → pay "
+                "flow directly over the AK/SK API — no CLI, no browser sign-in. "
+                "Secret = secret key; Access key goes in the field below."
             ),
-            extra_fields=("environment",),
+            #: `access_key` is the ATRIP access key (x-atlas-client-id); the stored
+            #: secret is the secret key (x-atlas-client-secret). `environment`
+            #: stays "sandbox" until production is opted into.
+            extra_fields=("access_key", "environment"),
         ),
         ProviderSpec(
             slug="amadeus",
@@ -321,6 +325,105 @@ PROVIDERS: dict[str, ProviderSpec] = {
             label="Resend",
             category="email",
             docs_url="https://resend.com/",
+        ),
+        ProviderSpec(
+            slug="telegram",
+            label="Telegram notifications",
+            category="email",
+            extra_fields=("chat_id",),
+            docs_url="https://t.me/BotFather",
+            note=(
+                "Create a bot with @BotFather for the token, then message your bot "
+                "and get your chat id from @userinfobot. Managed from Account → Integrate."
+            ),
+        ),
+        # --- Free / open-source / keyless ------------------------------------ #
+        # These need no key (or a generous free tier) and are listed so the
+        # operator can see the full breadth of what the agents can draw on.
+        ProviderSpec(
+            slug="frankfurter",
+            label="Frankfurter FX",
+            category="payments",
+            keyless=True,
+            docs_url="https://frankfurter.dev/",
+            note="ECB reference rates, no key — the default currency converter.",
+        ),
+        ProviderSpec(
+            slug="rest_countries",
+            label="REST Countries",
+            category="content",
+            keyless=True,
+            docs_url="https://restcountries.com/",
+            note="Currency, languages, calling code, region — no key.",
+        ),
+        ProviderSpec(
+            slug="wikivoyage",
+            label="Wikivoyage",
+            category="content",
+            keyless=True,
+            docs_url="https://en.wikivoyage.org/w/api.php",
+            note="Community travel guides via the MediaWiki API — no key.",
+        ),
+        ProviderSpec(
+            slug="wikimedia",
+            label="Wikipedia / Wikimedia REST",
+            category="content",
+            keyless=True,
+            docs_url="https://api.wikimedia.org/wiki/Main_Page",
+            note="Place summaries and images — no key for reasonable volumes.",
+        ),
+        ProviderSpec(
+            slug="travelbriefing",
+            label="TravelBriefing",
+            category="content",
+            keyless=True,
+            docs_url="https://travelbriefing.org/",
+            note="Per-country advisories, vaccinations, water safety — no key.",
+        ),
+        ProviderSpec(
+            slug="nager_holidays",
+            label="Nager.Date public holidays",
+            category="content",
+            keyless=True,
+            docs_url="https://date.nager.at/",
+            note="Public holidays by country and year — no key.",
+        ),
+        ProviderSpec(
+            slug="photon",
+            label="Photon geocoder (Komoot)",
+            category="maps",
+            keyless=True,
+            docs_url="https://photon.komoot.io/",
+            note="Open geocoding over OSM data — no key.",
+        ),
+        ProviderSpec(
+            slug="osrm",
+            label="OSRM routing (demo)",
+            category="maps",
+            keyless=True,
+            docs_url="https://project-osrm.org/",
+            note="Driving/walking routes on the public demo server — no key.",
+        ),
+        ProviderSpec(
+            slug="opencage",
+            label="OpenCage geocoding",
+            category="maps",
+            docs_url="https://opencagedata.com/api",
+            note="2,500 free geocodes/day on the free plan.",
+        ),
+        ProviderSpec(
+            slug="api_ninjas",
+            label="API Ninjas",
+            category="content",
+            docs_url="https://api-ninjas.com/",
+            note="Airport, airline, city and timezone lookups on a free key.",
+        ),
+        ProviderSpec(
+            slug="currency_beacon",
+            label="CurrencyBeacon",
+            category="payments",
+            docs_url="https://currencybeacon.com/",
+            note="5,000 free FX requests/month — a keyed alternative to Frankfurter.",
         ),
     )
 }

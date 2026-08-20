@@ -82,8 +82,9 @@ _DDG_REDIRECT = re.compile(r"[?&]uddg=([^&]+)")
 _MAX_CONCURRENT_PAGES = 3
 _page_slots = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
 
-#: Human think-time between actions, in seconds (§8 item 3).
-_THINK_MIN, _THINK_MAX = 0.6, 1.8
+#: Human think-time between actions, in seconds (§8 item 3). Widened so pacing
+#: reads less machine-regular — a more human cadence eases rate-limit pressure.
+_THINK_MIN, _THINK_MAX = 0.8, 2.6
 
 #: A descriptive agent string, so operators can identify and block us if they wish.
 ROBOTS_AGENT = "JournavaResearchBot"
@@ -267,10 +268,26 @@ async def search(query: str, macro: str = DEFAULT_SEARCH_MACRO) -> str | None:
     The `macro` selects which public search engine/site to use; it is translated
     to a real URL and driven through the (working) direct-URL path, because the
     installed camofox-browser build leaves macro tabs on about:blank.
+
+    Hardened for rate-limits: a human-paced retry-with-backoff (a first empty read
+    is usually a throttle blip or an unrendered page, not a dead end), and a 6-hour
+    cache so a repeated query never re-hits the engine. `cached` never stores a
+    `None`, so a throttle is retried next time rather than remembered as empty.
     """
     template = _MACRO_URLS.get(macro, _MACRO_URLS[DEFAULT_SEARCH_MACRO])
     url = template.format(q=quote_plus(query))
-    return await browse(url)
+    cache_key = f"camofox:search:{macro}:{query.strip().lower()}"
+
+    async def fetch() -> str | None:
+        for attempt in range(3):
+            snapshot = await browse(url)
+            if snapshot:
+                return snapshot
+            if attempt < 2:
+                await asyncio.sleep(random.uniform(2.0, 4.0) * (attempt + 1))  # noqa: S311
+        return None
+
+    return await cached(cache_key, fetch, ttl=6 * 3600)
 
 
 async def youtube_transcript(url: str, languages: list[str] | None = None) -> dict[str, Any] | None:
@@ -500,6 +517,12 @@ async def _create_tab(
     installed build — callers should translate macros to URLs (`_MACRO_URLS`).
     """
     body: dict[str, Any] = {"userId": USER_ID, "sessionKey": session_key}
+
+    # Route through a proxy when configured (rotating/residential IPs are the only
+    # real fix for IP-based rate-limits — a stealth fingerprint doesn't change the
+    # IP). Best-effort: the browser server uses it if it honours the field.
+    if settings.camofox_proxy:
+        body["proxy"] = settings.camofox_proxy
 
     if macro and query:
         body["macro"] = macro

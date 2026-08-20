@@ -95,7 +95,29 @@ export function TripMap({ className }: TripMapProps) {
 
     mapInstance.current = map;
 
+    // Keep the canvas sized to its container — tab switches, window resizes and
+    // the responsive layout can all change the width, and without a resize the
+    // map renders at a stale size (the "not responsive" bug). Coalesce bursts of
+    // resize events (e.g. during the page-enter animation) into one rAF call so
+    // MapLibre isn't asked to re-layout dozens of times a frame (the lag).
+    let raf = 0;
+    const scheduleResize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        map.resize();
+      });
+    };
+    const ro = new ResizeObserver(scheduleResize);
+    ro.observe(mapRef.current);
+    window.addEventListener("resize", scheduleResize);
+    const settle = setTimeout(() => map.resize(), 60);
+
     return () => {
+      clearTimeout(settle);
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("resize", scheduleResize);
+      ro.disconnect();
       map.remove();
       mapInstance.current = null;
     };
@@ -121,21 +143,27 @@ export function TripMap({ className }: TripMapProps) {
       const color = KIND_COLORS[item.kind] || "#4F46E5";
       const emoji = KIND_ICONS[item.kind] || "📍";
 
+      // The marker's OUTER element carries MapLibre's positioning transform, so
+      // scaling it directly (the old bug) yanked the pin off its coordinate on
+      // hover — impossible to click. Keep the outer element untouched and animate
+      // an inner bubble instead, so hover only grows the pin in place.
       const el = document.createElement("div");
       el.className = "trip-map-marker";
-      el.style.cssText = `
-        width: 28px; height: 28px; border-radius: 50%;
-        background: ${color}; border: 2px solid white;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 12px; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        transition: transform 0.2s;
+      el.style.cssText = "width:28px;height:28px;cursor:pointer;";
+      const bubble = document.createElement("div");
+      bubble.style.cssText = `
+        width:28px;height:28px;border-radius:50%;background:${color};
+        border:2px solid white;display:flex;align-items:center;justify-content:center;
+        font-size:12px;box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        transition:transform 0.15s ease;transform-origin:center;
       `;
-      el.textContent = emoji;
+      bubble.textContent = emoji;
+      el.appendChild(bubble);
       el.addEventListener("mouseenter", () => {
-        el.style.transform = "scale(1.3)";
+        bubble.style.transform = "scale(1.3)";
       });
       el.addEventListener("mouseleave", () => {
-        el.style.transform = "scale(1)";
+        bubble.style.transform = "scale(1)";
       });
 
       const popup = new maplibregl.Popup({ offset: 16 }).setHTML(`
@@ -177,7 +205,7 @@ export function TripMap({ className }: TripMapProps) {
         Map
       </h3>
       <div className="surface-card overflow-hidden p-0">
-        <div ref={mapRef} className="w-full h-[320px] rounded-[var(--r-lg)]" />
+        <div ref={mapRef} className="w-full h-[300px] sm:h-[380px] lg:h-[440px] rounded-[var(--r-lg)]" />
         <div className="p-3 flex flex-wrap gap-2 border-t border-[var(--border)]">
           {Object.entries(KIND_COLORS).map(([kind, color]) => (
             <span key={kind} className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">

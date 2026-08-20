@@ -1,39 +1,32 @@
-import { Suspense, lazy, type ReactNode } from "react";
+import { Suspense, lazy } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AppShell } from "@/components/layout/AppShell";
-import { Skeleton, Spinner } from "@/components/ui";
+import { Skeleton, Spinner, ErrorBoundary } from "@/components/ui";
 import { CommandCenter } from "@/features/command-center/CommandCenter";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { useAuth } from "@/providers/AuthProvider";
 
 /*
- * The Command Center is the landing surface, so it stays in the main bundle.
- * Everything else is split out — MapLibre (My Trip) and React Flow (Agents)
- * together weigh more than the rest of the app, and shipping them up front makes
- * the installable PWA shell needlessly heavy for a first paint that never uses
- * them.
+ * Five destinations (bottom nav): Home (Command Center) · Research · Trip ·
+ * Agents · Account. Trip folds in past runs; Account folds in Profile + the
+ * role-gated Partner/Engine/Vault surfaces. Legacy paths redirect into those
+ * hubs so deep links keep working.
+ *
+ * Command Center stays in the main bundle (landing surface); the rest split out
+ * — MapLibre (Trip) and React Flow (Agents) are the heavy ones.
  */
 const ResearchBoard = lazy(() =>
   import("@/features/research/ResearchBoard").then((m) => ({ default: m.ResearchBoard })),
 );
-const MyTrip = lazy(() =>
-  import("@/features/trip/MyTrip").then((m) => ({ default: m.MyTrip })),
-);
 const AgentControl = lazy(() =>
   import("@/features/agent-control/AgentControl").then((m) => ({ default: m.AgentControl })),
 );
-const EngineSettings = lazy(() =>
-  import("@/features/engine/EngineSettings").then((m) => ({ default: m.EngineSettings })),
+const TripHub = lazy(() =>
+  import("@/features/trip/TripHub").then((m) => ({ default: m.TripHub })),
 );
-const Profile = lazy(() =>
-  import("@/features/profile/Profile").then((m) => ({ default: m.Profile })),
-);
-const ApiVault = lazy(() =>
-  import("@/features/vault/ApiVault").then((m) => ({ default: m.ApiVault })),
-);
-const History = lazy(() =>
-  import("@/features/history/History").then((m) => ({ default: m.History })),
+const AccountHub = lazy(() =>
+  import("@/features/account/AccountHub").then((m) => ({ default: m.AccountHub })),
 );
 
 const pageVariants = {
@@ -59,7 +52,7 @@ function RouteFallback() {
 
 export function App() {
   const location = useLocation();
-  const { status, isPlatformAdmin } = useAuth();
+  const { status } = useAuth();
 
   // Auth wall (spec §1): restoring a session, then either the app or login.
   if (status === "loading") {
@@ -73,10 +66,6 @@ export function App() {
     return <LoginPage />;
   }
 
-  // Admin-only surfaces are gated in the router too, not just hidden in the nav.
-  const adminEl = (el: ReactNode) =>
-    isPlatformAdmin ? el : <Navigate to="/" replace />;
-
   return (
     <AppShell>
       <AnimatePresence mode="wait">
@@ -88,19 +77,26 @@ export function App() {
           exit="exit"
           transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
         >
-          <Suspense fallback={<RouteFallback />}>
+          <ErrorBoundary resetKey={location.pathname}>
+            <Suspense fallback={<RouteFallback />}>
             <Routes location={location}>
               <Route path="/" element={<CommandCenter />} />
               <Route path="/research" element={<ResearchBoard />} />
-              <Route path="/trip" element={<MyTrip />} />
+              <Route path="/trip" element={<TripHub />} />
               <Route path="/agents" element={<AgentControl />} />
-              <Route path="/engine" element={adminEl(<EngineSettings />)} />
-              <Route path="/vault" element={adminEl(<ApiVault />)} />
-              <Route path="/history" element={<History />} />
-              <Route path="/profile" element={<Profile />} />
+              <Route path="/account" element={<AccountHub />} />
+
+              {/* Legacy deep links → consolidated hubs (roles enforced inside). */}
+              <Route path="/history" element={<Navigate to="/trip?tab=history" replace />} />
+              <Route path="/profile" element={<Navigate to="/account" replace />} />
+              <Route path="/engine" element={<Navigate to="/account?tab=engine" replace />} />
+              <Route path="/vault" element={<Navigate to="/account?tab=vault" replace />} />
+              <Route path="/supplier" element={<Navigate to="/account?tab=partner" replace />} />
+
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
-          </Suspense>
+            </Suspense>
+          </ErrorBoundary>
         </motion.div>
       </AnimatePresence>
     </AppShell>

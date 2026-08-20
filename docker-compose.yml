@@ -69,6 +69,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-journava}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-journava}
       REDIS_URL: redis://redis:6379/0
       CAMOFOX_URL: http://camofox:9377
+      CAMOFOX_PROXY: ${CAMOFOX_PROXY:-}
       GNOSION_MCP_URL: http://gnosion:8765
       GNOSION_BRAIN_PATH: /srv/data/journava.gnosion
     volumes:
@@ -117,6 +118,13 @@ services:
       dockerfile: Dockerfile
     environment:
       TZ: ${TZ:-Asia/Kuala_Lumpur}
+      # Optional outbound proxy (rotating/residential IP) — set CAMOFOX_PROXY in
+      # .env to route the browser through it and sidestep IP rate-limits. Passed
+      # via both the browser's own var and the standard proxy vars, best-effort.
+      CAMOFOX_PROXY: ${CAMOFOX_PROXY:-}
+      HTTP_PROXY: ${CAMOFOX_PROXY:-}
+      HTTPS_PROXY: ${CAMOFOX_PROXY:-}
+      ALL_PROXY: ${CAMOFOX_PROXY:-}
     # Firefox needs real shared memory or it dies on heavy pages.
     shm_size: "1gb"
     # Not behind a profile: the Research agent's live-crawl path is a headline

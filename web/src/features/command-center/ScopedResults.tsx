@@ -1,8 +1,29 @@
-import { ArrowLeft, Briefcase, Cloud, RotateCcw, ShieldAlert, TrendingUp } from "@/components/ui/icons";
+import {
+  ArrowLeft,
+  Briefcase,
+  CheckCircle2,
+  Cloud,
+  Compass,
+  ExternalLink,
+  RotateCcw,
+  ShieldAlert,
+  TrendingUp,
+  Utensils,
+} from "@/components/ui/icons";
 import { Badge, Button, OptionCard } from "@/components/ui";
-import { SourceTrustRow } from "@/components/ui/SourceBadge";
+import { cn } from "@/lib/cn";
 import { FlightResults } from "@/features/flights/FlightResults";
-import type { AgentPlanResult, PlanOption, PlanResults, Scope } from "@/lib/types";
+import { PlaceCard } from "./PlaceCard";
+import { PlacesSection } from "./PlacesSection";
+import type { AgentPlanResult, PlanOption, PlanResults, Scope, VideoReview } from "@/lib/types";
+
+/** Pull the top video reviews the research agent attached, by category. */
+function videoReviews(results: PlanResults, key: "attractions" | "food"): VideoReview[] {
+  const data = results.research?.data as
+    | { video_reviews?: Record<string, VideoReview[]> }
+    | undefined;
+  return data?.video_reviews?.[key] ?? [];
+}
 
 /**
  * Renders only the panels the chosen scope produced.
@@ -71,21 +92,25 @@ function Panel({
       return <OptionsPanel result={results.hotel} title="Stays" icon={Briefcase} />;
     case "dining":
       return (
-        <OptionsPanel
+        <PlacesSection
+          title="Places to eat"
+          placesLabel="Restaurants"
+          icon={Utensils}
           result={results.research}
-          title="Food"
-          icon={Briefcase}
-          filter={(option) => option.kind === "restaurant"}
+          kind="restaurant"
+          videos={videoReviews(results, "food")}
         />
       );
     case "activities":
       return (
-        <OptionsPanel
+        <PlacesSection
+          title="Places to visit"
+          placesLabel="Places"
+          icon={Compass}
           result={results.research}
-          title="Things to do"
-          icon={Briefcase}
-          filter={(option) => option.kind === "activity"}
           extra={results.recommendation}
+          kind="activity"
+          videos={videoReviews(results, "attractions")}
         />
       );
     case "itinerary":
@@ -95,7 +120,7 @@ function Panel({
     case "weather":
       return <WeatherPanel result={results.weather_risk} />;
     case "risk":
-      return <RiskPanel result={results.risk_advisory} />;
+      return <RiskPanel results={results} />;
     case "transport":
       return <DataPanel result={results.transport} title="Getting around" />;
     case "visa":
@@ -184,24 +209,7 @@ function OptionsPanel({
       )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {options.map((option) => (
-          <div key={option.id} className="surface-card flex flex-col p-4">
-            <div className="flex items-start justify-between gap-2">
-              <p className="min-w-0 text-sm font-semibold">{option.title}</p>
-              {option.price_amount != null && (
-                <span className="shrink-0 text-sm font-semibold text-[var(--brand-500)]">
-                  {option.price_currency} {Number(option.price_amount).toLocaleString()}
-                </span>
-              )}
-            </div>
-            {option.reasoning && (
-              <p className="mt-1.5 flex-1 text-xs italic text-[var(--muted)]">
-                {option.reasoning}
-              </p>
-            )}
-            <div className="mt-2.5 border-t border-[var(--border)] pt-2">
-              <SourceTrustRow option={option} />
-            </div>
-          </div>
+          <PlaceCard key={option.id} option={option} />
         ))}
       </div>
       {(result?.warnings ?? []).length > 0 && (
@@ -379,52 +387,165 @@ function WeatherPanel({ result }: { result?: AgentPlanResult }) {
   );
 }
 
-function RiskPanel({ result }: { result?: AgentPlanResult }) {
+interface NewsAlert {
+  headline: string;
+  severity: "high" | "medium" | "low";
+  url?: string;
+}
+
+/** Travel safety & alerts: a clear go/no-go verdict, the live news the browser
+ *  agent found (war/disaster/unrest), and a quick weather + crowd report. */
+function RiskPanel({ results }: { results: PlanResults }) {
+  const result = results.risk_advisory;
   if (!result) return null;
   const data = result.data as {
     safety_level?: string;
+    verdict?: "clear" | "caution" | "avoid";
     active_threats?: string[];
     safe_months?: string[];
     recommended_action?: string;
+    news_checked?: boolean;
+    news_alerts?: NewsAlert[];
+    news_search_url?: string | null;
+    travel_window?: string;
   };
   const level = data.safety_level ?? "unknown";
-  const dangerous = level === "dangerous";
+  const verdict = data.verdict ?? (level === "safe" ? "clear" : level === "dangerous" ? "avoid" : "caution");
+  const alerts = data.news_alerts ?? [];
+
+  const meta = {
+    clear: { label: "Safe to go", tone: "success", icon: CheckCircle2 },
+    caution: { label: "Travel with caution", tone: "warning", icon: ShieldAlert },
+    avoid: { label: "Reconsider these dates", tone: "danger", icon: ShieldAlert },
+  }[verdict];
+  const Icon = meta.icon;
+
+  // Quick report pulled from the sibling agents.
+  const weather = results.weather_risk?.data as
+    | { risk_level?: string; forecast?: Array<{ high_c: number; low_c: number }> }
+    | undefined;
+  const crowd = results.crowd?.data as { crowd_level?: string; level?: string } | undefined;
+  const temps = weather?.forecast?.[0];
+
+  const toneCls: Record<string, string> = {
+    success: "border-[var(--success)]/40 bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-[var(--success)]",
+    warning: "border-[var(--warning)]/40 bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] text-[var(--warning)]",
+    danger: "border-[var(--danger)]/40 bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] text-[var(--danger)]",
+  };
+  const sevCls: Record<string, string> = {
+    high: "text-[var(--danger)] bg-[color-mix(in_srgb,var(--danger)_14%,transparent)]",
+    medium: "text-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_16%,transparent)]",
+    low: "text-[var(--muted)] bg-[color-mix(in_srgb,var(--muted)_14%,transparent)]",
+  };
 
   return (
     <section>
       <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <ShieldAlert
-          className={`h-5 w-5 ${dangerous ? "text-[var(--danger)]" : "text-[var(--warning)]"}`}
-        />
-        Safety
-        <Badge variant={dangerous ? "danger" : level === "safe" ? "success" : "warning"}>
-          {level}
-        </Badge>
-        {data.recommended_action && <Badge>{data.recommended_action}</Badge>}
+        <ShieldAlert className="h-5 w-5 text-[var(--brand-500)]" />
+        Travel safety & alerts
+        {data.travel_window && <Badge>{data.travel_window}</Badge>}
       </h3>
-      <div className="surface-card space-y-2 p-4">
-        <p className="text-sm">{result.summary}</p>
-        {(data.active_threats ?? []).length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {data.active_threats!.map((threat) => (
-              <Badge key={threat} variant="danger">
-                {threat}
-              </Badge>
-            ))}
-          </div>
-        )}
-        {(data.safe_months ?? []).length > 0 && (
-          <p className="text-xs text-[var(--muted)]">
-            Safer months: {data.safe_months!.join(", ")}
-          </p>
-        )}
-        {result.warnings.map((warning, index) => (
-          <p key={index} className="text-xs text-[var(--warning)]">
-            {warning}
-          </p>
-        ))}
+
+      {/* Go / no-go verdict banner */}
+      <div className={cn("flex items-center gap-3 rounded-[var(--r-md)] border p-3", toneCls[meta.tone])}>
+        <Icon className="h-6 w-6 shrink-0" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{meta.label}</p>
+          <p className="mt-0.5 text-xs text-[var(--text)] opacity-80">{result.summary}</p>
+        </div>
       </div>
+
+      {/* Quick report */}
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <ReportTile label="Safety" value={level} />
+        <ReportTile
+          label="Weather"
+          value={
+            weather?.risk_level
+              ? `${weather.risk_level} risk${temps ? ` · ${temps.high_c}°/${temps.low_c}°` : ""}`
+              : "—"
+          }
+        />
+        <ReportTile label="Crowds" value={crowd?.crowd_level ?? crowd?.level ?? "—"} />
+        <ReportTile
+          label="Better months"
+          value={(data.safe_months ?? []).slice(0, 3).join(", ") || "any"}
+        />
+      </div>
+
+      {/* Live news the agent found */}
+      <div className="mt-3 surface-card p-4">
+        <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+          <ExternalLink className="h-4 w-4 text-[var(--brand-500)]" />
+          Live news check
+        </h4>
+        {alerts.length > 0 ? (
+          <ul className="space-y-2">
+            {alerts.map((alert, index) => (
+              <li key={index} className="flex items-start gap-2">
+                <span
+                  className={cn(
+                    "mt-0.5 shrink-0 rounded-[var(--r-pill)] px-1.5 py-0.5 text-[0.55rem] font-semibold uppercase",
+                    sevCls[alert.severity],
+                  )}
+                >
+                  {alert.severity}
+                </span>
+                {alert.url ? (
+                  <a
+                    href={alert.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="min-w-0 text-xs hover:text-[var(--brand-500)] hover:underline"
+                  >
+                    {alert.headline}
+                  </a>
+                ) : (
+                  <span className="min-w-0 text-xs">{alert.headline}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : data.news_checked ? (
+          <p className="flex items-center gap-2 text-xs text-[var(--success)]">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            No war, disaster or unrest news found for {data.travel_window || "your dates"} — clear to go.
+          </p>
+        ) : (
+          <p className="text-xs text-[var(--muted)]">Live news check unavailable right now.</p>
+        )}
+        {data.news_search_url && (
+          <a
+            href={data.news_search_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="mt-2 inline-flex items-center gap-1 text-[0.7rem] text-[var(--brand-500)] hover:underline"
+          >
+            <ExternalLink className="h-3 w-3" />
+            See all news
+          </a>
+        )}
+      </div>
+
+      {(data.active_threats ?? []).length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {data.active_threats!.map((threat) => (
+            <Badge key={threat} variant="danger">
+              {threat}
+            </Badge>
+          ))}
+        </div>
+      )}
     </section>
+  );
+}
+
+function ReportTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="surface-card p-2.5 text-center">
+      <p className="text-[0.6rem] uppercase tracking-wide text-[var(--muted)]">{label}</p>
+      <p className="mt-0.5 text-xs font-semibold capitalize">{value}</p>
+    </div>
   );
 }
 

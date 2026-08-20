@@ -61,15 +61,19 @@ export function ConfirmDialogHost() {
       }}
     >
       <AlertDialog.Portal>
+        {/* z-[100]/[101] keeps the blocking confirm ABOVE every feature modal
+            (booking dialog z-80/81, receipt z-80/81, engine z-71). A lower value
+            renders it behind an open dialog — invisible but focus-trapping, which
+            froze the whole screen when confirming payment. */}
         <AlertDialog.Overlay
           className={cn(
-            "fixed inset-0 z-[75] bg-black/40 backdrop-blur-sm",
+            "fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm",
             "data-[state=open]:animate-in",
           )}
         />
         <AlertDialog.Content
           className={cn(
-            "radix-panel fixed left-1/2 top-1/2 z-[76] w-[calc(100%-2rem)] max-w-md",
+            "radix-panel fixed left-1/2 top-1/2 z-[101] w-[calc(100%-2rem)] max-w-md",
             "-translate-x-1/2 -translate-y-1/2 rounded-[var(--r-lg)]",
             "border border-[var(--border)] bg-[var(--elevated)] p-6",
             "shadow-[var(--shadow-2)]",

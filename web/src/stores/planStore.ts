@@ -24,7 +24,10 @@ interface PlanJobRecord {
 }
 
 const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 180_000;
+// A full trip (21 agents + critic re-runs + live crawls) can take several
+// minutes. The job runs in the background regardless — this is only how long the
+// foreground poll waits before backing off, so keep it generous.
+const POLL_TIMEOUT_MS = 1_200_000; // 20 min
 
 export type {
   AgentPlanResult,
@@ -55,20 +58,26 @@ export interface DisruptionRecovery {
 /** Extra inputs the scoped Command Center collects alongside the goal. */
 export interface PlanInputs {
   goal: string;
+  origin: string;
+  destination: string;
+  destination_city: string;
   start_date: string;
   end_date: string;
   travellers: number;
-  budget_amount: string;
+  budget_amount: number | null;
   budget_currency: string;
   pace: "relaxed" | "balanced" | "packed";
 }
 
 export const EMPTY_INPUTS: PlanInputs = {
   goal: "",
+  origin: "",
+  destination: "",
+  destination_city: "",
   start_date: "",
   end_date: "",
   travellers: 1,
-  budget_amount: "",
+  budget_amount: null,
   budget_currency: "MYR",
   pace: "balanced",
 };
@@ -176,7 +185,13 @@ export const usePlanStore = create<PlanState>((set, get) => ({
           return;
         }
         if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
-          set({ jobRunning: false, jobId: null, error: "Timed out waiting for the plan." });
+          // The backend job keeps running; we just stop the foreground poll.
+          set({
+            jobRunning: false,
+            jobId: null,
+            error:
+              "Still planning in the background — check the Agents workspace, or we'll notify you if Telegram is connected.",
+          });
           return;
         }
       }

@@ -157,6 +157,8 @@ SCOPES: dict[str, Scope] = {
                 "summary",
                 "flights",
                 "hotels",
+                "activities",
+                "dining",
                 "itinerary",
                 "budget",
                 "weather",
@@ -167,7 +169,7 @@ SCOPES: dict[str, Scope] = {
             use_critic=True,
             auto_itinerary=True,
             estimate_seconds=95,
-            inputs=("goal", "dates", "travellers", "budget", "pace"),
+            inputs=("goal", "route", "dates", "travellers", "budget", "pace"),
         ),
         Scope(
             slug="flights_only",
@@ -182,7 +184,7 @@ SCOPES: dict[str, Scope] = {
             agents=("flight",),
             panels=("summary", "flights"),
             estimate_seconds=15,
-            inputs=("goal", "dates", "travellers", "budget"),
+            inputs=("goal", "route", "dates", "travellers", "budget"),
         ),
         Scope(
             slug="food",

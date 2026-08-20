@@ -14,7 +14,8 @@ export type OptionSource =
   | "camofox"
   | "llm"
   | "mock"
-  | "research";
+  | "research"
+  | "supplier";
 
 export type HalalConfidence = "certified" | "muslim_friendly" | "unverified";
 
@@ -37,6 +38,17 @@ export interface PlanOption {
   /** True when this option can be carried into a real booking flow. */
   bookable: boolean;
   raw: Record<string, unknown>;
+}
+
+export interface VideoReview {
+  platform: "youtube" | "tiktok";
+  id: string;
+  title: string;
+  channel?: string | null;
+  thumbnail?: string | null;
+  views?: number;
+  embed_url: string;
+  watch_url: string;
 }
 
 export interface ItineraryItem {
@@ -306,8 +318,9 @@ export interface FlightBooking {
   reason?: string;
   previous_amount?: number | null;
   new_amount?: number | null;
-  payment_summary?: string | null;
+  payment_summary?: string | Record<string, unknown> | null;
   order_link?: string | null;
+  payment_deadline?: string | null;
   ready_to_pay?: boolean;
   next?: string | null;
   warning?: string;

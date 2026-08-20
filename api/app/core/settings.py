@@ -83,6 +83,9 @@ class Settings(BaseSettings):
 
     # --- Services ---
     camofox_url: str = "http://camofox:9377"
+    #: Optional outbound proxy for the browser (e.g. a residential/rotating proxy
+    #: "http://user:pass@host:port"). The real fix for IP-based rate-limits.
+    camofox_proxy: str = ""
     atlas_flight_cli: str = "atlas-flight"
     atlas_sandbox: bool = True
 

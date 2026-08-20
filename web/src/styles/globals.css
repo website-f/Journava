@@ -265,6 +265,33 @@ body[data-scroll-locked="true"] {
   box-shadow: var(--shadow-1);
 }
 
+/* Hide the scrollbar on horizontally-scrollable strips (e.g. the Vault tab row)
+   — the overflow still scrolls by drag/wheel/trackpad, just without the 10px
+   track showing under a single row of pills. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Liquid glass — translucent, blurred, hairline-lit. Used for the floating nav,
+   the top bar and the AssistiveTouch launcher. Blur + translucency + a hairline
+   border reads as glass without a colour gradient (keeps the flat palette). */
+@utility glass {
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+}
+@utility glass-strong {
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+}
+
 /* Skeleton shimmer — preferred over spinners for content areas (§10.6) */
 @keyframes journava-shimmer {
   100% {

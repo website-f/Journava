@@ -23,6 +23,8 @@ type AuthContextValue = {
   status: Status;
   user: AuthUser | null;
   isPlatformAdmin: boolean;
+  /** True when the user belongs to an agency (supplier) org — gates the portal. */
+  isAgency: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, displayName?: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -85,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user,
       isPlatformAdmin: Boolean(user?.is_platform_admin),
+      isAgency: Boolean(user?.memberships?.some((m) => m.org_kind === "agency")),
       signIn,
       signUp,
       signOut,

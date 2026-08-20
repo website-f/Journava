@@ -10,6 +10,7 @@ import json
 import logging
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote_plus
 
 from app.agents.base import BaseAgent
 from app.agents.prompts import hotel_messages
@@ -18,6 +19,12 @@ from app.core.cache import cached
 from app.core.llm import LLMUnavailableError, complete
 from app.core.settings import settings
 from app.supplier import store as supplier_store
+
+
+def _hotel_link(title: str, destination: str) -> str:
+    """A guaranteed 'View / Book' target — Google Hotels search for the property,
+    so every stay card is clickable even without a provider deep-link."""
+    return "https://www.google.com/travel/search?q=" + quote_plus(f"{title} {destination}")
 
 logger = logging.getLogger(__name__)
 
@@ -139,11 +146,16 @@ class HotelAgent(BaseAgent):
         options: list[Option] = []
         for opt in raw_options or []:
             try:
+                title = opt.get("title", "Hotel")
+                url = opt.get("booking_url") or opt.get("url")
+                link = url or _hotel_link(title, destination)
+                # LLM-generated unless it carried a real crawled URL.
+                src = "camofox" if url else "llm"
                 options.append(
                     Option(
                         id=opt.get("id", f"HT{len(options) + 1:03d}"),
                         kind="hotel",
-                        title=opt.get("title", "Hotel"),
+                        title=title,
                         price_amount=Decimal(str(opt["price_amount"]))
                         if opt.get("price_amount")
                         else None,
@@ -152,7 +164,10 @@ class HotelAgent(BaseAgent):
                         reasoning=opt.get("reasoning"),
                         verified=opt.get("verified", False),
                         last_checked=opt.get("last_checked"),
-                        raw=opt.get("raw", {}),
+                        source=src,
+                        source_url=link,
+                        booking_url=link,
+                        raw={**(opt.get("raw") or {}), "price_range": opt.get("price_range"), "rating": opt.get("rating")},
                     )
                 )
             except Exception as exc:  # noqa: BLE001

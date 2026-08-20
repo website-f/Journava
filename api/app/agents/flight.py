@@ -179,7 +179,7 @@ class FlightAgent(BaseAgent):
             # the site list, the extractor, the currency handling. Those are code
             # changes the key cannot otherwise see, and a stale hit silently
             # serves the old behaviour long after the new one ships.
-            f"flight:v3:{origin}:{destination}:{depart}:{request.travellers}"
+            f"flight:v5:{origin}:{destination}:{depart}:{request.travellers}"
             f":{request.budget_currency}"
         )
 
@@ -251,40 +251,53 @@ class FlightAgent(BaseAgent):
         destination: str,
         depart: str,
     ) -> list[dict[str, Any]]:
-        """Search Atlas. Returns [] (never raises) when the CLI is unavailable."""
+        """Search Atlas. Returns [] (never raises) when the CLI is unavailable.
+
+        A country destination (e.g. "Japan") resolves to several gateway
+        airports; we try each until one returns inventory, so a full-trip search
+        still yields bookable Atlas fares instead of an empty section.
+        """
         if depart == "flexible":
             return []  # Atlas requires a concrete departure date.
 
+        candidates = _dest_airports(destination)
+        if not candidates:
+            return []
+
         api_key = await _atlas_key()
-        try:
-            envelope = await atlas_skill.search(
-                origin,
-                destination,
-                depart,
-                return_date=str(request.end_date) if request.end_date else None,
-                adults=max(1, request.travellers),
-                currency=request.budget_currency,
-                api_key=api_key,
-            )
-        except AtlasSkillError as exc:
-            logger.info("Atlas unavailable (%s)", exc)
-            return []
+        for dest_code in candidates[:4]:
+            try:
+                envelope = await atlas_skill.search(
+                    origin,
+                    dest_code,
+                    depart,
+                    return_date=str(request.end_date) if request.end_date else None,
+                    adults=max(1, request.travellers),
+                    currency=request.budget_currency,
+                    api_key=api_key,
+                )
+            except AtlasSkillError as exc:
+                logger.info("Atlas unavailable (%s)", exc)
+                return []
 
-        if envelope.is_auth_problem:
-            self.emit(
-                "waiting",
-                "Atlas needs authorisation — run `atlas-flight auth login`",
-                data={"code": envelope.code},
-            )
-            return []
-        if envelope.is_empty_result:
-            self.emit("active", f"Atlas: no inventory ({envelope.code})")
-            return []
-        if not envelope.ok:
-            self.emit("waiting", f"Atlas: {envelope.code}", data={"code": envelope.code})
-            return []
+            if envelope.is_auth_problem:
+                self.emit(
+                    "waiting",
+                    "Atlas needs authorisation — add your sandbox keys in the API Vault",
+                    data={"code": envelope.code},
+                )
+                return []
+            if envelope.is_empty_result or not envelope.ok:
+                continue  # no inventory to this gateway — try the next one
 
-        return atlas_skill.normalize_offers(envelope)
+            offers = atlas_skill.normalize_offers(envelope)
+            if offers:
+                if len(candidates) > 1:
+                    self.emit("active", f"Atlas: {len(offers)} fare(s) via {dest_code}")
+                return offers
+
+        self.emit("active", f"Atlas: no inventory to {destination}")
+        return []
 
     async def _try_amadeus(
         self,
@@ -296,9 +309,12 @@ class FlightAgent(BaseAgent):
         """Search Amadeus for breadth. Returns [] when unconfigured or failing."""
         if depart == "flexible":
             return []
+        dest_candidates = _dest_airports(destination)
+        if not dest_candidates:
+            return []
         offers = await amadeus.search_flights(
             origin,
-            destination,
+            dest_candidates[0],
             depart,
             return_date=str(request.end_date) if request.end_date else None,
             adults=max(1, request.travellers),
@@ -1368,6 +1384,65 @@ _AIRPORT_ALIASES = {
     "sydney": "SYD",
     "melbourne": "MEL",
 }
+
+
+#: Country / metro names → ordered candidate airports. Atlas needs an IATA code,
+#: but travellers say "Japan" or "Thailand". For a country we try its main
+#: international gateways in order and use the first with inventory, so a
+#: full-trip "BKI → Japan" still returns bookable Atlas fares instead of nothing.
+_COUNTRY_CITY_AIRPORTS: dict[str, tuple[str, ...]] = {
+    "japan": ("NRT", "HND", "KIX", "FUK"),
+    "tokyo": ("NRT", "HND"),
+    "osaka": ("KIX", "ITM"),
+    "thailand": ("BKK", "DMK", "HKT"),
+    "bangkok": ("BKK", "DMK"),
+    "indonesia": ("CGK", "DPS"),
+    "bali": ("DPS",),
+    "jakarta": ("CGK",),
+    "singapore": ("SIN",),
+    "malaysia": ("KUL", "PEN", "BKI"),
+    "korea": ("ICN", "GMP"),
+    "south korea": ("ICN", "GMP"),
+    "seoul": ("ICN", "GMP"),
+    "vietnam": ("SGN", "HAN", "DAD"),
+    "taiwan": ("TPE", "TSA"),
+    "hong kong": ("HKG",),
+    "china": ("PVG", "PEK", "CAN"),
+    "philippines": ("MNL", "CEB"),
+    "australia": ("SYD", "MEL", "BNE"),
+    "uae": ("DXB", "AUH"),
+    "dubai": ("DXB",),
+    "united kingdom": ("LHR", "LGW", "MAN"),
+    "uk": ("LHR", "LGW"),
+    "london": ("LHR", "LGW"),
+    "france": ("CDG", "ORY"),
+    "paris": ("CDG", "ORY"),
+    "italy": ("FCO", "MXP", "VCE"),
+    "turkey": ("IST", "SAW"),
+    "india": ("DEL", "BOM"),
+    "saudi arabia": ("JED", "RUH"),
+    "qatar": ("DOH",),
+}
+
+
+def _dest_airports(value: str | None) -> tuple[str, ...]:
+    """Resolve a destination into candidate IATA airports for Atlas/Amadeus.
+
+    A three-letter code or known city → one airport; a country/metro → its main
+    gateways in priority order; anything unrecognised → empty (Atlas is skipped).
+    """
+    if not value:
+        return ()
+    text = value.strip()
+    if re.fullmatch(r"[A-Za-z]{3}", text):
+        return (text.upper(),)
+    candidates = _COUNTRY_CITY_AIRPORTS.get(text.lower())
+    if candidates:
+        return candidates
+    code = _airport_code(text)
+    if code and re.fullmatch(r"[A-Z]{3}", code):
+        return (code,)
+    return ()
 
 
 def _airport_code(value: str | None) -> str | None:

@@ -222,16 +222,35 @@ def _trim(text: str, limit: int = 220) -> str:
 
 
 async def probe_atlas(secret: str | None, extra: dict[str, Any]) -> ProbeResult:
-    """Run `atlas-flight doctor --json`, the CLI's own self-check.
+    """Verify the Atlas credentials.
 
-    Atlas authorises through the browser and stores its credential in the OS
-    keychain, so a "key" here is optional. `doctor` is the honest probe: it
-    reports whether the CLI is installed, which environment it points at, and
-    whether an authorised session exists.
+    Preferred path — **sandbox AK/SK**: an access key (in `extra["access_key"]`)
+    plus the secret key. We make the cheapest authenticated call to the sandbox
+    and confirm the keys are accepted (401 → wrong keys). This is the headless
+    mode the demo uses — no CLI, no browser sign-in.
+
+    Fallback — a keychain-authorised CLI install: run `atlas-flight doctor`.
     """
+    start = time.monotonic()
+    access_key = extra.get("access_key") or extra.get("client_id")
+    environment = extra.get("environment") or "sandbox"
+    suffix = f" (environment: {environment})" if environment else ""
+
+    if access_key and secret:
+        from app.tools import atlas_sandbox
+
+        ok, message = await atlas_sandbox.check_credentials(str(access_key), str(secret))
+        status: CredentialStatus = "healthy" if ok else "invalid"
+        return status, f"{message}{suffix}", _ms(start)
+
+    if access_key and not secret:
+        return "invalid", "Add the secret key as well as the access key", _ms(start)
+    if secret and not access_key:
+        return "invalid", "Add the access key (x-atlas-client-id) in the field below", _ms(start)
+
+    # No AK/SK — fall back to the CLI's own self-check.
     from app.tools import atlas_skill
 
-    start = time.monotonic()
     try:
         result = await atlas_skill.doctor(api_key=secret)
     except atlas_skill.AtlasSkillError as exc:
@@ -239,18 +258,13 @@ async def probe_atlas(secret: str | None, extra: dict[str, Any]) -> ProbeResult:
 
     code = result.get("code", "")
     message = result.get("message", "")
-    environment = (result.get("data") or {}).get("environment") or extra.get("environment")
-    suffix = f" (environment: {environment})" if environment else ""
-
+    env = (result.get("data") or {}).get("environment") or environment
+    csuffix = f" (environment: {env})" if env else ""
     if code == "DOCTOR_OK":
-        return "healthy", f"CLI healthy{suffix}", _ms(start)
+        return "healthy", f"Atlas ready{csuffix}", _ms(start)
     if code in ("AUTHORIZATION_REQUIRED", "AUTH_EXPIRED", "AUTH_SESSION_MISSING"):
-        return (
-            "invalid",
-            f"CLI installed but not authorised — run `atlas-flight auth login`{suffix}",
-            _ms(start),
-        )
-    return "untested", f"{code}: {message}"[:300] + suffix, _ms(start)
+        return "invalid", f"Add your sandbox access key + secret key above{csuffix}", _ms(start)
+    return "untested", f"{code}: {message}"[:300] + csuffix, _ms(start)
 
 
 async def probe_amadeus(secret: str, extra: dict[str, Any]) -> ProbeResult:
@@ -463,8 +477,36 @@ async def probe_aviationstack(secret: str, _extra: dict[str, Any]) -> ProbeResul
     )
 
 
+async def probe_opencage(secret: str, _extra: dict[str, Any]) -> ProbeResult:
+    return await _http_probe(
+        "GET",
+        "https://api.opencagedata.com/geocode/v1/json",
+        params={"q": "Kuala Lumpur", "key": secret, "limit": 1},
+    )
+
+
+async def probe_api_ninjas(secret: str, _extra: dict[str, Any]) -> ProbeResult:
+    return await _http_probe(
+        "GET",
+        "https://api.api-ninjas.com/v1/airports",
+        headers={"X-Api-Key": secret},
+        params={"iata": "KUL"},
+    )
+
+
+async def probe_currency_beacon(secret: str, _extra: dict[str, Any]) -> ProbeResult:
+    return await _http_probe(
+        "GET",
+        "https://api.currencybeacon.com/v1/latest",
+        params={"api_key": secret, "base": "MYR", "symbols": "USD"},
+    )
+
+
 #: provider slug → probe. Providers absent from this map report `untested`.
 PROBES: dict[str, Callable[[str, dict[str, Any]], Awaitable[ProbeResult]]] = {
+    "opencage": probe_opencage,
+    "api_ninjas": probe_api_ninjas,
+    "currency_beacon": probe_currency_beacon,
     "amadeus": probe_amadeus,
     "aviationstack": probe_aviationstack,
     "reddit": probe_reddit,

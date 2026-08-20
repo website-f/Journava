@@ -192,7 +192,9 @@ async def verify(booking_row_id: str, *, accept_price_change: bool = False) -> d
     await _emit("verifying", "Re-pricing the fare with Atlas")
 
     try:
-        verified = await atlas_skill.verify_offer(record["offer_id"], api_key=api_key)
+        # deep=True → the real sandbox verify.do (re-prices live + opens a session
+        # for order.do), not the fast search-time confirm.
+        verified = await atlas_skill.verify_offer(record["offer_id"], deep=True, api_key=api_key)
     except AtlasSkillError as exc:
         await bookings.update(
             booking_row_id,

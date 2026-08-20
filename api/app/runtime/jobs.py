@@ -89,11 +89,42 @@ def launch(
             job["status"] = "error"
         job["updated_at"] = _now()
         await _persist(job)
+        await _maybe_notify(job)
 
     task = asyncio.create_task(runner())
     _TASKS[job_id] = task
     task.add_done_callback(lambda _t: _TASKS.pop(job_id, None))
     return job
+
+
+async def _maybe_notify(job: dict[str, Any]) -> None:
+    """Ping Telegram when a trip plan finishes — the "fire it and walk away" bit.
+
+    Only plan jobs notify (not every task), and only if the traveller connected a
+    bot. Never raises: a notification failure must not touch the job's outcome.
+    """
+    if job.get("kind") != "plan":
+        return
+    try:
+        from app.tools import telegram
+
+        meta = job.get("meta") or {}
+        goal = str(meta.get("goal") or "").strip()
+        scope = str(meta.get("scope") or "trip").replace("_", " ")
+        if job.get("status") == "done":
+            text = (
+                f"✅ <b>Journava</b>\nYour <b>{scope}</b> plan is ready"
+                + (f":\n<i>{goal[:180]}</i>" if goal else ".")
+                + "\n\nOpen the app to view it."
+            )
+        else:
+            text = (
+                f"⚠️ <b>Journava</b>\nYour {scope} plan couldn't finish: "
+                f"{str(job.get('error') or 'unknown error')[:180]}"
+            )
+        await telegram.notify(text)
+    except Exception as exc:  # noqa: BLE001 — notification is best-effort
+        logger.debug("plan notify failed: %s", exc)
 
 
 async def get(job_id: str) -> dict[str, Any] | None:

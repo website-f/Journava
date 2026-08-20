@@ -658,6 +658,76 @@ async def vault_delete(provider: str) -> dict[str, object]:
 
 
 # --------------------------------------------------------------------------- #
+# Integrations - Telegram notifications (user-facing, not admin-gated)
+# --------------------------------------------------------------------------- #
+
+
+class TelegramConfig(BaseModel):
+    #: Optional on update — omit to keep the stored token and just change chat id.
+    bot_token: str | None = None
+    chat_id: str
+
+
+async def _telegram_status() -> dict[str, object]:
+    resolved = await vault.resolve("telegram")
+    extra = (resolved or {}).get("extra") or {}
+    return {
+        "configured": bool(resolved and resolved.get("secret") and extra.get("chat_id")),
+        "chat_id": extra.get("chat_id"),
+        "has_token": bool(resolved and resolved.get("secret")),
+    }
+
+
+@app.get(f"{settings.api_prefix}/integrations/telegram", tags=["integrations"])
+async def telegram_get() -> dict[str, object]:
+    """Current Telegram connection status (never returns the token)."""
+    return await _telegram_status()
+
+
+@app.post(f"{settings.api_prefix}/integrations/telegram", tags=["integrations"])
+async def telegram_save(config: TelegramConfig) -> dict[str, object]:
+    """Save the bot token + chat id, then send a confirmation message."""
+    from app.tools import telegram as telegram_tool
+
+    stored = await vault.upsert_credential(
+        "telegram",
+        secret=config.bot_token,  # None keeps the existing token
+        extra={"chat_id": config.chat_id},
+        status="untested",
+    )
+    if stored is None:
+        raise HTTPException(status_code=503, detail="Could not save — the database is unavailable.")
+    vault.invalidate_cache("telegram")
+
+    ok = await telegram_tool.notify(
+        "🎉 <b>Journava connected!</b>\nYou'll get a ping here when a background trip plan is ready."
+    )
+    await vault.set_status("telegram", "healthy" if ok else "invalid",
+                           "Connected" if ok else "Saved, but the test message failed — check the token & chat id.")
+    return {**await _telegram_status(), "test": {"ok": ok}}
+
+
+@app.post(f"{settings.api_prefix}/integrations/telegram/test", tags=["integrations"])
+async def telegram_test() -> dict[str, object]:
+    """Send a test message with the stored credentials."""
+    from app.tools import telegram as telegram_tool
+
+    creds = await telegram_tool._creds()
+    if creds is None:
+        raise HTTPException(status_code=400, detail="Add your bot token and chat id first.")
+    ok, detail = await telegram_tool.send(creds[0], creds[1], "✅ Journava test message — you're all set.")
+    await vault.set_status("telegram", "healthy" if ok else "invalid", detail)
+    return {"ok": ok, "message": detail}
+
+
+@app.delete(f"{settings.api_prefix}/integrations/telegram", tags=["integrations"])
+async def telegram_delete() -> dict[str, object]:
+    await vault.delete_credential("telegram")
+    vault.invalidate_cache("telegram")
+    return {"disconnected": True}
+
+
+# --------------------------------------------------------------------------- #
 # Scopes - the Command Center presets
 # --------------------------------------------------------------------------- #
 

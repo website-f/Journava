@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
+  Building2,
+  Cloud,
+  Compass,
+  CreditCard,
+  Cpu,
   ExternalLink,
   Eye,
+  Globe,
   Info,
   KeyRound,
+  Mail,
+  Navigation,
+  Plane,
   Plug,
   RefreshCw,
   Save,
   ShieldCheck,
   Trash2,
+  Video,
+  type IconType,
 } from "@/components/ui/icons";
 import { toast } from "sonner";
 import { Badge, Button, EmptyState, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger, confirm } from "@/components/ui";
@@ -38,6 +49,36 @@ import type {
  * A stored secret is never returned by the API — only a masked hint like
  * `sk-…4f2a`, so there is nothing here that can leak a key back out.
  */
+
+/** Short label + icon per category, so the tab bar is compact and scannable
+ *  instead of wrapping long names like "Places, Food & Activities". */
+const CATEGORY_META: Record<string, { icon: IconType; short: string }> = {
+  llm: { icon: Cpu, short: "AI Models" },
+  flights: { icon: Plane, short: "Flights" },
+  hotels: { icon: Building2, short: "Hotels" },
+  places: { icon: Compass, short: "Places & Food" },
+  weather: { icon: Cloud, short: "Weather" },
+  maps: { icon: Navigation, short: "Maps" },
+  social: { icon: Video, short: "Social" },
+  content: { icon: Globe, short: "Content" },
+  payments: { icon: CreditCard, short: "Payments" },
+  email: { icon: Mail, short: "Email" },
+  other: { icon: Plug, short: "Other" },
+};
+
+/** Friendlier names + hints for the non-secret extra fields a provider needs. */
+const FIELD_LABELS: Record<string, string> = {
+  access_key: "Access key",
+  client_id: "Client ID",
+  api_key: "API key",
+  environment: "Environment",
+};
+const FIELD_PLACEHOLDERS: Record<string, string> = {
+  access_key: "x-atlas-client-id (access key)",
+  client_id: "public client id",
+  api_key: "additional API key",
+  environment: "sandbox or production",
+};
 
 export function ApiVault() {
   const [catalogue, setCatalogue] = useState<VaultCatalogue | null>(null);
@@ -134,14 +175,23 @@ export function ApiVault() {
       </div>
 
       <Tabs defaultValue={categories[0]?.[0] ?? "llm"}>
-        <TabsList>
-          {categories.map(([key, label]) => (
-            <TabsTrigger key={key} value={key}>
-              {label}
-              <Badge>{byCategory.get(key)?.length ?? 0}</Badge>
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        {/* Scroll the tab row horizontally when the categories exceed the width
+            rather than wrapping the long labels onto two lines. */}
+        <div className="no-scrollbar -mx-1 overflow-x-auto px-1 pb-1">
+          <TabsList className="w-max flex-nowrap">
+            {categories.map(([key, label]) => {
+              const meta = CATEGORY_META[key];
+              const Icon = meta?.icon ?? Plug;
+              return (
+                <TabsTrigger key={key} value={key} className="shrink-0" title={label}>
+                  <Icon className="h-4 w-4 shrink-0" weight="duotone" />
+                  <span>{meta?.short ?? label}</span>
+                  <Badge>{byCategory.get(key)?.length ?? 0}</Badge>
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
+        </div>
 
         {categories.map(([key]) => (
           <TabsContent key={key} value={key}>
@@ -195,7 +245,17 @@ function ProviderCard({
 }) {
   const [open, setOpen] = useState(false);
   const [secret, setSecret] = useState("");
-  const [extra, setExtra] = useState<Record<string, string>>({});
+  // Seed from the stored credential so a partial edit (e.g. rotating the Atlas
+  // access key) doesn't wipe the other non-secret fields — save replaces the
+  // whole `extra` object, so every field must be present.
+  const [extra, setExtra] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      Object.entries(provider.credential?.extra ?? {}).map(([key, value]) => [
+        key,
+        String(value ?? ""),
+      ]),
+    ),
+  );
   const [verdict, setVerdict] = useState<ProbeVerdict | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -363,18 +423,27 @@ function ProviderCard({
                     value={secret}
                     onChange={(event) => setSecret(event.target.value)}
                   />
+                  {provider.docs_url && (
+                    <a
+                      href={provider.docs_url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="mt-1 inline-flex items-center gap-1 text-[0.65rem] text-[var(--brand-500)] hover:underline"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Where do I get this key?
+                    </a>
+                  )}
                 </label>
 
                 {provider.extra_fields.map((field) => (
                   <label key={field} className="block">
                     <span className="mb-1 block text-xs font-medium capitalize">
-                      {field.replace(/_/g, " ")}
+                      {FIELD_LABELS[field] ?? field.replace(/_/g, " ")}
                     </span>
                     <input
                       className="input-field"
-                      placeholder={
-                        field === "environment" ? "sandbox or production" : field
-                      }
+                      placeholder={FIELD_PLACEHOLDERS[field] ?? field.replace(/_/g, " ")}
                       value={
                         extra[field] ??
                         String((credential?.extra?.[field] as string | undefined) ?? "")

@@ -235,6 +235,39 @@ def _parse_envelope(text: str) -> AtlasEnvelope | None:
 
 
 # --------------------------------------------------------------------------- #
+# Sandbox delegation
+# --------------------------------------------------------------------------- #
+# When the operator has stored an access-key + secret-key pair in the vault, we
+# talk to the ATRIP sandbox HTTP API directly (headless, no browser OAuth). The
+# CLI path below stays as the fallback for a keychain-authorised install. Each
+# public call checks `_sandbox(...)` first; a None return means "not in sandbox
+# mode — use the CLI".
+
+
+async def _sandbox(fn_name: str, *args: Any, **kwargs: Any) -> AtlasEnvelope | None:
+    """Run the sandbox equivalent when AK/SK creds exist, else return None.
+
+    The sandbox module raises its own error type; translate it to the wrapper's
+    so every caller keeps catching a single `AtlasSkillError`.
+    """
+    from app.tools import atlas_sandbox
+
+    if not await atlas_sandbox.enabled():
+        return None
+    fn = getattr(atlas_sandbox, fn_name)
+    try:
+        return AtlasEnvelope(await fn(*args, **kwargs))
+    except atlas_sandbox.AtlasSandboxError as exc:
+        raise AtlasSkillError(str(exc)) from exc
+
+
+async def sandbox_enabled() -> bool:
+    from app.tools import atlas_sandbox
+
+    return await atlas_sandbox.enabled()
+
+
+# --------------------------------------------------------------------------- #
 # Environment / auth / health
 # --------------------------------------------------------------------------- #
 
@@ -249,6 +282,9 @@ async def use_environment(
     This is persistent CLI state, so it is set once rather than per call. Any
     offer obtained before a switch expires — always re-search afterwards.
     """
+    delegated = await _sandbox("use_environment_raw", environment)
+    if delegated is not None:
+        return delegated
     return await _run("environment", "use", environment, api_key=api_key)
 
 
@@ -268,6 +304,9 @@ async def auth_poll(*, api_key: str | None = None) -> AtlasEnvelope:
 
 async def doctor(*, api_key: str | None = None) -> AtlasEnvelope:
     """The CLI's own self-check — used by the vault probe."""
+    delegated = await _sandbox("doctor_raw")
+    if delegated is not None:
+        return delegated
     return await _run("doctor", api_key=api_key)
 
 
@@ -291,6 +330,21 @@ async def search(
     api_key: str | None = None,
 ) -> AtlasEnvelope:
     """Live flight search against the **global** inventory (never pre-filtered)."""
+    delegated = await _sandbox(
+        "search_raw",
+        origin,
+        destination,
+        depart_date,
+        return_date=return_date,
+        adults=adults,
+        children=children,
+        infants=infants,
+        airlines=airlines,
+        currency=currency,
+        multiple_fare_families=multiple_fare_families,
+    )
+    if delegated is not None:
+        return delegated
     args = [
         "search",
         "--origin",
@@ -321,13 +375,24 @@ async def list_offers(search_id: str, *, api_key: str | None = None) -> AtlasEnv
     return await _run("offer", "list", "--search-id", search_id, api_key=api_key)
 
 
-async def verify_offer(offer_id: str, *, api_key: str | None = None) -> AtlasEnvelope:
-    """Re-price an offer. Never surface a price that hasn't passed through here."""
+async def verify_offer(offer_id: str, *, deep: bool = False, api_key: str | None = None) -> AtlasEnvelope:
+    """Re-price an offer. Never surface a price that hasn't passed through here.
+
+    `deep=True` runs the **real** sandbox `verify.do` (used at booking time, and
+    it stashes the upstream sessionId for order.do). The default is the fast
+    search-time confirm the flight agent runs across the whole result list.
+    """
+    delegated = await _sandbox("verify_deep_raw" if deep else "verify_raw", offer_id)
+    if delegated is not None:
+        return delegated
     return await _run("offer", "verify", "--offer-id", offer_id, api_key=api_key)
 
 
 async def confirm_price(booking_id: str, *, api_key: str | None = None) -> AtlasEnvelope:
     """Accept a verified price. Required again after any PRICE_CHANGED."""
+    delegated = await _sandbox("confirm_price_raw", booking_id)
+    if delegated is not None:
+        return delegated
     return await _run("booking", "confirm-price", "--booking-id", booking_id, api_key=api_key)
 
 
@@ -337,10 +402,16 @@ async def confirm_price(booking_id: str, *, api_key: str | None = None) -> Atlas
 
 
 async def list_baggage(booking_id: str, *, api_key: str | None = None) -> AtlasEnvelope:
+    delegated = await _sandbox("baggage_raw", booking_id)
+    if delegated is not None:
+        return delegated
     return await _run("baggage", "list", "--booking-id", booking_id, api_key=api_key)
 
 
 async def list_seats(booking_id: str, *, api_key: str | None = None) -> AtlasEnvelope:
+    delegated = await _sandbox("seat_raw", booking_id)
+    if delegated is not None:
+        return delegated
     return await _run("seat", "list", "--booking-id", booking_id, api_key=api_key)
 
 
@@ -362,6 +433,9 @@ async def create_order(
     one-time input excluded from persisted state, and writing them to disk would
     defeat that.
     """
+    delegated = await _sandbox("order_raw", booking_id, passengers, seat_policy=seat_policy)
+    if delegated is not None:
+        return delegated
     args = ["order", "create", "--booking-id", booking_id, "--passengers-stdin"]
     if seat_policy:
         args += ["--seat-policy", seat_policy]
@@ -375,11 +449,17 @@ async def pay_order(confirmation_id: str, *, api_key: str | None = None) -> Atla
     The confirmation ID is **single-use**. An uncertain payment is never retried
     automatically — `order_status` is the way to find out what happened.
     """
+    delegated = await _sandbox("pay_raw", confirmation_id)
+    if delegated is not None:
+        return delegated
     return await _run("order", "pay", "--confirmation-id", confirmation_id, api_key=api_key)
 
 
 async def order_status(order_no: str, *, api_key: str | None = None) -> AtlasEnvelope:
     """Poll ticketing (up to 120s upstream), or query an order later."""
+    delegated = await _sandbox("status_raw", order_no)
+    if delegated is not None:
+        return delegated
     return await _run(
         "order",
         "status",
@@ -396,7 +476,9 @@ async def order_status(order_no: str, *, api_key: str | None = None) -> AtlasEnv
 
 
 async def available(*, api_key: str | None = None) -> bool:
-    """True when the CLI is installed and reports a usable session."""
+    """True when sandbox creds are stored, or the CLI reports a usable session."""
+    if await sandbox_enabled():
+        return True
     try:
         envelope = await doctor(api_key=api_key)
     except AtlasSkillError as exc:
@@ -417,9 +499,12 @@ async def status_report(*, api_key: str | None = None) -> dict[str, Any]:
             "detail": str(exc),
         }
     return {
+        # In sandbox (AK/SK) mode there is no CLI to install — the direct HTTP
+        # client is always "installed" and authorised as soon as keys are stored.
         "installed": True,
         "authorised": not envelope.is_auth_problem,
         "environment": envelope.data.get("environment"),
+        "auth_mode": "sandbox_ak_sk" if await sandbox_enabled() else "cli",
         "code": envelope.code,
         "detail": envelope.message,
     }
@@ -439,6 +524,11 @@ def normalize_offers(envelope: AtlasEnvelope) -> list[dict[str, Any]]:
     """
     offers = envelope.data.get("offers") or []
     normalized: list[dict[str, Any]] = []
+
+    # Sandbox offers wear a distinct provider label so the result badge reads
+    # "Atlas Sandbox" — the honest signal that this is the test environment.
+    environment = envelope.data.get("environment")
+    provider_label = "Atlas Sandbox" if environment == "sandbox" else "Atlas Flight Booking"
 
     for index, offer in enumerate(offers):
         segments = offer.get("segments") or []
@@ -466,7 +556,7 @@ def normalize_offers(envelope: AtlasEnvelope) -> list[dict[str, Any]]:
                 ),
                 "price_amount": offer.get("total_price"),
                 "price_currency": offer.get("currency", "MYR"),
-                "provider": "Atlas Flight Booking",
+                "provider": provider_label,
                 "source": "atlas",
                 "reasoning": _offer_reasoning(offer, stops, duration_minutes),
                 # Only Atlas's own "verified" price status earns the badge.
@@ -474,6 +564,7 @@ def normalize_offers(envelope: AtlasEnvelope) -> list[dict[str, Any]]:
                 "bookable": bool(offer.get("bookable")),
                 "raw": {
                     "source": "atlas",
+                    "environment": environment,
                     "offer_id": offer.get("offer_id"),
                     "search_id": envelope.data.get("search_id"),
                     "stops": stops,

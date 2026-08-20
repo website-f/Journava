@@ -15,10 +15,12 @@ import {
   Zap,
 } from "@/components/ui/icons";
 import { toast } from "sonner";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   Badge,
   Button,
   EmptyState,
+  NumberField,
   Select,
   Skeleton,
   confirm,
@@ -178,23 +180,47 @@ export function EngineSettings() {
         </Button>
       )}
 
-      {(adding || editing) && catalogue && (
-        <div className="mt-4">
-          <ProviderForm
-            presets={catalogue.presets}
-            editing={editing}
-            onDone={async () => {
-              setAdding(false);
-              setEditing(null);
-              await load();
-            }}
-            onCancel={() => {
-              setAdding(false);
-              setEditing(null);
-            }}
-          />
-        </div>
-      )}
+      <Dialog.Root
+        open={(adding || Boolean(editing)) && Boolean(catalogue)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAdding(false);
+            setEditing(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/45 backdrop-blur-sm" />
+          <Dialog.Content
+            className={cn(
+              "fixed left-1/2 top-1/2 z-[71] w-[min(40rem,92vw)] max-h-[85dvh]",
+              "-translate-x-1/2 -translate-y-1/2 overflow-y-auto",
+            )}
+          >
+            <Dialog.Title className="sr-only">
+              {editing ? `Edit ${editing.name}` : "Add a model"}
+            </Dialog.Title>
+            <Dialog.Description className="sr-only">
+              Add or edit an AI model provider in the rotation pool.
+            </Dialog.Description>
+            {catalogue && (
+              <ProviderForm
+                presets={catalogue.presets}
+                editing={editing}
+                onDone={async () => {
+                  setAdding(false);
+                  setEditing(null);
+                  await load();
+                }}
+                onCancel={() => {
+                  setAdding(false);
+                  setEditing(null);
+                }}
+              />
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {stats.length > 0 && <UsageTable stats={stats} />}
     </div>
@@ -437,8 +463,8 @@ function ProviderForm({
   const [name, setName] = useState(editing?.name ?? "");
   const [model, setModel] = useState(editing?.litellm_model ?? "");
   const [apiKey, setApiKey] = useState("");
-  const [maxRpm, setMaxRpm] = useState(editing?.max_rpm?.toString() ?? "");
-  const [maxRpd, setMaxRpd] = useState(editing?.max_rpd?.toString() ?? "");
+  const [maxRpm, setMaxRpm] = useState<number | null>(editing?.max_rpm ?? null);
+  const [maxRpd, setMaxRpd] = useState<number | null>(editing?.max_rpd ?? null);
   const [preset, setPreset] = useState("");
   const [verdict, setVerdict] = useState<ProbeVerdict | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -493,8 +519,8 @@ function ProviderForm({
     const owner = presets.find((entry) => entry.models.some((m) => m.value === value));
     if (owner) {
       if (!name || !editing) setName(owner.name);
-      if (owner.suggested?.max_rpm) setMaxRpm(String(owner.suggested.max_rpm));
-      if (owner.suggested?.max_rpd) setMaxRpd(String(owner.suggested.max_rpd));
+      if (owner.suggested?.max_rpm) setMaxRpm(owner.suggested.max_rpm);
+      if (owner.suggested?.max_rpd) setMaxRpd(owner.suggested.max_rpd);
     }
   };
 
@@ -571,8 +597,8 @@ function ProviderForm({
       const body: Record<string, unknown> = {
         name,
         litellm_model: model,
-        max_rpm: maxRpm ? Number(maxRpm) : null,
-        max_rpd: maxRpd ? Number(maxRpd) : null,
+        max_rpm: maxRpm,
+        max_rpd: maxRpd,
       };
       if (apiKey) body.api_key = apiKey;
 
@@ -703,24 +729,22 @@ function ProviderForm({
             <span className="mb-1 block text-xs font-medium">
               Max requests / minute
             </span>
-            <input
-              className="input-field"
-              type="number"
+            <NumberField
               min={0}
               placeholder="optional"
               value={maxRpm}
-              onChange={(event) => setMaxRpm(event.target.value)}
+              onValueChange={setMaxRpm}
+              aria-label="Max requests per minute"
             />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium">Max requests / day</span>
-            <input
-              className="input-field"
-              type="number"
+            <NumberField
               min={0}
               placeholder="optional"
               value={maxRpd}
-              onChange={(event) => setMaxRpd(event.target.value)}
+              onValueChange={setMaxRpd}
+              aria-label="Max requests per day"
             />
           </label>
         </div>

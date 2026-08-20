@@ -22,8 +22,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote_plus
 
 from app.agents.base import BaseAgent
 from app.agents.prompts import research_messages
@@ -36,6 +38,13 @@ logger = logging.getLogger(__name__)
 #: Confidence ranking — a verified label may only move a claim *down* this list
 #: unless a certification body corroborates it.
 _CONFIDENCE_RANK = {"certified": 2, "muslim_friendly": 1, "unverified": 0}
+
+
+def _maps_link(name: str, destination: str) -> str:
+    """A guaranteed 'View' target: a Google Maps search for the place, so every
+    card has a working button even when no provider URL was found."""
+    query = f"{name} {destination}".strip()
+    return "https://www.google.com/maps/search/?api=1&query=" + quote_plus(query)
 
 
 class ResearchAgent(BaseAgent):
@@ -128,8 +137,14 @@ class ResearchAgent(BaseAgent):
         data["social_signal"] = social
         data["contradictions"] = self._detect_contradictions(data)
 
+        # Top video reviews (YouTube most-viewed + TikTok best-effort) for the
+        # "video reviews" tab of the places/food sections.
+        data["video_reviews"] = await self._video_reviews(destination, profile)
+
         # Build option list from attractions + dining (for the Research Board tab)
-        options = self._build_options(data, request.budget_currency)
+        options = self._build_options(
+            data, request.budget_currency, destination, sourced=bool(crawled_sources)
+        )
 
         # Count items for summary
         n_attractions = len(data.get("attractions", []))
@@ -471,46 +486,177 @@ class ResearchAgent(BaseAgent):
         return "\n".join(parts)
 
     @staticmethod
-    def _build_options(data: dict[str, Any], currency: str) -> list[Option]:
-        """Convert attractions + dining into Option objects for the Research Board."""
+    def _build_options(
+        data: dict[str, Any],
+        currency: str,
+        destination: str,
+        *,
+        sourced: bool,
+    ) -> list[Option]:
+        """Convert attractions + dining into Option objects.
+
+        Each carries a **source tag** (Camofox when the crawl produced real
+        sources, else the LLM), a **price** (or price range in `raw`), a review
+        snippet, and always a **link** — the item's own URL when present, or a
+        Google Maps search as a guaranteed "View" target so every card is clickable.
+        """
         options: list[Option] = []
+        default_source = "camofox" if sourced else "llm"
 
         for item in data.get("attractions", []):
+            title = item.get("title", "Attraction")
+            url = item.get("url") or item.get("link")
+            link = url or _maps_link(title, destination)
+            src = "camofox" if (sourced and url) else default_source
             options.append(
                 Option(
                     id=f"RSH-A{len(options) + 1:03d}",
                     kind="activity",
-                    title=item.get("title", "Attraction"),
+                    title=title,
                     price_amount=Decimal(str(item["estimated_cost"]))
                     if item.get("estimated_cost")
                     else None,
                     price_currency=item.get("cost_currency", currency),
-                    reasoning=item.get("reasoning"),
-                    raw={"source": "research", "kind": item.get("kind", "attraction")},
+                    reasoning=item.get("review") or item.get("reasoning"),
+                    provider=item.get("category") or item.get("kind") or "Things to do",
+                    source=src,
+                    source_url=link,
+                    booking_url=link,
+                    raw={
+                        "source": src,
+                        "kind": item.get("kind", "attraction"),
+                        "price_range": item.get("price_range"),
+                        "rating": item.get("rating"),
+                        "review": item.get("review"),
+                    },
                 )
             )
 
         for item in data.get("dining", []):
+            title = item.get("title", "Restaurant")
+            url = item.get("url") or item.get("link")
+            link = url or _maps_link(title, destination)
+            src = "camofox" if (sourced and url) else default_source
             options.append(
                 Option(
                     id=f"RSH-D{len(options) + 1:03d}",
                     kind="restaurant",
-                    title=item.get("title", "Restaurant"),
+                    title=title,
                     price_amount=Decimal(str(item["estimated_cost"]))
                     if item.get("estimated_cost")
                     else None,
                     price_currency=item.get("cost_currency", currency),
-                    reasoning=item.get("reasoning"),
+                    reasoning=item.get("review") or item.get("reasoning"),
+                    provider=item.get("cuisine") or "Dining",
                     halal_confidence=item.get("halal_confidence"),
+                    source=src,
+                    source_url=link,
+                    booking_url=link,
                     # `verified` here means "a certification body named it", which is
                     # the only claim strong enough to show without a caveat.
                     verified=bool((item.get("halal_evidence") or {}).get("cert_body")),
                     raw={
-                        "source": "research",
+                        "source": src,
                         "cuisine": item.get("cuisine", ""),
+                        "price_range": item.get("price_range"),
+                        "rating": item.get("rating"),
+                        "review": item.get("review"),
                         "halal_evidence": item.get("halal_evidence", {}),
                     },
                 )
             )
 
         return options
+
+    # ---------------------------------------------------------------------- #
+    # Video reviews — YouTube (most-viewed) + TikTok (best-effort)
+    # ---------------------------------------------------------------------- #
+
+    async def _video_reviews(
+        self,
+        destination: str,
+        profile: TravelerProfile,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Top short-video reviews for the destination's places and food.
+
+        YouTube is the dependable source (official API, ranked by real view
+        count). TikTok is added best-effort by scraping public search results —
+        it may return nothing behind a bot-wall, and that is fine.
+        """
+        food_q = "halal food" if profile.halal_required else "food"
+        yt_attr, yt_food, tt_attr, tt_food = await asyncio.gather(
+            self._youtube_top(f"{destination} top attractions things to do"),
+            self._youtube_top(f"{destination} best {food_q} where to eat"),
+            self._tiktok_top(f"{destination} things to do"),
+            self._tiktok_top(f"{destination} {food_q}"),
+        )
+        # TikTok first (the requested focus), then YouTube most-viewed for breadth.
+        return {
+            "attractions": (tt_attr + yt_attr)[:6],
+            "food": (tt_food + yt_food)[:6],
+        }
+
+    async def _youtube_top(self, query: str) -> list[dict[str, Any]]:
+        videos = await youtube.search_videos(query, max_results=6) or []
+        if not videos:
+            return []
+        stats = await youtube.video_stats([v["video_id"] for v in videos]) or []
+        views = {s["video_id"]: s.get("view_count", 0) for s in stats}
+        out = [
+            {
+                "platform": "youtube",
+                "id": v["video_id"],
+                "title": v["title"],
+                "channel": v.get("channel"),
+                "thumbnail": v.get("thumbnail"),
+                "views": views.get(v["video_id"], 0),
+                "embed_url": f"https://www.youtube.com/embed/{v['video_id']}",
+                "watch_url": f"https://www.youtube.com/watch?v={v['video_id']}",
+            }
+            for v in videos
+        ]
+        out.sort(key=lambda x: x["views"], reverse=True)
+        return out[:4]
+
+    async def _tiktok_top(self, query: str) -> list[dict[str, Any]]:
+        """Best-effort TikTok clips via a Camofox `site:tiktok.com` Google search.
+
+        TikTok's own search is bot-walled, but Google readily lists public
+        `tiktok.com/@user/video/{id}` links, which Camofox reads from both the
+        result snapshot and the extracted link URLs. Each id is embedded with
+        TikTok's official iframe player (`/player/v1/{id}`).
+        """
+        try:
+            if not await camofox.available():
+                return []
+            # DuckDuckGo's HTML endpoint is crawlable (Google's /search is a
+            # consent wall for the headless browser) and lists real tiktok URLs.
+            result = await camofox.search_with_sources(
+                f"{query} site:tiktok.com", macro="@duckduckgo_search"
+            )
+            snapshot = (result or {}).get("snapshot") or ""
+            sources = (result or {}).get("sources") or []
+            haystack = snapshot + " " + " ".join(sources)
+
+            seen: dict[str, str] = {}
+            for path, vid in re.findall(r"(tiktok\.com/@[\w.-]+/video/(\d{6,}))", haystack):
+                seen.setdefault(vid, f"https://www.{path}")
+            for vid in re.findall(r"tiktok\.com/(?:embed|video|v)/(\d{6,})", haystack):
+                seen.setdefault(vid, f"https://www.tiktok.com/embed/v2/{vid}")
+
+            return [
+                {
+                    "platform": "tiktok",
+                    "id": vid,
+                    "title": "TikTok review",
+                    "thumbnail": None,
+                    "views": 0,
+                    # Official embeddable iframe player.
+                    "embed_url": f"https://www.tiktok.com/player/v1/{vid}?music_info=1&description=1",
+                    "watch_url": watch,
+                }
+                for vid, watch in list(seen.items())[:3]
+            ]
+        except Exception as exc:  # noqa: BLE001 — TikTok is strictly best-effort
+            logger.debug("TikTok lookup failed: %s", exc)
+            return []

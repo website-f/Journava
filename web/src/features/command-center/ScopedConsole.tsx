@@ -1,6 +1,6 @@
 import { ArrowLeft, Mic, Paperclip, Image as ImageIcon, Sparkles, Video } from "@/components/ui/icons";
 import { toast } from "sonner";
-import { Badge, Button, Select } from "@/components/ui";
+import { Badge, Button, NumberField, Select } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { usePlanStore, type PlanInputs } from "@/stores/planStore";
 import type { Scope } from "@/lib/types";
@@ -30,6 +30,30 @@ const CURRENCIES = [
   { value: "JPY", label: "JPY — Yen" },
 ];
 
+//: When the destination is a whole country, we ask which city rather than
+//: guessing — a flight needs an airport. Suggestions per popular country.
+const COUNTRY_CITIES: Record<string, { label: string; cities: string[] }> = {
+  japan: { label: "Japan", cities: ["Tokyo", "Osaka", "Kyoto", "Fukuoka", "Sapporo"] },
+  thailand: { label: "Thailand", cities: ["Bangkok", "Phuket", "Chiang Mai"] },
+  indonesia: { label: "Indonesia", cities: ["Bali (Denpasar)", "Jakarta", "Surabaya"] },
+  malaysia: { label: "Malaysia", cities: ["Kuala Lumpur", "Penang", "Kota Kinabalu", "Langkawi"] },
+  korea: { label: "South Korea", cities: ["Seoul", "Busan", "Jeju"] },
+  "south korea": { label: "South Korea", cities: ["Seoul", "Busan", "Jeju"] },
+  vietnam: { label: "Vietnam", cities: ["Ho Chi Minh City", "Hanoi", "Da Nang"] },
+  china: { label: "China", cities: ["Shanghai", "Beijing", "Guangzhou"] },
+  taiwan: { label: "Taiwan", cities: ["Taipei", "Kaohsiung"] },
+  philippines: { label: "Philippines", cities: ["Manila", "Cebu"] },
+  australia: { label: "Australia", cities: ["Sydney", "Melbourne", "Brisbane"] },
+  india: { label: "India", cities: ["Delhi", "Mumbai", "Bangalore"] },
+  "united kingdom": { label: "UK", cities: ["London", "Manchester"] },
+  uk: { label: "UK", cities: ["London", "Manchester"] },
+  france: { label: "France", cities: ["Paris", "Nice"] },
+  italy: { label: "Italy", cities: ["Rome", "Milan", "Venice"] },
+  turkey: { label: "Turkey", cities: ["Istanbul", "Antalya"] },
+  uae: { label: "UAE", cities: ["Dubai", "Abu Dhabi"] },
+  brazil: { label: "Brazil", cities: ["Rio de Janeiro", "São Paulo", "Brasília"] },
+};
+
 export function ScopedConsole({
   scope,
   onBack,
@@ -45,7 +69,16 @@ export function ScopedConsole({
   const setInputs = usePlanStore((s) => s.setInputs);
 
   const wants = (field: string) => scope.inputs.includes(field as never);
-  const canRun = inputs.goal.trim().length > 2 && !running;
+
+  // Route clarification: when this scope needs a flight, origin + destination are
+  // required. A country destination reveals a city picker (a flight needs an airport).
+  const needsRoute = wants("route");
+  const destInfo = COUNTRY_CITIES[inputs.destination.trim().toLowerCase()];
+  const routeReady = !needsRoute || Boolean(inputs.origin.trim() && inputs.destination.trim());
+  const canRun =
+    !running &&
+    routeReady &&
+    (needsRoute || inputs.goal.trim().length > 2);
 
   return (
     <div className="mx-auto w-full max-w-3xl">
@@ -105,6 +138,59 @@ export function ScopedConsole({
 
       {/* Only the fields this scope uses */}
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        {needsRoute && (
+          <>
+            <Field
+              label="Flying from"
+              hint={!inputs.origin.trim() ? "Where are you flying from? e.g. KLIA / Kuala Lumpur" : undefined}
+            >
+              <input
+                className="input-field"
+                placeholder="e.g. KLIA, Kuala Lumpur"
+                value={inputs.origin}
+                onChange={(event) => setInputs({ origin: event.target.value })}
+                aria-label="Flying from"
+              />
+            </Field>
+            <Field
+              label="Destination"
+              hint={
+                destInfo
+                  ? `${destInfo.label} — pick a city below`
+                  : "City or country — e.g. Osaka, Japan"
+              }
+            >
+              <input
+                className="input-field"
+                placeholder="Where to? e.g. Osaka or Japan"
+                value={inputs.destination}
+                onChange={(event) =>
+                  setInputs({ destination: event.target.value, destination_city: "" })
+                }
+                aria-label="Destination"
+              />
+            </Field>
+            {destInfo && (
+              <Field
+                label={`Which city in ${destInfo.label}?`}
+                hint="A flight needs an airport — pick one, or let the agent choose."
+                className="sm:col-span-2"
+              >
+                <Select
+                  value={inputs.destination_city || "__any__"}
+                  onValueChange={(value) =>
+                    setInputs({ destination_city: value === "__any__" ? "" : value })
+                  }
+                  options={[
+                    { value: "__any__", label: "Let the agent choose" },
+                    ...destInfo.cities.map((city) => ({ value: city, label: city })),
+                  ]}
+                  aria-label="Destination city"
+                />
+              </Field>
+            )}
+          </>
+        )}
         {wants("dates") && (
           <>
             <Field label="Departing">
@@ -129,15 +215,13 @@ export function ScopedConsole({
 
         {wants("travellers") && (
           <Field label="Travellers">
-            <input
-              type="number"
+            <NumberField
               min={1}
               max={9}
+              allowEmpty={false}
               value={inputs.travellers}
-              onChange={(event) =>
-                setInputs({ travellers: Math.max(1, Number(event.target.value) || 1) })
-              }
-              className="input-field"
+              onValueChange={(n) => setInputs({ travellers: n ?? 1 })}
+              aria-label="Number of travellers"
             />
           </Field>
         )}
@@ -145,22 +229,23 @@ export function ScopedConsole({
         {wants("budget") && (
           <Field label="Budget" hint="A soft cap — it shapes ranking, never filters">
             <div className="flex gap-2">
-              <div className="w-28 shrink-0">
+              <div className="w-24 shrink-0">
                 <Select
                   value={inputs.budget_currency}
                   onValueChange={(value) => setInputs({ budget_currency: value })}
                   options={CURRENCIES}
+                  // Show just the code in the narrow trigger; the dropdown keeps
+                  // the full "MYR — Ringgit" label.
+                  renderValue={(v) => v ?? "MYR"}
                   aria-label="Budget currency"
                 />
               </div>
-              <input
-                type="number"
+              <NumberField
                 min={0}
-                inputMode="decimal"
                 placeholder="e.g. 8000"
                 value={inputs.budget_amount}
-                onChange={(event) => setInputs({ budget_amount: event.target.value })}
-                className="input-field"
+                onValueChange={(n) => setInputs({ budget_amount: n })}
+                aria-label="Budget amount"
               />
             </div>
           </Field>

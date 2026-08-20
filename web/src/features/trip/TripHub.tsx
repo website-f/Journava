@@ -1,0 +1,260 @@
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import {
+  Briefcase,
+  History as HistoryIcon,
+  ArrowLeft,
+  Plane,
+  Clock,
+  CreditCard,
+  ShoppingCart,
+  Loader2,
+} from "@/components/ui/icons";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Skeleton,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/ui";
+import { api } from "@/lib/api";
+import { usePlanStore, type PlanResults } from "@/stores/planStore";
+import type { HistoryEntry } from "@/lib/types";
+import { MyTrip } from "@/features/trip/MyTrip";
+import { History } from "@/features/history/History";
+import { BookingsHub } from "@/features/trip/BookingsHub";
+
+const TRIP_SCOPES = new Set(["full_trip", "itinerary_only"]);
+
+/** Flat (no-gradient) banner colours, chosen by destination so cards vary. */
+const BANDS = ["#0F766E", "#1D4ED8", "#B45309", "#15803D", "#7E22CE", "#0E7490"];
+function bandFor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return BANDS[h % BANDS.length];
+}
+
+function formatWhen(value: string | null): string {
+  if (!value) return "";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * Trip destination — a gallery of the traveller's trips as cards (grouped, since
+ * you may have several), opening one into its full detail. History (searches +
+ * bookings) sits in a second tab.
+ */
+export function TripHub() {
+  const [openResults, setOpenResults] = useState<PlanResults | null>(null);
+
+  if (openResults) {
+    return (
+      <div className="mx-auto w-full max-w-6xl">
+        <Button variant="ghost" size="sm" className="mb-2" onClick={() => setOpenResults(null)}>
+          <ArrowLeft className="h-4 w-4" /> All trips
+        </Button>
+        <MyTrip />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-6xl">
+      <TripTabs onOpen={setOpenResults} />
+    </div>
+  );
+}
+
+function TripTabs({ onOpen }: { onOpen: (r: PlanResults) => void }) {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") ?? "trips";
+  const setTab = (value: string) =>
+    setParams(value === "trips" ? {} : { tab: value }, { replace: true });
+
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      {/* Scroll the tab row on narrow screens rather than wrapping. */}
+      <div className="no-scrollbar -mx-1 overflow-x-auto px-1 pb-1">
+        <TabsList className="w-max flex-nowrap">
+          <TabsTrigger value="trips" className="shrink-0">
+            <Briefcase className="h-4 w-4" /> Trips
+          </TabsTrigger>
+          <TabsTrigger value="orders" className="shrink-0">
+            <ShoppingCart className="h-4 w-4" /> Orders
+          </TabsTrigger>
+          <TabsTrigger value="payments" className="shrink-0">
+            <CreditCard className="h-4 w-4" /> Payments
+          </TabsTrigger>
+          <TabsTrigger value="history" className="shrink-0">
+            <HistoryIcon className="h-4 w-4" /> History
+          </TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="trips">
+        <TripsGallery onOpen={onOpen} />
+      </TabsContent>
+      <TabsContent value="orders">
+        <BookingsHub mode="pending" />
+      </TabsContent>
+      <TabsContent value="payments">
+        <BookingsHub mode="payments" />
+      </TabsContent>
+      <TabsContent value="history">
+        <History />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+
+function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
+  const setResults = usePlanStore((s) => s.setResults);
+  const current = usePlanStore((s) => s.results);
+  const currentScope = usePlanStore((s) => s.activeScope);
+  const lastHistoryId = usePlanStore((s) => s.lastHistoryId);
+  const [opening, setOpening] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["trips"],
+    queryFn: () => api.get<HistoryEntry[]>("/history/searches"),
+  });
+
+  const trips = (data ?? []).filter(
+    (e) => TRIP_SCOPES.has(e.scope) && e.id !== lastHistoryId,
+  );
+
+  const openHistory = async (entry: HistoryEntry) => {
+    setOpening(entry.id);
+    try {
+      const full = await api.get<HistoryEntry>(`/history/searches/${entry.id}`);
+      if (!full.result_snapshot) {
+        toast.error("That trip wasn't saved in full — run it again.");
+        return;
+      }
+      setResults(full.result_snapshot, full.scope);
+      onOpen(full.result_snapshot);
+    } catch {
+      toast.error("Could not open that trip.");
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  const showCurrent = current && currentScope && TRIP_SCOPES.has(currentScope);
+
+  if (isLoading && !showCurrent) {
+    return (
+      <div className="grid gap-3 py-3 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-48 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!showCurrent && trips.length === 0) {
+    return (
+      <div className="py-10">
+        <EmptyState
+          icon={<Briefcase className="h-10 w-10" />}
+          title="No trips yet"
+          description="Plan one from Home — full trips show up here as cards you can reopen anytime."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 py-3 sm:grid-cols-2 lg:grid-cols-3">
+      {showCurrent && (
+        <TripCard
+          title="Current trip"
+          subtitle={(current?._scope as { label?: string } | undefined)?.label ?? "Active plan"}
+          band={bandFor("current")}
+          badge="Active"
+          onClick={() => onOpen(current!)}
+        />
+      )}
+      {trips.map((entry) => (
+        <TripCard
+          key={entry.id}
+          title={entry.destination || "Trip"}
+          subtitle={entry.goal}
+          band={bandFor(entry.destination || entry.goal || entry.id)}
+          when={formatWhen(entry.created_at)}
+          optionCount={entry.option_count}
+          loading={opening === entry.id}
+          onClick={() => void openHistory(entry)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TripCard({
+  title,
+  subtitle,
+  band,
+  when,
+  optionCount,
+  badge,
+  loading,
+  onClick,
+}: {
+  title: string;
+  subtitle?: string;
+  band: string;
+  when?: string;
+  optionCount?: number;
+  badge?: string;
+  loading?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      className="surface-card group relative overflow-hidden p-0 text-left transition-colors hover:border-[var(--brand-400)] disabled:opacity-70"
+    >
+      {/* Flat colour banner "thumbnail" */}
+      <div className="relative flex h-24 items-end p-3" style={{ background: band }}>
+        <Plane className="absolute right-3 top-3 h-6 w-6 text-white/70" />
+        <span className="font-[family-name:var(--font-display)] text-lg leading-tight text-white drop-shadow-sm">
+          {title}
+        </span>
+        {badge && (
+          <span className="absolute left-3 top-3 rounded-[var(--r-pill)] bg-white/25 px-2 py-0.5 text-[0.6rem] font-semibold uppercase text-white backdrop-blur-sm">
+            {badge}
+          </span>
+        )}
+      </div>
+      <div className="p-3">
+        {subtitle && <p className="line-clamp-2 text-sm font-medium">{subtitle}</p>}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {typeof optionCount === "number" && optionCount > 0 && (
+            <Badge>{optionCount} options</Badge>
+          )}
+          {when && (
+            <span className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">
+              <Clock className="h-3 w-3" /> {when}
+            </span>
+          )}
+        </div>
+      </div>
+      {loading && (
+        <span className="absolute inset-0 grid place-items-center bg-[var(--surface)]/60">
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--brand-500)]" />
+        </span>
+      )}
+    </button>
+  );
+}

@@ -1,4 +1,4 @@
-import { BadgeCheck, ExternalLink, FlaskConical, Globe, Sparkles } from "@/components/ui/icons";
+import { BadgeCheck, Building2, ExternalLink, FlaskConical, Globe, Sparkles } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import type { OptionSource, PlanOption } from "@/lib/types";
 
@@ -33,11 +33,11 @@ const SOURCES: Record<OptionSource, SourceMeta> = {
     title: "Amadeus test inventory — indicative pricing, not bookable here",
   },
   camofox: {
-    label: "Research",
+    label: "Camofox",
     tone: "text-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_16%,transparent)]",
     icon: Globe,
     title:
-      "Advertised on a public page the browser agent read — not a held fare. Open the source to confirm.",
+      "Read from a public fare page by the Camofox browser agent — advertised, not a held fare. Open the source to confirm.",
   },
   research: {
     label: "Research",
@@ -58,13 +58,22 @@ const SOURCES: Record<OptionSource, SourceMeta> = {
     icon: FlaskConical,
     title: "Placeholder data — configure a provider in the API Vault",
   },
+  supplier: {
+    label: "Direct",
+    tone: "text-[var(--success)] bg-[color-mix(in_srgb,var(--success)_14%,transparent)]",
+    icon: Building2,
+    title: "Direct from the property — bookable, no OTA commission, keeps the guest relationship",
+  },
 };
 
 export function SourceBadge({
   source,
+  environment,
   className,
 }: {
   source: OptionSource | null;
+  /** For Atlas offers: "sandbox" makes the badge read "Atlas Sandbox". */
+  environment?: string | null;
   className?: string;
 }) {
   if (!source) return null;
@@ -72,9 +81,17 @@ export function SourceBadge({
   if (!meta) return null;
   const Icon = meta.icon;
 
+  // Atlas in the sandbox environment is labelled distinctly, so the badge never
+  // implies a live production booking during the demo.
+  const isAtlasSandbox = source === "atlas" && environment === "sandbox";
+  const label = isAtlasSandbox ? "Atlas Sandbox" : meta.label;
+  const title = isAtlasSandbox
+    ? "Live Atlas SANDBOX inventory — bookable end-to-end in the test environment (no real charge)"
+    : meta.title;
+
   return (
     <span
-      title={meta.title}
+      title={title}
       className={cn(
         "inline-flex shrink-0 items-center gap-1 rounded-[var(--r-pill)]",
         "px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide",
@@ -83,7 +100,7 @@ export function SourceBadge({
       )}
     >
       <Icon className="h-3 w-3" />
-      {meta.label}
+      {label}
     </span>
   );
 }
@@ -95,7 +112,10 @@ export function SourceBadge({
 export function SourceTrustRow({ option }: { option: PlanOption }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <SourceBadge source={option.source} />
+      <SourceBadge
+        source={option.source}
+        environment={(option.raw?.environment as string | undefined) ?? null}
+      />
 
       {option.verified ? (
         <span

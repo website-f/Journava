@@ -113,7 +113,7 @@ export function AgentControl() {
     // Chief at top center
     nodes.push({
       id: "chief",
-      position: { x: 550, y: 0 },
+      position: { x: 720, y: 0 },
       data: { label: "Chief", status: "idle" },
       type: "agentNode",
     });
@@ -122,7 +122,7 @@ export function AgentControl() {
     tier1.forEach((agent, i) => {
       nodes.push({
         id: agent.slug,
-        position: { x: i * 145, y: 110 },
+        position: { x: i * 185, y: 140 },
         data: { label: agent.name, status: "idle" },
         type: "agentNode",
       });
@@ -132,7 +132,7 @@ export function AgentControl() {
     tier2.forEach((agent, i) => {
       nodes.push({
         id: agent.slug,
-        position: { x: i * 130, y: 230 },
+        position: { x: i * 185, y: 290 },
         data: { label: agent.name, status: "idle" },
         type: "agentNode",
       });
@@ -142,7 +142,7 @@ export function AgentControl() {
     tier3.forEach((agent, i) => {
       nodes.push({
         id: agent.slug,
-        position: { x: 380 + i * 170, y: 350 },
+        position: { x: 560 + i * 220, y: 440 },
         data: { label: agent.name, status: "idle" },
         type: "agentNode",
       });
@@ -157,14 +157,16 @@ export function AgentControl() {
         source,
         target,
         type: "smoothstep",
-        markerEnd: { type: MarkerType.ArrowClosed, color: "#94A0B8" },
-        style: { stroke: "#94A0B8", strokeWidth: 1.5 },
+        // Animated dashes = data flowing along the graph (the "heartbeat").
+        animated: true,
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#14b8a6" },
+        style: { stroke: "#14b8a6", strokeWidth: 1.6, opacity: 0.5 },
       })),
     [],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   // Update node styles when status changes
   useEffect(() => {
@@ -184,7 +186,29 @@ export function AgentControl() {
         };
       }),
     );
-  }, [statusMap, setNodes]);
+
+    // Brighten edges on the active path so the "heartbeat" visibly flows through
+    // whichever agents are currently working.
+    const isHot = (id?: string) => {
+      const st = id ? statusMap[id]?.status : undefined;
+      return st === "working" || st === "active" || st === "monitoring";
+    };
+    setEdges((eds) =>
+      eds.map((edge) => {
+        const hot = isHot(edge.source) || isHot(edge.target);
+        return {
+          ...edge,
+          animated: true,
+          style: {
+            ...edge.style,
+            stroke: hot ? "#0f766e" : "#94A0B8",
+            strokeWidth: hot ? 2.4 : 1.4,
+            opacity: hot ? 0.95 : 0.45,
+          },
+        };
+      }),
+    );
+  }, [statusMap, setNodes, setEdges]);
 
   const roster = (
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -314,7 +338,7 @@ function AgentNodeComponent({ data }: { data: { label: string; status: AgentStat
   return (
     <div
       className={cn(
-        "rounded-[var(--r-md)] border-2 bg-[var(--surface)] px-3 py-2 min-w-[120px] text-center transition-all duration-200",
+        "rounded-[var(--r-md)] border-2 bg-[var(--surface)] px-3 py-2 w-[158px] text-center transition-all duration-200",
         isWorking && "animate-pulse",
       )}
       style={{ borderColor: color }}
@@ -324,7 +348,7 @@ function AgentNodeComponent({ data }: { data: { label: string; status: AgentStat
         <span className="text-xs font-semibold">{data.label}</span>
       </div>
       {data.message && (
-        <p className="mt-0.5 text-[0.6rem] text-[var(--muted)] truncate max-w-[110px]">{data.message}</p>
+        <p className="mt-0.5 truncate text-[0.6rem] text-[var(--muted)]">{data.message}</p>
       )}
     </div>
   );
