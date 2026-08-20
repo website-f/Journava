@@ -167,6 +167,11 @@ body {
   width: 100%;
   overflow-x: clip;
   overscroll-behavior-y: none;
+  /* App-wide safety net: a long unbreakable string (URL, email, id) breaks to
+     the next line instead of forcing a wider-than-viewport page. Only kicks in
+     when a word would otherwise overflow, so normal text wraps as before.
+     (Flex children still need `min-w-0` to shrink — fixed per-component.) */
+  overflow-wrap: break-word;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-body);

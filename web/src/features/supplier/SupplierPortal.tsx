@@ -172,7 +172,7 @@ export function SupplierPortal() {
                     <p className="text-sm font-medium">
                       {lead.property_name ?? "Property"} — {lead.listing_title ?? "Listing"}
                     </p>
-                    <p className="text-xs text-[var(--muted)]">
+                    <p className="text-xs text-[var(--muted)] break-all">
                       {lead.traveler_email ?? "traveler"} · {lead.created_at ? new Date(lead.created_at).toLocaleString() : ""}
                     </p>
                     {lead.note && <p className="mt-1 text-sm">{lead.note}</p>}

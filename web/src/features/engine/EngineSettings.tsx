@@ -345,7 +345,7 @@ function ProviderRow({
             {provider.cooling_down && <Badge variant="warning">cooling down</Badge>}
             {!provider.enabled && <Badge>disabled</Badge>}
           </div>
-          <p className="mt-0.5 font-[family-name:var(--font-mono)] text-[0.65rem] text-[var(--muted)]">
+          <p className="mt-0.5 break-all font-[family-name:var(--font-mono)] text-[0.65rem] text-[var(--muted)]">
             {provider.litellm_model} · {provider.masked_key || "no key"}
           </p>
           {provider.status_detail && provider.status !== "healthy" && (

@@ -37,8 +37,8 @@ export function Badge({
     <span
       title={title}
       className={cn(
-        "inline-flex items-center gap-1 rounded-[var(--r-pill)] px-2 py-0.5",
-        "text-[0.65rem] font-medium uppercase tracking-wide whitespace-nowrap",
+        "inline-flex items-center gap-1 rounded-[var(--r-pill)] px-2 py-0.5 max-w-full min-w-0",
+        "text-[0.65rem] font-medium uppercase tracking-wide break-words",
         VARIANT_STYLES[variant],
         className,
       )}

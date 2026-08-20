@@ -188,7 +188,7 @@ function TripSummary({ results }: { results: Record<string, AgentPlanResult> }) 
       <div className="flex items-center gap-3 flex-wrap">
         <h3 className="text-lg font-semibold">{destination ?? "Your Trip"}</h3>
         {chief?.summary && (
-          <Badge variant="brand">{chief.summary}</Badge>
+          <Badge variant="brand" className="normal-case">{chief.summary}</Badge>
         )}
       </div>
     </div>

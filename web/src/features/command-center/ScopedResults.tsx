@@ -565,12 +565,12 @@ function RiskPanel({ results }: { results: PlanResults }) {
                     href={alert.url}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="min-w-0 text-xs hover:text-[var(--brand-500)] hover:underline"
+                    className="min-w-0 flex-1 break-words line-clamp-2 text-xs hover:text-[var(--brand-500)] hover:underline"
                   >
                     {alert.headline}
                   </a>
                 ) : (
-                  <span className="min-w-0 text-xs">{alert.headline}</span>
+                  <span className="min-w-0 flex-1 break-words line-clamp-2 text-xs">{alert.headline}</span>
                 )}
               </li>
             ))}

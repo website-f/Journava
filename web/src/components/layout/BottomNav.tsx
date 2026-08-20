@@ -26,7 +26,7 @@ function NavItem({ to, label, icon: Icon }: Item) {
       to={to}
       className={({ isActive }) =>
         cn(
-          "flex w-16 flex-col items-center justify-center gap-0.5 rounded-[var(--r-md)] py-1.5",
+          "flex w-14 flex-col items-center justify-center gap-0.5 rounded-[var(--r-md)] py-1.5",
           "text-[0.6rem] font-medium transition-colors",
           isActive ? "text-[var(--brand-500)]" : "text-[var(--muted)] hover:text-[var(--text)]",
         )
@@ -47,11 +47,11 @@ export function BottomNav() {
       className="fixed left-1/2 z-50 -translate-x-1/2"
       style={{ bottom: "calc(env(safe-area-inset-bottom) + 0.85rem)" }}
     >
-      <nav className="glass relative flex items-end gap-1 rounded-[var(--r-pill)] px-3 py-2 shadow-[var(--shadow-2)]">
+      <nav className="glass relative flex max-w-[calc(100vw-1rem)] items-end gap-1 rounded-[var(--r-pill)] px-3 py-2 shadow-[var(--shadow-2)]">
         {LEFT.map((item) => (
           <NavItem key={item.to} {...item} />
         ))}
-        <div className="w-16 shrink-0" aria-hidden />
+        <div className="w-14 shrink-0" aria-hidden />
         {RIGHT.map((item) => (
           <NavItem key={item.to} {...item} />
         ))}
