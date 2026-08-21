@@ -237,8 +237,12 @@ class FlightAgent(BaseAgent):
             }
             merged = [*atlas_raw, *amadeus_raw, *camofox_raw["options"]]
             if merged:
+                # Not every report entry is a source with a count (e.g.
+                # destination_airports) — guard so a metadata entry can't KeyError.
                 live = ", ".join(
-                    f"{name}:{info['count']}" for name, info in report.items() if info["count"]
+                    f"{name}:{info['count']}"
+                    for name, info in report.items()
+                    if isinstance(info, dict) and info.get("count")
                 )
                 self.emit("active", f"Inventory — {live}")
                 return {"options": merged, "report": report}
@@ -1169,7 +1173,11 @@ class FlightAgent(BaseAgent):
             "summary": f"{len(options)} options {origin}→{destination}",
             "cheapest": (float(min(float(o.price_amount) for o in priced)) if priced else None),
             "currency": priced[0].price_currency if priced else None,
-            "sources": {name: info.get("count", 0) for name, info in report.items()},
+            "sources": {
+                name: info["count"]
+                for name, info in report.items()
+                if isinstance(info, dict) and "count" in info
+            },
         }
         try:
             gnosion_client.remember(
