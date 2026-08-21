@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     llm_fallback_models: str = "gemini/gemini-2.0-flash,groq/llama-3.3-70b-versatile"
     llm_temperature: float = 0.3
     llm_timeout_seconds: int = 60
+    #: Multimodal model used by the assistant when the user attaches an image.
+    llm_vision_model: str = "gemini/gemini-2.0-flash"
 
     dashscope_api_key: str | None = None
     gemini_api_key: str | None = None

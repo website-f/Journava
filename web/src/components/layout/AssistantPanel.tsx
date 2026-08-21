@@ -1,9 +1,11 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Sparkles, X, Plus, ArrowUp } from "@/components/ui/icons";
+import { Sparkles, X, Plus, ArrowUp, CheckCircle2 } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
-import { api } from "@/lib/api";
+import { useAgentStream } from "@/hooks/useAgentStream";
+import { API_BASE, api } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 
 /**
@@ -16,6 +18,17 @@ import { cn } from "@/lib/cn";
 
 type Action = { type: string; job_id?: string; scope?: string; goal?: string } | null;
 type Msg = { role: "user" | "assistant"; content: string; action?: Action; image?: string };
+
+/** Three bouncing dots shown in the assistant bubble before the first token. */
+function TypingDots() {
+  return (
+    <span className="flex gap-1 py-0.5">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)] [animation-delay:-0.2s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)] [animation-delay:-0.1s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)]" />
+    </span>
+  );
+}
 
 /** Minimal inline markdown: render **bold** (newlines are kept by the bubble's
  *  whitespace-pre-wrap), so the assistant's lists read cleanly. */
@@ -34,6 +47,76 @@ function RichText({ text }: { text: string }) {
   );
 }
 
+/** Live status of an agent run the assistant launched — polls the job and shows
+ *  the latest agent activity, flipping to a results link when done. */
+function RunStatusCard({ jobId, close }: { jobId: string; close: () => void }) {
+  const navigate = useNavigate();
+  const { events } = useAgentStream();
+  const [status, setStatus] = useState<"running" | "done" | "failed">("running");
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const rec = await api.get<{ status?: string }>(`/jobs/${jobId}`);
+        if (cancelled) return;
+        const s = rec.status ?? "";
+        if (s === "done" || s === "completed") return void setStatus("done");
+        if (s === "failed" || s === "error") return void setStatus("failed");
+      } catch {
+        /* keep polling */
+      }
+      timer = window.setTimeout(poll, 2500);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [jobId]);
+
+  const go = (to: string) => {
+    close();
+    navigate(to);
+  };
+
+  if (status === "done") {
+    return (
+      <button
+        onClick={() => go("/trip?tab=history")}
+        className="mt-2 flex items-center gap-1.5 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-2.5 py-1.5 text-xs font-medium text-[var(--success)]"
+      >
+        <CheckCircle2 className="h-3.5 w-3.5" /> Done — view results
+      </button>
+    );
+  }
+  if (status === "failed") {
+    return <p className="mt-2 text-xs text-[var(--warning)]">The run couldn't finish — try again.</p>;
+  }
+
+  const latest = events[0];
+  return (
+    <button
+      onClick={() => go("/agents")}
+      className="mt-2 flex w-full items-center gap-2 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] px-2.5 py-2 text-left"
+    >
+      <span className="relative grid h-3 w-3 shrink-0 place-items-center">
+        <span className="absolute inset-0 animate-ping rounded-full bg-[var(--brand-500)] opacity-60" />
+        <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand-500)]" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold text-[var(--brand-600)]">
+          Agents working — running in the background
+        </span>
+        <span className="block truncate text-[0.65rem] text-[var(--muted)]">
+          {latest ? `${latest.agent}: ${latest.message}` : "tap to watch live"}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 const SUGGESTIONS = [
   "Halal places to eat in Chengdu",
   "Find flights KLIA → Chengdu on 5 Nov",
@@ -48,7 +131,6 @@ export function AssistantPanel({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const navigate = useNavigate();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<string | null>(null);
@@ -64,22 +146,66 @@ export function AssistantPanel({
     const content = (text ?? input).trim();
     if (!content || sending) return;
     const img = image;
-    const next: Msg[] = [...messages, { role: "user", content, image: img ?? undefined }];
-    setMessages(next);
+    const base: Msg[] = [...messages, { role: "user", content, image: img ?? undefined }];
+    // Add an empty assistant placeholder we stream tokens into.
+    setMessages([...base, { role: "assistant", content: "" }]);
     setInput("");
     setImage(null);
     setSending(true);
-    try {
-      const res = await api.post<{ reply: string; action: Action }>("/assistant/chat", {
-        messages: next.map((m) => ({ role: m.role, content: m.content })),
-        image: img,
+
+    const patchLast = (fn: (m: Msg) => Msg) =>
+      setMessages((prev) => {
+        const copy = [...prev];
+        const i = copy.length - 1;
+        if (copy[i]?.role === "assistant") copy[i] = fn(copy[i]);
+        return copy;
       });
-      setMessages((prev) => [...prev, { role: "assistant", content: res.reply, action: res.action }]);
+
+    try {
+      const token = getAccessToken();
+      const res = await fetch(`${API_BASE}/assistant/chat/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          messages: base.map((m) => ({ role: m.role, content: m.content })),
+          image: img,
+        }),
+      });
+      if (!res.ok || !res.body) throw new Error("stream failed");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 2);
+          if (!frame.startsWith("data:")) continue;
+          let evt: { type: string; content?: string; action?: Action };
+          try {
+            evt = JSON.parse(frame.slice(5).trim());
+          } catch {
+            continue;
+          }
+          if (evt.type === "token" && evt.content) {
+            const tok = evt.content;
+            patchLast((m) => ({ ...m, content: m.content + tok }));
+          } else if (evt.type === "action") {
+            const act = evt.action ?? null;
+            patchLast((m) => ({ ...m, action: act }));
+          }
+        }
+      }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Sorry — I couldn't reach the server. Try again?" },
-      ]);
+      patchLast((m) =>
+        m.content ? m : { ...m, content: "Sorry — I couldn't reach the server. Try again?" },
+      );
     } finally {
       setSending(false);
     }
@@ -92,11 +218,6 @@ export function AssistantPanel({
     reader.onload = () => setImage(reader.result as string);
     reader.readAsDataURL(file);
     event.target.value = "";
-  };
-
-  const watchRun = () => {
-    onOpenChange(false);
-    navigate("/agents");
   };
 
   return (
@@ -162,31 +283,21 @@ export function AssistantPanel({
                   {m.image && m.role === "user" && (
                     <img src={m.image} alt="attachment" className="mb-2 max-h-40 rounded-[var(--r-md)]" />
                   )}
-                  {m.role === "assistant" ? <RichText text={m.content} /> : m.content}
-                  {m.action?.type === "plan_started" && (
-                    <button
-                      onClick={watchRun}
-                      className="mt-2 flex items-center gap-1.5 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-2.5 py-1.5 text-xs font-medium text-[var(--brand-600)]"
-                    >
-                      <span className="h-2 w-2 animate-ping rounded-full bg-[var(--brand-500)]" />
-                      Running in the background — watch live
-                    </button>
+                  {m.role === "assistant" ? (
+                    m.content ? (
+                      <RichText text={m.content} />
+                    ) : (
+                      <TypingDots />
+                    )
+                  ) : (
+                    m.content
+                  )}
+                  {m.action?.type === "plan_started" && m.action.job_id && (
+                    <RunStatusCard jobId={m.action.job_id} close={() => onOpenChange(false)} />
                   )}
                 </div>
               </div>
             ))}
-
-            {sending && (
-              <div className="flex justify-start">
-                <div className="rounded-[var(--r-lg)] bg-[var(--bg)] px-3 py-2.5">
-                  <span className="flex gap-1">
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)] [animation-delay:-0.2s]" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)] [animation-delay:-0.1s]" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--muted)]" />
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="border-t border-[var(--border)] p-3">

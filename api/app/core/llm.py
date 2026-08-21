@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
-Message = dict[str, str]
+# `content` is usually a string, but may be a multimodal list (text + image_url)
+# for vision calls — hence Any, not str.
+Message = dict[str, Any]
 
 
 class LLMUnavailableError(RuntimeError):
@@ -218,6 +221,75 @@ async def complete(
     raise LLMUnavailableError(
         f"All models failed ({len(candidates)} providers tried)"
     ) from last_error
+
+
+async def complete_stream(
+    messages: list[Message],
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    agent: str | None = None,
+) -> AsyncIterator[str]:
+    """Stream a completion token-by-token from the primary candidate.
+
+    Yields content deltas for prose replies (no JSON/structured output here). On
+    any streaming failure it falls back to a single non-streaming `complete()`
+    and yields the whole answer, so a caller always gets text.
+    """
+    try:
+        from litellm import acompletion
+    except ImportError:
+        text = await complete(messages, model=model, temperature=temperature, agent=agent)
+        if text:
+            yield text
+        return
+
+    candidates = (
+        [{"model": model, "provider_id": None, "api_key": None}] if model else await _build_chain()
+    )
+    if not candidates:
+        try:
+            text = await complete(messages, temperature=temperature, agent=agent)
+        except Exception:  # noqa: BLE001
+            text = ""
+        if text:
+            yield text
+        return
+
+    candidate = candidates[0]
+    litellm_model = candidate["model"]
+    api_key = candidate.get("api_key")
+    _set_provider_env(litellm_model, api_key)
+
+    got_any = False
+    try:
+        stream = await acompletion(
+            model=litellm_model,
+            messages=messages,
+            temperature=(settings.llm_temperature if temperature is None else temperature),
+            timeout=settings.llm_timeout_seconds,
+            api_key=api_key,
+            num_retries=0,
+            stream=True,
+        )
+        async for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta.content or ""
+            except Exception:  # noqa: BLE001
+                delta = ""
+            if delta:
+                got_any = True
+                yield delta
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Streaming failed (%s) — falling back to non-streaming", exc)
+
+    if not got_any:
+        try:
+            text = await complete(messages, temperature=temperature, agent=agent)
+        except Exception:  # noqa: BLE001
+            text = ""
+        if text:
+            yield text
 
 
 # --------------------------------------------------------------------------- #
