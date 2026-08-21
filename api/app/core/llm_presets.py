@@ -18,7 +18,22 @@ accepts a custom `provider/model` string.
 `free_tier` marks providers with a usable no-cost tier, since that is the first
 thing an operator building on free quotas needs to know.
 
-Last reviewed: 2026-08-18.
+Quick-pick roster: Groq · OpenRouter · Hugging Face · Mistral · Cohere · DeepSeek
+· OpenAI. DashScope, Cerebras, Gemini, Anthropic and Ollama were removed from the
+quick pick (2026-08-21) — you can still add any of them with a custom
+`provider/model` string, and Load live models still works for every provider.
+
+Free-tier notes below were researched 2026-08-21:
+- OpenRouter dropped the free DeepSeek/Gemini/Mistral variants — the old
+  `deepseek-*:free` / gemini `:free` slugs now 404 ("use the paid slug"). The
+  reliable free ones are GPT-OSS-20B and Qwen3-Coder; the roster changes weekly,
+  so Load live models is the truth.
+- Groq's free tier serves ALL its models (GPT-OSS, Llama, Qwen3, Kimi) at
+  30 rpm / 14.4k rpd — the earlier "Llama removed" note was wrong.
+- Mistral's free "Experiment" tier covers every model (incl. Large/Codestral) at
+  ~1 req/s. Cohere's free trial key = 1,000 calls/month across the Command line.
+
+Last reviewed: 2026-08-21.
 """
 
 from __future__ import annotations
@@ -26,26 +41,6 @@ from __future__ import annotations
 from typing import Any
 
 PRESETS: list[dict[str, Any]] = [
-    {
-        "provider": "dashscope",
-        "name": "DashScope (Alibaba Qwen)",
-        "icon": "🟠",
-        "env_var": "DASHSCOPE_API_KEY",
-        "signup_url": "https://www.alibabacloud.com/help/en/model-studio/",
-        "free_tier": True,
-        "suggested": {"max_rpm": 30, "max_rpd": 1500},
-        "note": (
-            "Journava's hero model — it is what makes the Alibaba story real. "
-            "The 3.7 series is current; the unversioned aliases track the latest."
-        ),
-        "models": [
-            {"value": "dashscope/qwen3.7-max", "label": "Qwen3.7 Max", "tag": "strongest"},
-            {"value": "dashscope/qwen3.7-plus", "label": "Qwen3.7 Plus", "tag": "recommended"},
-            {"value": "dashscope/qwen-plus", "label": "Qwen Plus (latest alias)"},
-            {"value": "dashscope/qwen-turbo", "label": "Qwen Turbo", "tag": "fastest"},
-            {"value": "dashscope/qwen-max", "label": "Qwen Max (latest alias)"},
-        ],
-    },
     {
         "provider": "groq",
         "name": "Groq",
@@ -55,33 +50,15 @@ PRESETS: list[dict[str, Any]] = [
         "free_tier": True,
         "suggested": {"max_rpm": 28, "max_rpd": 14000},
         "note": (
-            "Very fast, generous free tier. Groq shut down every Llama model on "
-            "2026-08-16 — use GPT-OSS or Qwen3.6, or press Load live models."
+            "Very fast, genuinely free (30 rpm / 14.4k rpd, no card). The whole "
+            "catalogue is on the free tier — GPT-OSS, Llama, Qwen3, Kimi."
         ),
         "models": [
-            {
-                "value": "groq/openai/gpt-oss-120b",
-                "label": "GPT-OSS 120B",
-                "tag": "recommended",
-            },
+            {"value": "groq/openai/gpt-oss-120b", "label": "GPT-OSS 120B", "tag": "recommended"},
             {"value": "groq/openai/gpt-oss-20b", "label": "GPT-OSS 20B", "tag": "fastest"},
-            {"value": "groq/qwen/qwen3.6-27b", "label": "Qwen3.6 27B"},
-            {"value": "groq/groq/compound", "label": "Compound", "tag": "agentic"},
-            {"value": "groq/groq/compound-mini", "label": "Compound Mini"},
-        ],
-    },
-    {
-        "provider": "gemini",
-        "name": "Google Gemini",
-        "icon": "🔷",
-        "env_var": "GEMINI_API_KEY",
-        "signup_url": "https://aistudio.google.com/apikey",
-        "free_tier": True,
-        "suggested": {"max_rpm": 15, "max_rpd": 1500},
-        "models": [
-            {"value": "gemini/gemini-2.0-flash", "label": "Gemini 2.0 Flash", "tag": "recommended"},
-            {"value": "gemini/gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
-            {"value": "gemini/gemini-2.5-pro", "label": "Gemini 2.5 Pro", "tag": "strongest"},
+            {"value": "groq/llama-3.3-70b-versatile", "label": "Llama 3.3 70B"},
+            {"value": "groq/qwen/qwen3-32b", "label": "Qwen3 32B"},
+            {"value": "groq/moonshotai/kimi-k2-instruct", "label": "Kimi K2", "tag": "agentic"},
         ],
     },
     {
@@ -91,50 +68,37 @@ PRESETS: list[dict[str, Any]] = [
         "env_var": "OPENROUTER_API_KEY",
         "signup_url": "https://openrouter.ai/keys",
         "free_tier": True,
-        "suggested": {"max_rpm": 20, "max_rpd": 1000},
-        "note": "One key, many models. The `:free` variants cost nothing.",
+        "suggested": {"max_rpm": 20, "max_rpd": 200},
+        "note": (
+            "One key, many models; `:free` variants cost nothing (20 rpm / 200 rpd). "
+            "The free roster changes weekly — press Load live models. Heads-up: the "
+            "free DeepSeek/Gemini/Mistral variants were removed, so those `:free` "
+            "slugs now 404."
+        ),
         "models": [
-            {
-                "value": "openrouter/deepseek/deepseek-chat-v3.1:free",
-                "label": "DeepSeek V3.1",
-                "tag": "free",
-            },
-            {
-                "value": "openrouter/openai/gpt-oss-120b:free",
-                "label": "GPT-OSS 120B",
-                "tag": "free",
-            },
-            {
-                "value": "openrouter/qwen/qwen3-235b-a22b:free",
-                "label": "Qwen3 235B",
-                "tag": "free",
-            },
-            {"value": "openrouter/anthropic/claude-sonnet-4.5", "label": "Claude Sonnet 4.5"},
+            {"value": "openrouter/openai/gpt-oss-20b:free", "label": "GPT-OSS 20B", "tag": "free"},
+            {"value": "openrouter/qwen/qwen3-coder:free", "label": "Qwen3 Coder", "tag": "free"},
+            {"value": "openrouter/nvidia/nemotron-nano-9b-v2:free", "label": "Nemotron Nano 9B", "tag": "free"},
+            {"value": "openrouter/openai/gpt-4o-mini", "label": "GPT-4o mini", "tag": "cheap"},
         ],
     },
     {
-        "provider": "cerebras",
-        "name": "Cerebras",
-        "icon": "🧠",
-        "env_var": "CEREBRAS_API_KEY",
-        "signup_url": "https://cloud.cerebras.ai/",
+        "provider": "huggingface",
+        "name": "Hugging Face",
+        "icon": "🤗",
+        "env_var": "HUGGINGFACE_API_KEY",
+        "signup_url": "https://huggingface.co/settings/tokens",
         "free_tier": True,
-        "suggested": {"max_rpm": 30, "max_rpd": 14400},
+        "suggested": {"max_rpm": 10, "max_rpd": 1000},
+        "note": (
+            "Serverless Inference Providers with a monthly free credit. Use "
+            "`huggingface/<repo-id>`; availability depends on which providers host "
+            "the model — Load live models to confirm."
+        ),
         "models": [
-            {"value": "cerebras/llama-3.3-70b", "label": "Llama 3.3 70B", "tag": "recommended"},
-            {"value": "cerebras/qwen-3-32b", "label": "Qwen3 32B"},
-        ],
-    },
-    {
-        "provider": "deepseek",
-        "name": "DeepSeek",
-        "icon": "🐋",
-        "env_var": "DEEPSEEK_API_KEY",
-        "signup_url": "https://platform.deepseek.com/api_keys",
-        "free_tier": False,
-        "models": [
-            {"value": "deepseek/deepseek-chat", "label": "DeepSeek Chat", "tag": "cheap"},
-            {"value": "deepseek/deepseek-reasoner", "label": "DeepSeek Reasoner"},
+            {"value": "huggingface/meta-llama/Llama-3.3-70B-Instruct", "label": "Llama 3.3 70B", "tag": "recommended"},
+            {"value": "huggingface/Qwen/Qwen2.5-72B-Instruct", "label": "Qwen2.5 72B"},
+            {"value": "huggingface/mistralai/Mistral-7B-Instruct-v0.3", "label": "Mistral 7B", "tag": "fast"},
         ],
     },
     {
@@ -144,9 +108,13 @@ PRESETS: list[dict[str, Any]] = [
         "env_var": "MISTRAL_API_KEY",
         "signup_url": "https://console.mistral.ai/api-keys/",
         "free_tier": True,
+        "suggested": {"max_rpm": 1, "max_rpd": 500},
+        "note": "Free 'Experiment' tier — every model at ~1 req/s, ~1B tokens/month. Evaluation only.",
         "models": [
-            {"value": "mistral/mistral-small-latest", "label": "Mistral Small", "tag": "free tier"},
-            {"value": "mistral/mistral-large-latest", "label": "Mistral Large"},
+            {"value": "mistral/mistral-small-latest", "label": "Mistral Small", "tag": "free"},
+            {"value": "mistral/open-mistral-nemo", "label": "Mistral Nemo", "tag": "fast"},
+            {"value": "mistral/mistral-large-latest", "label": "Mistral Large", "tag": "strongest"},
+            {"value": "mistral/codestral-latest", "label": "Codestral", "tag": "coding"},
         ],
     },
     {
@@ -156,9 +124,26 @@ PRESETS: list[dict[str, Any]] = [
         "env_var": "COHERE_API_KEY",
         "signup_url": "https://dashboard.cohere.com/api-keys",
         "free_tier": True,
+        "suggested": {"max_rpm": 20, "max_rpd": 1000},
+        "note": "Free trial key — 1,000 calls/month, 20 chat req/min. Not for production use.",
         "models": [
-            {"value": "cohere/command-r-plus", "label": "Command R+"},
+            {"value": "cohere/command-a-03-2025", "label": "Command A (111B)", "tag": "strongest"},
+            {"value": "cohere/command-r-plus", "label": "Command R+", "tag": "recommended"},
             {"value": "cohere/command-r", "label": "Command R", "tag": "cheap"},
+            {"value": "cohere/command-r7b-12-2024", "label": "Command R7B", "tag": "fast"},
+        ],
+    },
+    {
+        "provider": "deepseek",
+        "name": "DeepSeek",
+        "icon": "🐋",
+        "env_var": "DEEPSEEK_API_KEY",
+        "signup_url": "https://platform.deepseek.com/api_keys",
+        "free_tier": False,
+        "note": "No free tier, but very cheap. V3 chat + R1 reasoner.",
+        "models": [
+            {"value": "deepseek/deepseek-chat", "label": "DeepSeek V3 (chat)", "tag": "cheap"},
+            {"value": "deepseek/deepseek-reasoner", "label": "DeepSeek R1 (reasoner)"},
         ],
     },
     {
@@ -168,34 +153,12 @@ PRESETS: list[dict[str, Any]] = [
         "env_var": "OPENAI_API_KEY",
         "signup_url": "https://platform.openai.com/api-keys",
         "free_tier": False,
+        "note": "No free tier. The mini/nano models are cheap and reliable.",
         "models": [
             {"value": "openai/gpt-4o-mini", "label": "GPT-4o mini", "tag": "cheap"},
-            {"value": "openai/gpt-4o", "label": "GPT-4o"},
-        ],
-    },
-    {
-        "provider": "anthropic",
-        "name": "Anthropic",
-        "icon": "🅰️",
-        "env_var": "ANTHROPIC_API_KEY",
-        "signup_url": "https://console.anthropic.com/settings/keys",
-        "free_tier": False,
-        "models": [
-            {"value": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet 4.5"},
-            {"value": "anthropic/claude-haiku-4-5", "label": "Claude Haiku 4.5", "tag": "fast"},
-        ],
-    },
-    {
-        "provider": "ollama",
-        "name": "Ollama (local)",
-        "icon": "🦙",
-        "env_var": None,
-        "signup_url": "https://ollama.com/",
-        "free_tier": True,
-        "note": "No key needed. Must be running locally; used as the last resort.",
-        "models": [
-            {"value": "ollama/llama3.2", "label": "Llama 3.2", "tag": "no key"},
-            {"value": "ollama/qwen2.5", "label": "Qwen 2.5", "tag": "no key"},
+            {"value": "openai/gpt-4.1-mini", "label": "GPT-4.1 mini", "tag": "recommended"},
+            {"value": "openai/gpt-4.1-nano", "label": "GPT-4.1 nano", "tag": "cheapest"},
+            {"value": "openai/o4-mini", "label": "o4-mini", "tag": "reasoning"},
         ],
     },
 ]

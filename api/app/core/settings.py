@@ -31,13 +31,19 @@ class Settings(BaseSettings):
     cache_ttl_short: int = 60 * 60 * 6  # 6h
     cache_ttl_long: int = 60 * 60 * 24  # 24h
 
-    # --- LLM (LiteLLM gateway; Qwen is the hero model) ---
-    llm_primary_model: str = "dashscope/qwen-plus"
-    llm_fallback_models: str = "gemini/gemini-2.0-flash,groq/llama-3.3-70b-versatile"
+    # --- LLM (LiteLLM gateway) ---
+    # Defaults stay within the quick-pick roster (Groq/OpenRouter/Mistral/…) and
+    # its free tiers. These are only the fallback when no DB provider is
+    # configured; the Engine's live providers + priority still take precedence.
+    llm_primary_model: str = "groq/openai/gpt-oss-120b"
+    llm_fallback_models: str = (
+        "groq/openai/gpt-oss-20b,openrouter/openai/gpt-oss-20b:free,mistral/mistral-small-latest"
+    )
     llm_temperature: float = 0.3
     llm_timeout_seconds: int = 60
     #: Multimodal model used by the assistant when the user attaches an image.
-    llm_vision_model: str = "gemini/gemini-2.0-flash"
+    #: Pixtral is on Mistral's free tier, keeping vision within the roster.
+    llm_vision_model: str = "mistral/pixtral-12b-2409"
 
     #: Public origin used to build shareable plan links sent to clients (Telegram
     #: needs an absolute URL). Override with PUBLIC_BASE_URL in production.
