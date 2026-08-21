@@ -21,6 +21,7 @@ from app.auth import store as auth_store
 from app.auth.deps import current_user_id
 from app.auth.middleware import AuthMiddleware
 from app.auth.router import router as auth_router
+from app.agency import router as agency_router
 from app.assistant import router as assistant_router
 from app.runtime.router import router as runtime_router
 from app.supplier.router import router as supplier_router
@@ -95,6 +96,7 @@ app.include_router(auth_router)
 app.include_router(runtime_router)
 app.include_router(supplier_router)
 app.include_router(assistant_router)
+app.include_router(agency_router)
 
 
 # --------------------------------------------------------------------------- #

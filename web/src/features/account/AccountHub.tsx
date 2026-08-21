@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { User, Building2, Cpu, KeyRound, Zap, type IconType } from "@/components/ui/icons";
+import { User, Building2, Cpu, KeyRound, Zap, TrendingUp, type IconType } from "@/components/ui/icons";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui";
 import { useAuth } from "@/providers/AuthProvider";
 import { Profile } from "@/features/profile/Profile";
 import { Integrations } from "@/features/account/Integrations";
+import { AgencyConsole } from "@/features/agency/AgencyConsole";
 import { SupplierPortal } from "@/features/supplier/SupplierPortal";
 import { EngineSettings } from "@/features/engine/EngineSettings";
 import { ApiVault } from "@/features/vault/ApiVault";
@@ -28,6 +29,9 @@ export function AccountHub() {
   const tabs: AccountTab[] = [
     { value: "profile", label: "Profile", icon: User, render: () => <Profile /> },
     { value: "integrate", label: "Integrate", icon: Zap, render: () => <Integrations /> },
+    ...(isAgency || isPlatformAdmin
+      ? [{ value: "agency", label: "Agency", icon: TrendingUp, render: () => <AgencyConsole /> }]
+      : []),
     ...(isAgency
       ? [{ value: "partner", label: "Partner", icon: Building2, render: () => <SupplierPortal /> }]
       : []),
