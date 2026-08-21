@@ -12,9 +12,11 @@ import {
   TrendingUp,
   Utensils,
 } from "@/components/ui/icons";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Button, OptionCard } from "@/components/ui";
+import { Money, CurrencySwitcher } from "@/components/ui/Money";
+import { useCurrency } from "@/lib/money";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
 import { FlightResults } from "@/features/flights/FlightResults";
@@ -55,6 +57,21 @@ export function ScopedResults({
   const panels = (results._scope?.panels?.length ? results._scope.panels : scope.panels) ?? [];
   const agents = results._scope?.agents ?? scope.agents;
 
+  // Default the display currency to the plan's native currency (once), so prices
+  // aren't converted until the traveller picks a different one from the switcher.
+  const setDisplay = useCurrency((s) => s.setDisplay);
+  const initedCurrency = useRef(false);
+  useEffect(() => {
+    if (initedCurrency.current) return;
+    const flightCur = results.flight?.options?.find((o) => o.price_currency)?.price_currency;
+    const budgetCur = (results.budget?.data as Record<string, unknown> | undefined)?.currency;
+    const cur = flightCur ?? (typeof budgetCur === "string" ? budgetCur : undefined);
+    if (cur) {
+      setDisplay(cur.toUpperCase());
+      initedCurrency.current = true;
+    }
+  }, [results, setDisplay]);
+
   return (
     <div className="mx-auto w-full max-w-5xl">
       <div className="flex flex-wrap items-center gap-2 pt-2 pb-4">
@@ -67,7 +84,7 @@ export function ScopedResults({
           Ask again
         </Button>
         <div className="min-w-0 flex-1" />
-        <Badge variant="brand">{scope.label}</Badge>
+        <CurrencySwitcher className="h-8 w-[6.5rem] text-xs" />
         <Badge>{agents.length} agents ran</Badge>
       </div>
 
@@ -405,9 +422,11 @@ function BudgetPanel({ result }: { result?: AgentPlanResult }) {
               <div key={key} className="text-center">
                 <p className="text-xs text-[var(--muted)]">{key.replace(/_/g, " ")}</p>
                 <p className="text-sm font-semibold">
-                  {key === "nights"
-                    ? (data.breakdown?.[key] ?? "—")
-                    : `${currency} ${Number(data.breakdown?.[key] ?? 0).toLocaleString()}`}
+                  {key === "nights" ? (
+                    (data.breakdown?.[key] ?? "—")
+                  ) : (
+                    <Money amount={data.breakdown?.[key] ?? 0} currency={currency} />
+                  )}
                 </p>
               </div>
             ))}
@@ -821,33 +840,49 @@ function DataPanel({ result, title }: { result?: AgentPlanResult; title: string 
     ? (data.sources as Array<{ title?: string; url: string }>)
     : [];
   const videos = Array.isArray(data.videos) ? (data.videos as VideoReview[]) : [];
+  const HIDDEN = ["destination", "sources", "videos", "hero_image"];
   const entries = Object.entries(data).filter(
     ([key, value]) =>
-      key !== "destination" &&
-      key !== "sources" &&
-      key !== "videos" &&
+      !HIDDEN.includes(key) &&
       value !== null &&
       value !== "" &&
       !(Array.isArray(value) && value.length === 0),
   );
+  // Scalars render compactly in a 2-column grid; nested arrays/objects get their
+  // own full-width block so a list like shopping "markets" reads as cards, not
+  // as a wall of raw JSON.
+  const isComplex = (v: unknown) => v !== null && typeof v === "object";
+  const simple = entries.filter(([, v]) => !isComplex(v));
+  const complex = entries.filter(([, v]) => isComplex(v));
 
   return (
     <section>
       <h3 className="mb-2 text-lg font-semibold">{title}</h3>
       <div className="surface-card space-y-3 p-4">
         <p className="text-sm text-[var(--muted)]">{result.summary}</p>
-        {entries.length > 0 && (
+
+        {simple.length > 0 && (
           <dl className="grid gap-2 sm:grid-cols-2">
-            {entries.map(([key, value]) => (
+            {simple.map(([key, value]) => (
               <div key={key} className="min-w-0">
                 <dt className="text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
                   {key.replace(/_/g, " ")}
                 </dt>
-                <dd className="break-words text-xs">{renderValue(value)}</dd>
+                <dd className="break-words text-xs">{String(value)}</dd>
               </div>
             ))}
           </dl>
         )}
+
+        {complex.map(([key, value]) => (
+          <div key={key} className="min-w-0">
+            <p className="mb-1 text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
+              {key.replace(/_/g, " ")}
+            </p>
+            <FieldValue value={value} />
+          </div>
+        ))}
+
         {videos.length > 0 && <VideoCarousel videos={videos} />}
         {sources.length > 0 && (
           <div className="min-w-0 space-y-1">
@@ -880,20 +915,70 @@ function DataPanel({ result, title }: { result?: AgentPlanResult; title: string 
   );
 }
 
-function renderValue(value: unknown): string {
-  if (value === null || value === undefined) return "—";
+/** Render a free-form agent value: a list of objects becomes cards, a list of
+ *  scalars becomes chips, an object becomes labelled fields, a scalar is text. */
+function FieldValue({ value }: { value: unknown }) {
   if (Array.isArray(value)) {
-    return value
-      .map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item)))
-      .join(", ");
+    const objs = value.filter((v) => v !== null && typeof v === "object" && !Array.isArray(v));
+    if (objs.length === value.length && objs.length > 0) {
+      return (
+        <ul className="space-y-1.5">
+          {objs.map((item, i) => (
+            <li key={i} className="rounded-[var(--r-sm)] bg-[var(--bg)] p-2">
+              <ObjectCard obj={item as Record<string, unknown>} />
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <div className="flex flex-wrap gap-1">
+        {value.map((v, i) => (
+          <span
+            key={i}
+            className="rounded-[var(--r-pill)] bg-[var(--bg)] px-2 py-0.5 text-[0.7rem] break-words"
+          >
+            {typeof v === "object" ? JSON.stringify(v) : String(v)}
+          </span>
+        ))}
+      </div>
+    );
   }
-  if (typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== null && entry !== "")
-      .map(([key, entry]) => `${key}: ${entry}`)
-      .join(" · ");
+  if (value !== null && typeof value === "object") {
+    return (
+      <div className="rounded-[var(--r-sm)] bg-[var(--bg)] p-2">
+        <ObjectCard obj={value as Record<string, unknown>} />
+      </div>
+    );
   }
-  return String(value);
+  return <span className="break-words text-xs">{String(value)}</span>;
+}
+
+/** One object rendered as an optional bold name + a row of labelled fields. */
+function ObjectCard({ obj }: { obj: Record<string, unknown> }) {
+  const entries = Object.entries(obj).filter(
+    ([, v]) => v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
+  );
+  const nameKey = ["name", "title", "label", "mode", "primary"].find(
+    (k) => typeof obj[k] === "string" && obj[k],
+  );
+  const name = nameKey ? String(obj[nameKey]) : null;
+  const rest = entries.filter(([k]) => k !== nameKey);
+  return (
+    <div className="min-w-0">
+      {name && <p className="break-words text-xs font-medium">{name}</p>}
+      {rest.length > 0 && (
+        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[0.7rem] text-[var(--muted)]">
+          {rest.map(([k, v]) => (
+            <span key={k} className="break-words">
+              <span className="uppercase tracking-wide opacity-70">{k.replace(/_/g, " ")}</span>{" "}
+              {typeof v === "object" ? JSON.stringify(v) : String(v)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export { OptionCard };

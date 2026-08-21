@@ -8,6 +8,7 @@ import {
   ShoppingCart,
 } from "@/components/ui/icons";
 import { Badge, Button, NumberField, Select } from "@/components/ui";
+import { Money } from "@/components/ui/Money";
 import { SourceTrustRow } from "@/components/ui/SourceBadge";
 import { cn } from "@/lib/cn";
 import type { AgentPlanResult, PlanOption } from "@/lib/types";
@@ -381,7 +382,7 @@ function FlightCard({
         {option.price_amount != null && (
           <div className="shrink-0 text-right">
             <p className="font-[family-name:var(--font-display)] text-lg font-semibold">
-              {option.price_currency} {Number(option.price_amount).toLocaleString()}
+              <Money amount={option.price_amount} currency={option.price_currency} />
             </p>
           </div>
         )}

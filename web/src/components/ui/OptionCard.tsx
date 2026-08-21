@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
+import { Money } from "./Money";
 import type { PlanOption } from "@/stores/planStore";
 
 interface OptionCardProps {
@@ -85,7 +86,7 @@ export function OptionCard({ option, className }: OptionCardProps) {
       {/* Price */}
       {option.price_amount != null && (
         <p className="text-lg font-bold text-[var(--brand-500)]">
-          {option.price_currency ?? "MYR"} {Number(option.price_amount).toLocaleString()}
+          <Money amount={option.price_amount} currency={option.price_currency} />
         </p>
       )}
 
