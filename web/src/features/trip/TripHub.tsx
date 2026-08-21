@@ -25,6 +25,7 @@ import {
   confirm,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { usePlanStore, type PlanResults } from "@/stores/planStore";
 import { MyTrip } from "@/features/trip/MyTrip";
 import { History } from "@/features/history/History";
@@ -120,7 +121,10 @@ function TripTabs({ onOpen }: { onOpen: (r: PlanResults) => void }) {
 
 // --------------------------------------------------------------------------- //
 
-type SavedTrip = { id: string; title: string; destination: string | null; scope: string; created_at: string | null };
+type SavedTrip = {
+  id: string; title: string; destination: string | null; scope: string; created_at: string | null;
+  summary?: TripSummary | null;
+};
 
 function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   const setResults = usePlanStore((s) => s.setResults);
@@ -237,6 +241,8 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
           when={formatWhen(t.created_at)}
           loading={opening === t.id}
           thumbKey={t.destination || undefined}
+          summary={t.summary}
+          savedId={t.id}
           onClick={() => void openTrip(t)}
           onDelete={() => void deleteTrip(t)}
         />
@@ -244,6 +250,19 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
     </div>
   );
 }
+
+type TripSummary = {
+  flights: { count: number; atlas: number; research: number; bookable: number; picked: boolean };
+  places: { suggested: number; scheduled: number };
+  eats: { suggested: number };
+};
+type ReplanAlt = { id: string; title: string; price_amount: number | null; price_currency: string | null; bookable: boolean; within_budget: boolean | null };
+type ReplanResult = {
+  status: string; route: string;
+  disrupted: { title: string | null; price_amount: number | null; price_currency: string | null };
+  alternatives: ReplanAlt[];
+  budget: { amount: number | null; currency: string; within_budget_count: number; total: number };
+};
 
 function TripCard({
   title,
@@ -254,6 +273,8 @@ function TripCard({
   badge,
   loading,
   thumbKey,
+  summary,
+  savedId,
   onClick,
   onDelete,
 }: {
@@ -265,11 +286,11 @@ function TripCard({
   badge?: string;
   loading?: boolean;
   thumbKey?: string;
+  summary?: TripSummary | null;
+  savedId?: string;
   onClick: () => void;
   onDelete?: () => void;
 }) {
-  // Fetch a real, compressed destination photo (cached), falling back to the
-  // colour band while it loads or if none is found.
   const [thumb, setThumb] = useState<string | null>(thumbKey ? thumbCache.get(thumbKey) ?? null : null);
   useEffect(() => {
     if (!thumbKey || thumbCache.has(thumbKey)) return;
@@ -284,14 +305,25 @@ function TripCard({
     return () => { cancelled = true; };
   }, [thumbKey]);
 
+  const [replanning, setReplanning] = useState(false);
+  const [replan, setReplan] = useState<ReplanResult | null>(null);
+  const runReplan = async () => {
+    if (!savedId) return;
+    setReplanning(true);
+    try {
+      setReplan(await api.post<ReplanResult>("/trip/replan-flights", { saved_id: savedId, simulate: "delayed" }));
+    } catch {
+      toast.error("Couldn't re-plan flights.");
+    } finally {
+      setReplanning(false);
+    }
+  };
+
+  const f = summary?.flights;
   return (
     <div className="surface-card group relative overflow-hidden p-0 transition-colors hover:border-[var(--brand-400)]">
-      <button
-        onClick={onClick}
-        disabled={loading}
-        className="block w-full text-left disabled:opacity-70"
-      >
-        {/* Destination thumbnail — real photo when found, colour band otherwise */}
+      {/* Banner is the open target */}
+      <button onClick={onClick} disabled={loading} className="block w-full text-left disabled:opacity-70">
         <div className="relative flex h-28 items-end overflow-hidden p-3" style={{ background: band }}>
           {thumb && <img src={thumb} alt="" className="absolute inset-0 h-full w-full object-cover" />}
           <span className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
@@ -305,20 +337,76 @@ function TripCard({
             </span>
           )}
         </div>
-        <div className="p-3">
-          {subtitle && <p className="line-clamp-2 text-sm font-medium">{subtitle}</p>}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {typeof optionCount === "number" && optionCount > 0 && (
-              <Badge>{optionCount} options</Badge>
+        {subtitle && <p className="line-clamp-2 px-3 pt-3 text-sm font-medium">{subtitle}</p>}
+      </button>
+
+      {/* Details + interactive re-plan (outside the open-button) */}
+      <div className="space-y-1.5 px-3 pb-3 pt-2">
+        {f && f.count > 0 && (
+          <p className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+            <Plane className="h-3 w-3 text-[var(--brand-500)]" />
+            {f.count} flights ({f.atlas} Atlas · {f.research} research) —{" "}
+            <span className="font-medium text-[var(--warning)]">{f.picked ? "picked" : "none picked yet"}</span>
+          </p>
+        )}
+        {summary && (summary.places.suggested > 0 || summary.eats.suggested > 0) && (
+          <p className="text-xs text-[var(--muted)]">
+            ◆ {summary.places.suggested} places · {summary.places.scheduled} scheduled · 🍽 {summary.eats.suggested} to eat
+            {summary.places.suggested > summary.places.scheduled && (
+              <span className="text-[var(--warning)]"> · {summary.places.suggested - summary.places.scheduled} to pick</span>
             )}
-            {when && (
-              <span className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">
-                <Clock className="h-3 w-3" /> {when}
-              </span>
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {typeof optionCount === "number" && optionCount > 0 && <Badge>{optionCount} options</Badge>}
+          {when && (
+            <span className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">
+              <Clock className="h-3 w-3" /> {when}
+            </span>
+          )}
+        </div>
+
+        {savedId && f && f.count > 0 && (
+          <div className="pt-1">
+            {!replan ? (
+              <button
+                onClick={runReplan}
+                disabled={replanning}
+                className="flex items-center gap-1.5 rounded-[var(--r-md)] border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--brand-600)] hover:bg-[var(--bg)] disabled:opacity-60"
+              >
+                {replanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plane className="h-3.5 w-3.5" />}
+                {replanning ? "Re-planning…" : "Flight delayed? Re-plan"}
+              </button>
+            ) : (
+              <div className="rounded-[var(--r-md)] border-l-2 border-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-2.5">
+                <p className="text-xs font-semibold text-[var(--warning)]">
+                  ⚠ {replan.disrupted.title || "Flight"} {replan.status} on {replan.route}
+                </p>
+                <p className="mt-0.5 text-[0.65rem] text-[var(--muted)]">
+                  {replan.budget.amount != null
+                    ? `${replan.budget.within_budget_count}/${replan.budget.total} alternatives within your ${replan.budget.currency} ${replan.budget.amount.toLocaleString()} budget`
+                    : `${replan.alternatives.length} alternatives found`}
+                </p>
+                <div className="mt-1.5 space-y-1">
+                  {replan.alternatives.slice(0, 3).map((a) => (
+                    <div key={a.id} className="flex items-center gap-1.5 text-[0.7rem]">
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", a.within_budget === false ? "bg-[var(--warning)]" : "bg-[var(--success)]")} />
+                      <span className="min-w-0 flex-1 truncate">{a.title}</span>
+                      {a.price_amount != null && (
+                        <span className="shrink-0 font-medium">{a.price_currency} {Number(a.price_amount).toLocaleString()}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setReplan(null)} className="mt-1 text-[0.65rem] text-[var(--muted)] hover:underline">
+                  Dismiss
+                </button>
+              </div>
             )}
           </div>
-        </div>
-      </button>
+        )}
+      </div>
+
       {onDelete && (
         <button
           aria-label="Remove trip"
@@ -326,9 +414,9 @@ function TripCard({
             event.stopPropagation();
             onDelete();
           }}
-          className="absolute bottom-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-[var(--surface)]/90 text-[var(--muted)] opacity-0 shadow transition-opacity hover:text-[var(--danger)] group-hover:opacity-100"
+          className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/30 text-white/90 opacity-0 shadow backdrop-blur-sm transition-opacity hover:bg-[var(--danger)] group-hover:opacity-100"
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       )}
       {loading && (

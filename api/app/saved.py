@@ -6,8 +6,21 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from typing import Any
+
+
+def _json_safe(obj: Any) -> Any:
+    """Strip NaN/Infinity floats (Postgres JSONB rejects them) so any real
+    plan snapshot stores cleanly."""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -53,9 +66,36 @@ async def save(body: SaveRequest, request: Request) -> dict[str, Any]:
             """INSERT INTO saved_results (user_id, scope, kind, title, destination, snapshot)
                VALUES ($1, $2, $3, $4, $5, $6) RETURNING id""",
             uuid.UUID(uid) if uid else None, body.scope, kind, _title(body), dest,
-            json.dumps(body.results, default=str),
+            json.dumps(_json_safe(body.results), default=str),
         )
     return {"id": str(sid), "title": _title(body), "kind": kind}
+
+
+def _trip_summary(snap: dict[str, Any]) -> dict[str, Any]:
+    """A compact card summary from a trip snapshot — what's in the plan and
+    what still needs a choice — without shipping the whole snapshot."""
+    flight = snap.get("flight") or {}
+    fopts = flight.get("options") or []
+
+    def _src(o: dict[str, Any]) -> str:
+        return str(o.get("source") or (o.get("raw") or {}).get("source") or "")
+
+    research = (snap.get("research") or {}).get("options") or []
+    places = [o for o in research if o.get("kind") == "activity"]
+    eats = [o for o in research if o.get("kind") == "restaurant"]
+    scheduled = len((snap.get("itinerary") or {}).get("items") or [])
+    ranking = (flight.get("data") or {}).get("ranking") or {}
+    return {
+        "flights": {
+            "count": len(fopts),
+            "atlas": sum(1 for o in fopts if _src(o) == "atlas"),
+            "research": sum(1 for o in fopts if _src(o) == "camofox"),
+            "bookable": sum(1 for o in fopts if o.get("bookable")),
+            "picked": bool(ranking.get("chosen")),  # not chosen at plan time
+        },
+        "places": {"suggested": len(places), "scheduled": scheduled},
+        "eats": {"suggested": len(eats)},
+    }
 
 
 @router.get("")
@@ -67,18 +107,26 @@ async def list_saved(request: Request, kind: str = "result") -> dict[str, Any]:
     kind = kind if kind in ("result", "trip") else "result"
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, scope, kind, title, destination, created_at FROM saved_results "
+            "SELECT id, scope, kind, title, destination, created_at, snapshot FROM saved_results "
             "WHERE (user_id = $1 OR $1 IS NULL) AND kind = $2 ORDER BY created_at DESC LIMIT 100",
             uuid.UUID(uid) if uid else None, kind,
         )
-    return {
-        "saved": [
-            {"id": str(r["id"]), "scope": r["scope"], "kind": r["kind"], "title": r["title"],
-             "destination": r["destination"],
-             "created_at": r["created_at"].isoformat() if r.get("created_at") else None}
-            for r in rows
-        ]
-    }
+    out = []
+    for r in rows:
+        item = {
+            "id": str(r["id"]), "scope": r["scope"], "kind": r["kind"], "title": r["title"],
+            "destination": r["destination"],
+            "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+        }
+        if kind == "trip":
+            try:
+                snap = r["snapshot"]
+                snap = json.loads(snap) if isinstance(snap, str) else snap
+                item["summary"] = _trip_summary(snap or {})
+            except Exception:  # noqa: BLE001
+                item["summary"] = None
+        out.append(item)
+    return {"saved": out}
 
 
 @router.get("/{saved_id}")

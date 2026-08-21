@@ -381,6 +381,69 @@ async def build_itinerary(request: ItineraryBuild) -> dict[str, object]:
     return {"trip": updated}
 
 
+class ReplanFlights(BaseModel):
+    saved_id: str
+    simulate: str | None = None  # delayed | cancelled
+
+
+@app.post(f"{settings.api_prefix}/trip/replan-flights", tags=["trip"])
+async def replan_flights(request: ReplanFlights) -> dict[str, object]:
+    """Card-level re-plan: mark the picked/cheapest flight disrupted and surface
+    the plan's OTHER flights as alternatives, flagged within budget — instant,
+    from the saved snapshot (no re-crawl)."""
+    import json as _json
+    import uuid as _uuid
+
+    pool = await db.get_pool()
+    if pool is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT snapshot FROM saved_results WHERE id = $1", _uuid.UUID(request.saved_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    snap = row["snapshot"]
+    snap = _json.loads(snap) if isinstance(snap, str) else snap
+
+    flight = (snap or {}).get("flight") or {}
+    opts = flight.get("options") or []
+    route = (flight.get("data") or {}).get("route") or {}
+    resolved = ((snap or {}).get("chief") or {}).get("data", {}).get("resolved_request") or {}
+    budget_amt = resolved.get("budget_amount")
+    currency = resolved.get("budget_currency") or next(
+        (o.get("price_currency") for o in opts if o.get("price_currency")), "MYR"
+    )
+    priced = sorted((o for o in opts if o.get("price_amount") is not None), key=lambda o: float(o["price_amount"]))
+    status = request.simulate if request.simulate in ("delayed", "cancelled") else "delayed"
+    disrupted = priced[0] if priced else (opts[0] if opts else None)
+
+    def _within(o: dict) -> bool | None:
+        p = o.get("price_amount")
+        if budget_amt and p is not None:
+            return float(p) <= float(budget_amt)
+        return None
+
+    alts = [o for o in (priced or opts) if o is not disrupted][:6]
+    return {
+        "status": status,
+        "route": f"{route.get('origin', '')}→{route.get('destination', '')}",
+        "disrupted": {
+            "title": (disrupted or {}).get("title"),
+            "price_amount": (disrupted or {}).get("price_amount"),
+            "price_currency": (disrupted or {}).get("price_currency") or currency,
+        },
+        "alternatives": [
+            {"id": o.get("id"), "title": o.get("title"), "price_amount": o.get("price_amount"),
+             "price_currency": o.get("price_currency") or currency, "bookable": o.get("bookable", False),
+             "within_budget": _within(o)}
+            for o in alts
+        ],
+        "budget": {
+            "amount": float(budget_amt) if budget_amt else None, "currency": currency,
+            "within_budget_count": sum(1 for o in alts if _within(o) is True), "total": len(alts),
+        },
+    }
+
+
 @app.post(f"{settings.api_prefix}/trip/local-intel", tags=["trip"])
 async def trip_local_intel() -> dict[str, object]:
     """Crowd levels + best-times per place + social do's/don'ts for the trip."""
