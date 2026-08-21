@@ -43,6 +43,7 @@ import httpx
 
 from app.core.cache import cached
 from app.core.settings import settings
+from app.core.text import clean_str
 
 logger = logging.getLogger(__name__)
 
@@ -419,7 +420,10 @@ async def read_page(
                 finally:
                     await _close_tab(client, _base(), tab_id)
 
-        text = snapshot or ""
+        # Snapshots occasionally carry bytes that decode into lone surrogates,
+        # which later blow up JSON serialization (a single one 500'd GET /trip).
+        # Scrub at the source so no downstream agent inherits an unencodable str.
+        text = clean_str(snapshot or "")
         return {
             "url": url,
             "snapshot": text,

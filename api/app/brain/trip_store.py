@@ -22,6 +22,7 @@ from typing import Any
 from app.agents.schemas import TripRequest
 from app.brain import gnosion_client
 from app.core import db
+from app.core.text import scrub_surrogates
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,9 @@ def _trip_title(plan_results: dict[str, Any]) -> str:
 def save_trip(plan_results: dict[str, Any]) -> None:
     """Persist the latest plan result as the active trip (tiers 2 + 3, sync)."""
     global _active_trip
+    # Scrub lone surrogates from crawled text so the trip is always JSON-safe
+    # (one such char in a flight title used to 500 GET /trip).
+    plan_results = scrub_surrogates(plan_results)
     _active_trip = plan_results
     try:
         gnosion_client.remember(
@@ -154,7 +158,7 @@ def load_trip() -> dict[str, Any] | None:
                 raw = stored
             else:
                 raw = str(stored)
-            _active_trip = json.loads(raw)
+            _active_trip = scrub_surrogates(json.loads(raw))
             return _active_trip
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning("Could not parse stored trip: %s", exc)
@@ -183,8 +187,8 @@ async def load_trip_durable() -> dict[str, Any] | None:
         if row and row["plan_snapshot"]:
             snapshot = row["plan_snapshot"]
             parsed = json.loads(snapshot) if isinstance(snapshot, str) else snapshot
-            save_trip(parsed)
-            return parsed
+            save_trip(parsed)  # scrubs surrogates + refreshes the cache
+            return _active_trip
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not load trip from Postgres: %s", exc)
     return None
