@@ -426,6 +426,110 @@ function Chip({ children }: { children: ReactNode }) {
   return <span className="rounded-[var(--r-pill)] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1">{children}</span>;
 }
 
+/* -------------------------------------------------------------- Clients */
+
+type Client = { id: string; name: string; email: string | null; telegram_chat_id: string | null; notes: string | null };
+type ClientRun = { dest: string; jobId?: string; status?: string; share_url?: string; delivered?: boolean; detail?: string };
+
+async function pollJob(id: string): Promise<string> {
+  for (let i = 0; i < 100; i++) {
+    try {
+      const r = await api.get<{ status?: string }>(`/jobs/${id}`);
+      const s = r.status ?? "";
+      if (["done", "completed", "failed", "error"].includes(s)) return s;
+    } catch { /* keep polling */ }
+    await new Promise((res) => setTimeout(res, 3000));
+  }
+  return "timeout";
+}
+
+export function ConsoleClients() {
+  const { data, loading, reload } = useGet<{ clients: Client[] }>("/agency/clients");
+  const [form, setForm] = useState({ name: "", email: "", telegram_chat_id: "", notes: "" });
+  const [adding, setAdding] = useState(false);
+  const [runs, setRuns] = useState<Record<string, ClientRun>>({});
+  const [busy, setBusy] = useState("");
+
+  const clients = data?.clients ?? [];
+  const setRun = (id: string, patch: Partial<ClientRun>) => setRuns((r) => ({ ...r, [id]: { ...(r[id] ?? { dest: "" }), ...patch } }));
+
+  const addClient = async () => {
+    if (!form.name.trim()) return toast.info("Name is required.");
+    setAdding(true);
+    try { await api.post("/agency/clients", form); toast.success("Client added"); setForm({ name: "", email: "", telegram_chat_id: "", notes: "" }); reload(); }
+    catch { toast.error("Could not add client"); } finally { setAdding(false); }
+  };
+  const buildPackage = async (id: string) => {
+    const dest = runs[id]?.dest?.trim();
+    if (!dest) return toast.info("Enter a destination first.");
+    setBusy("plan:" + id); setRun(id, { status: "running", share_url: undefined });
+    try {
+      const r = await api.post<{ job?: { id: string } }>(`/agency/clients/${id}/plan`, { destination: dest });
+      const jid = r.job?.id;
+      if (!jid) throw new Error("no job");
+      setRun(id, { jobId: jid });
+      const status = await pollJob(jid);
+      setRun(id, { status });
+      toast[status === "done" ? "success" : "info"](status === "done" ? "Package ready — compile & send" : `Plan ${status}`);
+    } catch { toast.error("Planning failed"); setRun(id, { status: "error" }); } finally { setBusy(""); }
+  };
+  const deliverPackage = async (id: string) => {
+    const jobId = runs[id]?.jobId;
+    if (!jobId) return;
+    setBusy("deliver:" + id);
+    try {
+      const r = await api.post<{ error?: string; share_url?: string; delivered?: boolean; detail?: string }>("/agency/deliver", { client_id: id, job_id: jobId });
+      if (r.error) { toast.info(r.error); return; }
+      setRun(id, { share_url: r.share_url, delivered: r.delivered, detail: r.detail });
+      toast[r.delivered ? "success" : "info"](r.delivered ? "Sent to client on Telegram" : "PDF + link ready");
+    } catch { toast.error("Delivery failed"); } finally { setBusy(""); }
+  };
+
+  return (
+    <div>
+      <PageHead icon={Sparkles} title="Clients" subtitle="Plan a full package for a client, then send the PDF + an interactive link over Telegram." />
+
+      <Card className="mb-4">
+        <div className="mb-3 text-sm font-semibold">Add a client</div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input className={inputCls} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <input className={inputCls} placeholder="Email (optional)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <input className={inputCls} placeholder="Telegram chat id" value={form.telegram_chat_id} onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })} />
+          <input className={inputCls} placeholder="Notes (party size, prefs)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+        </div>
+        <div className="mt-2"><Button onClick={addClient} loading={adding}>Add client</Button></div>
+      </Card>
+
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
+        : !clients.length ? <Card><p className="text-sm text-[var(--muted)]">No clients yet — add one above.</p></Card>
+          : clients.map((c) => {
+            const run = runs[c.id] ?? { dest: "" };
+            return (
+              <Card key={c.id} className="mb-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="font-semibold">{c.name}</span>
+                  {c.telegram_chat_id ? <Badge variant="success">Telegram linked</Badge> : <Badge variant="warning">no Telegram</Badge>}
+                  {c.notes && <span className="text-xs text-[var(--muted)]">{c.notes}</span>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input className={cn(inputCls, "max-w-[16rem]")} placeholder="Destination (e.g. Langkawi)" value={run.dest} onChange={(e) => setRun(c.id, { dest: e.target.value })} />
+                  <Button size="sm" onClick={() => buildPackage(c.id)} loading={busy === "plan:" + c.id}><Sparkles className="h-3.5 w-3.5" /> Build full package</Button>
+                  {run.status === "done" && <Button size="sm" variant="secondary" onClick={() => deliverPackage(c.id)} loading={busy === "deliver:" + c.id}>Compile &amp; send</Button>}
+                </div>
+                {run.status && run.status !== "done" && <p className="mt-2 text-xs text-[var(--muted)]">{run.status === "running" ? "Agents are building the package…" : `Plan ${run.status}`}</p>}
+                {run.share_url && (
+                  <div className="mt-2 rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">
+                    <p>{run.delivered ? "✅ Sent to the client on Telegram." : `PDF ready — Telegram: ${run.detail}`}</p>
+                    <p className="mt-1 text-xs">Interactive link: <a href={run.share_url} target="_blank" rel="noreferrer" className="text-[var(--brand-600)] underline">{run.share_url}</a></p>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- Listings */
 
 type SupplierListing = { id: string; title: string; price_amount: number | null; price_currency: string; capacity: number | null; perks: string[]; available: boolean };

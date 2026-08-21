@@ -34,6 +34,9 @@ dependencies = [
     "pypdf>=5,<7",
     # Multipart form parsing for file uploads (FastAPI UploadFile).
     "python-multipart>=0.0.9,<1",
+    # PDF *generation* — compiled trip plans + hotel receipts/confirmations.
+    # Pure-Python, no native build (unlike weasyprint).
+    "reportlab>=4,<5",
 ]
 
 [project.optional-dependencies]

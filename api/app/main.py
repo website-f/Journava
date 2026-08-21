@@ -29,6 +29,7 @@ from app.itinerary import router as itinerary_router
 from app.monitor import router as monitor_router
 from app.policy import router as policy_router
 from app.runtime.router import router as runtime_router
+from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
 from app.supplier.router import router as supplier_router
 from app.brain import bookings, gnosion_client, history, outcomes, trip_store
@@ -109,6 +110,7 @@ app.include_router(monitor_router)
 app.include_router(escrow_router)
 app.include_router(itinerary_router)
 app.include_router(firewall_router)
+app.include_router(shared_router)
 
 
 # --------------------------------------------------------------------------- #

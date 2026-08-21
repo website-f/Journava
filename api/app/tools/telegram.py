@@ -51,6 +51,41 @@ async def send(token: str, chat_id: str, text: str) -> tuple[bool, str]:
         return False, f"Could not reach Telegram: {exc}"
 
 
+async def send_document(
+    token: str, chat_id: str, data: bytes, filename: str, caption: str = ""
+) -> tuple[bool, str]:
+    """Send a file (e.g. a trip PDF) to a chat via sendDocument (multipart)."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.post(
+                _url(token, "sendDocument"),
+                data={"chat_id": chat_id, "caption": caption[:1000], "parse_mode": "HTML"},
+                files={"document": (filename, data, "application/pdf")},
+            )
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        if response.status_code == 200 and body.get("ok"):
+            return True, "Document delivered"
+        return False, body.get("description") or f"HTTP {response.status_code}"
+    except httpx.RequestError as exc:
+        return False, f"Could not reach Telegram: {exc}"
+
+
+async def deliver_document(
+    chat_id: str, data: bytes, filename: str, caption: str = ""
+) -> tuple[bool, str]:
+    """Send a document to a specific chat using the org's first enabled bot."""
+    from app.core import bots
+
+    targets = await bots.enabled_targets()
+    if not targets:
+        return False, "No Telegram bot connected — add one under Integrate."
+    token = targets[0][0]
+    return await send_document(token, chat_id, data, filename, caption)
+
+
 async def notify(text: str) -> bool:
     """Fan out to every enabled bot. Returns True if at least one delivered."""
     from app.core import bots

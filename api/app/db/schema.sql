@@ -452,3 +452,29 @@ CREATE TABLE IF NOT EXISTS channel_inventory (
     UNIQUE (listing_id, channel)
 );
 CREATE INDEX IF NOT EXISTS channel_inventory_listing_idx ON channel_inventory (listing_id);
+
+-- ---------------------------------------------------------------------------
+-- Partner delivery: agency clients + shareable compiled plans.
+-- An agency plans a trip FOR a client, compiles it to a PDF, and sends it over
+-- Telegram (WhatsApp later) with an interactive share link as the fallback.
+-- shared_plans is read WITHOUT auth via a token, so a client with no account can
+-- open the interactive view.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS agency_clients (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    email            TEXT,
+    telegram_chat_id TEXT,
+    notes            TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agency_clients_org_idx ON agency_clients (org_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS shared_plans (
+    token       TEXT PRIMARY KEY,
+    org_id      UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL DEFAULT 'Your Trip',
+    snapshot    JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

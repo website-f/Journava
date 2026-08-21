@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     #: Multimodal model used by the assistant when the user attaches an image.
     llm_vision_model: str = "gemini/gemini-2.0-flash"
 
+    #: Public origin used to build shareable plan links sent to clients (Telegram
+    #: needs an absolute URL). Override with PUBLIC_BASE_URL in production.
+    public_base_url: str = "http://127.0.0.1:8401"
+
     dashscope_api_key: str | None = None
     gemini_api_key: str | None = None
     groq_api_key: str | None = None

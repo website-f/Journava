@@ -33,6 +33,10 @@ const AccountHub = lazy(() =>
 const ConsoleApp = lazy(() =>
   import("@/features/console/ConsoleApp").then((m) => ({ default: m.ConsoleApp })),
 );
+// Public, no-auth read-only plan a client opens from a Telegram/WhatsApp link.
+const SharedPlan = lazy(() =>
+  import("@/features/shared/SharedPlan").then((m) => ({ default: m.SharedPlan })),
+);
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -62,6 +66,21 @@ export function App() {
   // keep the consumer PWA (they test traveller flows) but can still open
   // /console manually — ConsoleApp allows them through for support.
   const isB2B = isAgency;
+
+  // Public shared-plan link — renders for anyone, before the auth wall, so a
+  // client with no account can open the interactive itinerary. Wrapped in a
+  // Route so useParams() sees the :token.
+  if (location.pathname.startsWith("/s/")) {
+    return (
+      <ErrorBoundary resetKey={location.pathname}>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes location={location}>
+            <Route path="/s/:token" element={<SharedPlan />} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
+    );
+  }
 
   // Auth wall (spec §1): restoring a session, then either the app or login.
   if (status === "loading") {

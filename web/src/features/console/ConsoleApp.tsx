@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2 } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui";
@@ -16,20 +16,36 @@ import { cn } from "@/lib/cn";
  */
 
 const ConsoleOverview = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleOverview })));
+const ConsoleClients = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleClients })));
 const ConsoleListings = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleListings })));
 const ConsoleDisruptions = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleDisruptions })));
 const ConsoleFirewall = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleFirewall })));
 const ConsoleEscrow = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleEscrow })));
 const ConsolePolicy = lazy(() => import("./panels").then((m) => ({ default: m.ConsolePolicy })));
 
-const NAV = [
-  { to: "/console", label: "Overview", icon: TrendingUp, end: true },
-  { to: "/console/listings", label: "Listings", icon: Building2 },
+type ConsoleMode = "clients" | "property";
+
+// The console serves two partner shapes from one login: an agency that plans
+// trips FOR clients, and a hotel that runs its OWN property. A mode toggle swaps
+// the nav; Overview / Escrow / Policy are common to both.
+const NAV_CLIENTS = [
+  { to: "/console/clients", label: "Clients", icon: Sparkles },
   { to: "/console/disruptions", label: "Trip operations", icon: Plane },
-  { to: "/console/firewall", label: "Inventory firewall", icon: ShieldCheck },
-  { to: "/console/escrow", label: "Escrow & refunds", icon: CreditCard },
-  { to: "/console/policy", label: "Policy & ESG", icon: FileCheck2 },
 ];
+const NAV_PROPERTY = [
+  { to: "/console/listings", label: "Listings", icon: Building2 },
+  { to: "/console/firewall", label: "Inventory firewall", icon: ShieldCheck },
+];
+
+function navFor(mode: ConsoleMode) {
+  const items = [
+    { to: "/console", label: "Overview", icon: TrendingUp, end: true },
+    ...(mode === "clients" ? NAV_CLIENTS : NAV_PROPERTY),
+    { to: "/console/escrow", label: "Escrow & refunds", icon: CreditCard },
+    { to: "/console/policy", label: "Policy & ESG", icon: FileCheck2 },
+  ];
+  return items.map((i) => ({ end: false, ...i }));
+}
 
 export function ConsoleApp() {
   const { isAgency, user, signOut } = useAuth();
@@ -43,6 +59,16 @@ export function ConsoleApp() {
     navigate("/", { replace: true }); // reset the URL so the next login isn't stranded on /console
     signOut();
   };
+
+  const [mode, setMode] = useState<ConsoleMode>(
+    () => (localStorage.getItem("journava-console-mode") as ConsoleMode) || "clients",
+  );
+  const switchMode = (m: ConsoleMode) => {
+    setMode(m);
+    localStorage.setItem("journava-console-mode", m);
+    navigate("/console");
+  };
+  const NAV = navFor(mode);
 
   const orgName =
     user?.memberships?.find((m) => m.org_kind === "agency")?.org_name ||
@@ -62,6 +88,7 @@ export function ConsoleApp() {
             <p className="truncate text-[0.7rem] text-[var(--muted)]">Agency console</p>
           </div>
         </div>
+        <ModeToggle mode={mode} onChange={switchMode} className="mx-3 mb-2" />
         <nav className="flex-1 space-y-1 px-3">
           {NAV.map(({ to, label, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end} className={navClass}>
@@ -87,6 +114,7 @@ export function ConsoleApp() {
           <span className="text-sm font-semibold">Journava · Console</span>
           <NavLink to="/" className="text-xs text-[var(--brand-600)]">Traveller app →</NavLink>
         </div>
+        <ModeToggle mode={mode} onChange={switchMode} className="mx-3 mb-2" />
         <nav className="no-scrollbar flex gap-1 overflow-x-auto px-3 pb-2">
           {NAV.map(({ to, label, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end} className={navPillClass}>
@@ -103,6 +131,7 @@ export function ConsoleApp() {
           <Suspense fallback={<PanelSkeleton />}>
             <Routes location={location}>
               <Route path="/console" element={<ConsoleOverview />} />
+              <Route path="/console/clients" element={<ConsoleClients />} />
               <Route path="/console/listings" element={<ConsoleListings />} />
               <Route path="/console/disruptions" element={<ConsoleDisruptions />} />
               <Route path="/console/firewall" element={<ConsoleFirewall />} />
@@ -113,6 +142,25 @@ export function ConsoleApp() {
           </Suspense>
         </div>
       </main>
+    </div>
+  );
+}
+
+function ModeToggle({ mode, onChange, className }: { mode: ConsoleMode; onChange: (m: ConsoleMode) => void; className?: string }) {
+  return (
+    <div className={cn("grid grid-cols-2 gap-1 rounded-[var(--r-md)] bg-[var(--bg)] p-1 text-xs font-medium", className)}>
+      {(["clients", "property"] as ConsoleMode[]).map((m) => (
+        <button
+          key={m}
+          onClick={() => onChange(m)}
+          className={cn(
+            "rounded-[calc(var(--r-md)-2px)] px-2 py-1.5 transition-colors",
+            mode === m ? "bg-[var(--surface)] text-[var(--brand-600)] shadow-[var(--shadow-1)]" : "text-[var(--muted)]",
+          )}
+        >
+          {m === "clients" ? "My clients" : "My property"}
+        </button>
+      ))}
     </div>
   );
 }

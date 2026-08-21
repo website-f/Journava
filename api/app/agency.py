@@ -9,13 +9,18 @@ directly, keeping the ~10% an OTA would take.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 
-from app.auth.deps import resolve_org_id
+from app.auth.deps import require_agency, resolve_org_id
 from app.brain import history, policy_store
+from app.core import db
 from app.core.settings import settings
+from app.runtime import jobs
+from app.runtime.router import PlanJobRequest, _run_plan_job
 from app.tools import policy as policy_tools
 
 logger = logging.getLogger("journava")
@@ -132,4 +137,143 @@ async def corporate(request: Request, limit: int = 25) -> dict[str, Any]:
             "total_offset_usd": round(esg["total_offset_usd"], 2),
             "trips_measured": esg["trips_measured"],
         },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Clients: plan a trip FOR a client, compile a PDF, deliver over Telegram      #
+# --------------------------------------------------------------------------- #
+
+
+class ClientCreate(BaseModel):
+    name: str
+    email: str | None = None
+    telegram_chat_id: str | None = None
+    notes: str | None = None
+
+
+class PlanForClient(BaseModel):
+    destination: str
+    goal: str | None = None
+    origin: str | None = None
+    start_date: str | None = None
+
+
+class DeliverRequest(BaseModel):
+    client_id: str
+    job_id: str
+
+
+@router.get("/clients")
+async def list_clients(agency: dict = Depends(require_agency)) -> dict[str, Any]:
+    pool = await db.get_pool()
+    if pool is None:
+        return {"clients": []}
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, email, telegram_chat_id, notes, created_at FROM agency_clients "
+            "WHERE org_id = $1 ORDER BY created_at DESC",
+            uuid.UUID(agency["org_id"]),
+        )
+    return {
+        "clients": [
+            {
+                "id": str(r["id"]), "name": r["name"], "email": r["email"],
+                "telegram_chat_id": r["telegram_chat_id"], "notes": r["notes"],
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/clients")
+async def create_client(body: ClientCreate, agency: dict = Depends(require_agency)) -> dict[str, Any]:
+    pool = await db.get_pool()
+    if pool is None:
+        return {"error": "database unavailable"}
+    async with pool.acquire() as conn:
+        cid = await conn.fetchval(
+            """INSERT INTO agency_clients (org_id, name, email, telegram_chat_id, notes)
+               VALUES ($1, $2, $3, $4, $5) RETURNING id""",
+            uuid.UUID(agency["org_id"]), body.name, body.email, body.telegram_chat_id, body.notes,
+        )
+    return {"id": str(cid), "name": body.name}
+
+
+@router.delete("/clients/{client_id}")
+async def delete_client(client_id: str, agency: dict = Depends(require_agency)) -> dict[str, bool]:
+    pool = await db.get_pool()
+    if pool is not None:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM agency_clients WHERE id = $1 AND org_id = $2",
+                uuid.UUID(client_id), uuid.UUID(agency["org_id"]),
+            )
+    return {"deleted": True}
+
+
+async def _get_client(org_id: str, client_id: str) -> dict[str, Any] | None:
+    pool = await db.get_pool()
+    if pool is None:
+        return None
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, name, email, telegram_chat_id FROM agency_clients WHERE id = $1 AND org_id = $2",
+            uuid.UUID(client_id), uuid.UUID(org_id),
+        )
+    return dict(row) if row else None
+
+
+@router.post("/clients/{client_id}/plan")
+async def plan_for_client(client_id: str, body: PlanForClient, agency: dict = Depends(require_agency)) -> dict[str, Any]:
+    """Build a full package for a client — runs the full_trip mesh in the background."""
+    client = await _get_client(agency["org_id"], client_id)
+    if not client:
+        return {"error": "Client not found."}
+    goal = body.goal or f"Full package trip to {body.destination} for {client['name']}"
+    job_body = PlanJobRequest(goal=goal, origin=body.origin or None, destination=body.destination, scope="full_trip")
+    job = jobs.launch(
+        "plan",
+        lambda: _run_plan_job(job_body, None),
+        meta={"scope": "full_trip", "goal": goal, "client_id": client_id},
+        user_id=None,
+    )
+    return {"job": jobs.public(job), "client": {"id": client_id, "name": client["name"]}}
+
+
+@router.post("/deliver")
+async def deliver(body: DeliverRequest, agency: dict = Depends(require_agency)) -> dict[str, Any]:
+    """Compile a completed plan into a PDF + interactive link and send to the client."""
+    from app.shared import create_shared
+    from app.tools import telegram, trip_pdf
+
+    client = await _get_client(agency["org_id"], body.client_id)
+    if not client:
+        return {"error": "Client not found."}
+    job = await jobs.get(body.job_id)
+    results = ((job or {}).get("result") or {}).get("results") or {}
+    if not results:
+        return {"error": "That plan isn't ready yet."}
+
+    dest = ((results.get("chief") or {}).get("data") or {}).get("destination") or "Trip"
+    title = f"{dest} — {client['name']}"
+
+    token = await create_shared(snapshot=results, title=title, org_id=agency["org_id"])
+    share_url = f"{settings.public_base_url.rstrip('/')}/s/{token}"
+
+    pdf = trip_pdf.build_trip_pdf(results, title=title, agency=agency.get("org_name") or "Journava")
+    filename = f"{dest.replace(' ', '_')}_itinerary.pdf"
+
+    delivered, detail = False, "No Telegram chat id on file for this client."
+    if client.get("telegram_chat_id"):
+        caption = f"<b>{title}</b>\nYour full itinerary is attached. View it interactively: {share_url}"
+        delivered, detail = await telegram.deliver_document(
+            client["telegram_chat_id"], pdf, filename, caption
+        )
+    return {
+        "share_url": share_url,
+        "token": token,
+        "pdf_bytes": len(pdf),
+        "delivered": delivered,
+        "detail": detail,
     }

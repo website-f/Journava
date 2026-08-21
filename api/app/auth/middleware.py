@@ -46,8 +46,12 @@ _ADMIN_PREFIXES = (
 )
 
 
+#: Public path prefixes — a client with no account opens a shared plan by token.
+_PUBLIC_PREFIXES = (f"{settings.api_prefix}/shared/",)
+
+
 def _is_public(path: str) -> bool:
-    return path in _PUBLIC_EXACT
+    return path in _PUBLIC_EXACT or any(path.startswith(p) for p in _PUBLIC_PREFIXES)
 
 
 def _needs_admin(path: str) -> bool:
