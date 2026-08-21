@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui";
 import { useAuth } from "@/providers/AuthProvider";
@@ -30,9 +30,17 @@ const NAV = [
 ];
 
 export function ConsoleApp() {
-  const { isAgency, isPlatformAdmin, user, signOut } = useAuth();
+  const { isAgency, user, signOut } = useAuth();
   const location = useLocation();
-  if (!(isAgency || isPlatformAdmin)) return <Navigate to="/" replace />;
+  const navigate = useNavigate();
+  // Console is for agency/corporate orgs only. A platform admin (or a consumer)
+  // who lands here is bounced back to the traveller app.
+  if (!isAgency) return <Navigate to="/" replace />;
+
+  const handleSignOut = () => {
+    navigate("/", { replace: true }); // reset the URL so the next login isn't stranded on /console
+    signOut();
+  };
 
   const orgName =
     user?.memberships?.find((m) => m.org_kind === "agency")?.org_name ||
@@ -65,7 +73,7 @@ export function ConsoleApp() {
           <NavLink to="/" className="mb-1 flex items-center gap-2 rounded-[var(--r-md)] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--bg)]">
             <Sparkles className="h-4 w-4" /> Traveller app
           </NavLink>
-          <button onClick={signOut} className="flex w-full items-center gap-2 rounded-[var(--r-md)] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--bg)]">
+          <button onClick={handleSignOut} className="flex w-full items-center gap-2 rounded-[var(--r-md)] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--bg)]">
             <LogOut className="h-4 w-4" /> Sign out
           </button>
         </div>
