@@ -1,15 +1,14 @@
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Sparkles, Compass, Bot, Plus, X } from "@/components/ui/icons";
+import { Sparkles } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
-import { useAgentStream } from "@/hooks/useAgentStream";
 import { usePlanStore } from "@/stores/planStore";
+import { AssistantPanel } from "./AssistantPanel";
 
 /**
- * AssistiveTouch-style quick launcher — a draggable floating button that snaps
- * to the nearest screen edge (position remembered), and taps open a small glass
- * menu of high-value actions. Distinct from the bottom nav: this is the "always
- * one thumb away" shortcut, especially handy as an installed PWA.
+ * Floating AI-assistant launcher — a draggable button that snaps to the nearest
+ * screen edge (position remembered), and taps open the Journava AI chat panel
+ * (ask anything, upload an image, or kick off a background agent run). The
+ * "always one thumb away" entry point, especially handy as an installed PWA.
  */
 
 const SIZE = 52; // px
@@ -41,10 +40,7 @@ function loadPos(): Pos {
 }
 
 export function AssistiveTouch() {
-  const navigate = useNavigate();
-  const { events } = useAgentStream();
   const jobRunning = usePlanStore((s) => s.jobRunning);
-  const latest = events.find((e) => e.agent !== "system") ?? events[0];
   const [pos, setPos] = useState<Pos>(loadPos);
   const [open, setOpen] = useState(false);
   const drag = useRef({ startX: 0, startY: 0, dx: 0, dy: 0, moved: false, active: false });
@@ -72,7 +68,6 @@ export function AssistiveTouch() {
     if (!d.active) return;
     if (!d.moved && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > DRAG_THRESHOLD) {
       d.moved = true;
-      setOpen(false);
     }
     if (d.moved) setPos(clamp({ x: e.clientX - d.dx, y: e.clientY - d.dy }));
   };
@@ -94,83 +89,38 @@ export function AssistiveTouch() {
         return next;
       });
     } else {
-      setOpen((o) => !o);
+      setOpen(true);
     }
   };
 
-  const onLeftHalf = pos.x + SIZE / 2 < window.innerWidth / 2;
-
-  const go = (to: string) => {
-    setOpen(false);
-    navigate(to);
-  };
-
-  const ACTIONS = [
-    { label: "New plan", icon: Plus, to: "/" },
-    { label: "Research", icon: Compass, to: "/research" },
-    { label: "Agents", icon: Bot, to: "/agents" },
-  ];
-
   return (
-    <div
-      className="fixed z-[60] select-none"
-      style={{ left: pos.x, top: pos.y, width: SIZE, height: SIZE, touchAction: "none" }}
-    >
-      {open && (
-        <div
+    <>
+      <div
+        className="fixed z-[60] select-none"
+        style={{ left: pos.x, top: pos.y, width: SIZE, height: SIZE, touchAction: "none" }}
+      >
+        {jobRunning && (
+          <span className="pointer-events-none absolute inset-0 animate-ping rounded-full bg-[color-mix(in_srgb,var(--brand-400)_35%,transparent)]" />
+        )}
+        <button
+          aria-label="Journava AI assistant"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
           className={cn(
-            "glass-strong absolute bottom-full mb-3 w-56 rounded-[var(--r-lg)] p-1.5 shadow-[var(--shadow-2)]",
-            onLeftHalf ? "left-0" : "right-0",
+            "glass-strong relative grid h-[52px] w-[52px] place-items-center rounded-full shadow-[var(--shadow-2)]",
+            "text-[var(--brand-500)] transition-transform active:scale-95 touch-none",
+            jobRunning && "ring-2 ring-[var(--brand-400)]",
           )}
         >
+          <Sparkles className="h-5 w-5" />
           {jobRunning && (
-            <button
-              onClick={() => go("/agents")}
-              className="mb-1 flex w-full items-start gap-2.5 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] px-3 py-2 text-left"
-            >
-              <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center">
-                <span className="h-2 w-2 animate-ping rounded-full bg-[var(--brand-500)]" />
-              </span>
-              <span className="min-w-0">
-                <span className="block text-xs font-semibold text-[var(--brand-500)]">Agents working…</span>
-                <span className="block truncate text-[0.65rem] text-[var(--muted)]">
-                  {latest ? `${latest.agent}: ${latest.message}` : "in progress — tap to watch"}
-                </span>
-              </span>
-            </button>
+            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[var(--brand-500)] ring-2 ring-[var(--bg)]" />
           )}
-          {ACTIONS.map(({ label, icon: Icon, to }) => (
-            <button
-              key={to}
-              onClick={() => go(to)}
-              className="flex w-full items-center gap-2.5 rounded-[var(--r-md)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--brand-400)_10%,transparent)]"
-            >
-              <Icon className="h-4 w-4 text-[var(--brand-500)]" />
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
+        </button>
+      </div>
 
-      {jobRunning && !open && (
-        <span className="pointer-events-none absolute inset-0 animate-ping rounded-full bg-[color-mix(in_srgb,var(--brand-400)_35%,transparent)]" />
-      )}
-      <button
-        aria-label="Quick actions"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        className={cn(
-          "glass-strong relative grid h-[52px] w-[52px] place-items-center rounded-full shadow-[var(--shadow-2)]",
-          "text-[var(--brand-500)] transition-transform active:scale-95 touch-none",
-          jobRunning && "ring-2 ring-[var(--brand-400)]",
-        )}
-      >
-        {open ? <X className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
-        {jobRunning && !open && (
-          <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[var(--brand-500)] ring-2 ring-[var(--bg)]" />
-        )}
-      </button>
-    </div>
+      <AssistantPanel open={open} onOpenChange={setOpen} />
+    </>
   );
 }
