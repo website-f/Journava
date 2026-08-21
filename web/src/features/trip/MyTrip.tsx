@@ -1,8 +1,10 @@
 import { Suspense, lazy, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown } from "@/components/ui/icons";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2 } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
+import { Switch } from "@/components/ui/Switch";
+import { Money } from "@/components/ui/Money";
 import { cn } from "@/lib/cn";
 
 // MapLibre is ~1MB; load it only when this page actually renders.
@@ -136,8 +138,181 @@ export function MyTrip() {
       <div className="mt-8">
         <TripExtraPanels results={results as PlanResults} />
       </div>
+      <FlightWatchCard />
       <DisruptionSection recovery={recovery} setRecovery={setRecovery} setRecoveryLoading={setRecoveryLoading} recoveryLoading={recoveryLoading} />
     </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Autonomous flight-delay watch + budget-aware auto-reschedule
+// --------------------------------------------------------------------------- //
+
+type WatchAlt = {
+  id: string;
+  title: string;
+  price_amount: number | null;
+  price_currency: string | null;
+  bookable: boolean;
+  booking_url: string | null;
+  within_budget: boolean | null;
+};
+
+type WatchResult = {
+  disrupted: boolean;
+  status: { status: string; delay_minutes: number | null; mode: string; carrier?: string; route?: string } | null;
+  reason?: string;
+  flight?: { carrier: string; origin: string; destination: string };
+  auto_rescheduled?: boolean;
+  recovery?: { summary: string; additional_cost: string };
+  notified?: boolean;
+  alternatives?: WatchAlt[];
+  budget?: {
+    amount: number | null;
+    currency: string;
+    within_budget_count: number;
+    total_alternatives: number;
+    cheapest_within: number | null;
+  };
+};
+
+const WATCH_MODES = [
+  { value: "real", label: "Check live status" },
+  { value: "delayed", label: "Demo: delay" },
+  { value: "cancelled", label: "Demo: cancellation" },
+];
+
+function FlightWatchCard() {
+  const [mode, setMode] = useState("real");
+  const [auto, setAuto] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<WatchResult | null>(null);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      const res = await api.post<WatchResult>("/monitor/flight", {
+        simulate: mode === "real" ? null : mode,
+        auto_reschedule: auto,
+        threshold_minutes: 90,
+      });
+      setResult(res);
+      if (res.reason) toast.info(res.reason);
+      else if (!res.disrupted) toast.success("Flight looks on track.");
+      else toast.warning(res.recovery?.summary ?? "Disruption handled.");
+    } catch {
+      toast.error("Couldn't check the flight status.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const s = result?.status;
+  const b = result?.budget;
+
+  return (
+    <section className="mt-8">
+      <div className="surface-card p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Plane className="h-5 w-5 text-[var(--brand-500)]" />
+          <h3 className="text-base font-semibold">Flight watch &amp; auto-reschedule</h3>
+        </div>
+        <p className="mb-4 text-sm text-[var(--muted)]">
+          Journava monitors your flight and, if it's delayed or cancelled, automatically finds
+          alternatives <strong>within your budget</strong> and alerts you.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="w-52">
+            <Select
+              value={mode}
+              onValueChange={setMode}
+              options={WATCH_MODES}
+              aria-label="Status check mode"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Switch checked={auto} onCheckedChange={setAuto} aria-label="Auto-reschedule" />
+            Auto-reschedule
+          </label>
+          <Button onClick={run} loading={loading} disabled={loading}>
+            <Zap className="h-4 w-4" />
+            Check now
+          </Button>
+        </div>
+
+        {result && (
+          <div className="mt-5">
+            {result.reason ? (
+              <p className="text-sm text-[var(--muted)]">{result.reason}</p>
+            ) : !result.disrupted ? (
+              <div className="flex items-center gap-2 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--success)_12%,transparent)] px-3 py-2 text-sm text-[var(--success)]">
+                <CheckCircle2 className="h-4 w-4" />
+                {s?.carrier ? `${s.carrier} ` : ""}
+                {s?.route ?? "Flight"} is {s?.status?.replace(/_/g, " ") ?? "on time"}
+                {s?.mode === "simulated" ? " (simulated)" : ""}.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-[var(--r-md)] border-l-4 border-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-[var(--warning)]" />
+                    <span className="text-sm font-semibold">
+                      {s?.carrier} {s?.route} {s?.status?.toUpperCase()}
+                      {s?.delay_minutes ? ` · ~${s.delay_minutes} min` : ""}
+                    </span>
+                    {result.notified && <Badge variant="success">Alerted</Badge>}
+                  </div>
+                  <p className="mt-1 text-sm text-[var(--muted)]">
+                    {result.auto_rescheduled ? "Auto-rescheduled. " : ""}
+                    {result.recovery?.summary} · {result.recovery?.additional_cost}
+                  </p>
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h4 className="text-sm font-medium">Alternatives within budget</h4>
+                    {b?.amount != null && (
+                      <span className="text-xs text-[var(--muted)]">
+                        {b.within_budget_count}/{b.total_alternatives} under {b.currency}{" "}
+                        {b.amount.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {(result.alternatives ?? []).map((a) => (
+                      <div key={a.id} className="surface-card flex items-center gap-3 p-3">
+                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-500)]">
+                          <Plane className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{a.title}</p>
+                          {a.within_budget != null && (
+                            <p
+                              className={cn(
+                                "text-xs",
+                                a.within_budget ? "text-[var(--success)]" : "text-[var(--warning)]",
+                              )}
+                            >
+                              {a.within_budget ? "within budget" : "over budget"}
+                            </p>
+                          )}
+                        </div>
+                        {a.price_amount != null && (
+                          <span className="shrink-0 text-sm font-semibold">
+                            <Money amount={a.price_amount} currency={a.price_currency ?? "MYR"} />
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
