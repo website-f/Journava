@@ -21,10 +21,21 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from urllib.parse import quote
+
+import httpx
 
 from app.core import llm
 from app.core.settings import settings
 from app.tools import camofox
+
+#: Public, keyless oEmbed endpoints — they return the post's title/caption +
+#: author even when the page itself is bot-walled. This is the reliable way to
+#: read a TikTok or YouTube caption.
+_OEMBED = {
+    "tiktok": "https://www.tiktok.com/oembed?url=",
+    "youtube": "https://www.youtube.com/oembed?format=json&url=",
+}
 
 logger = logging.getLogger("journava")
 
@@ -59,10 +70,32 @@ def _platform(url: str) -> str:
     return "web"
 
 
+async def _oembed(url: str, platform: str) -> str:
+    """Fetch the post's caption/title via the platform's public oEmbed API."""
+    endpoint = _OEMBED.get(platform)
+    if not endpoint:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(endpoint + quote(url, safe=""))
+        if resp.status_code == 200:
+            data = resp.json()
+            bits = [str(data.get(k, "")) for k in ("title", "author_name", "description") if data.get(k)]
+            return " · ".join(bits)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("oembed failed (%s): %s", platform, exc)
+    return ""
+
+
 async def _gather_from_url(url: str) -> tuple[str, str]:
     """Best-effort content for a social URL. Returns (text, platform)."""
     platform = _platform(url)
     parts: list[str] = []
+
+    # oEmbed first — it's the reliable caption source for TikTok / YouTube.
+    oembed = await _oembed(url, platform)
+    if oembed:
+        parts.append(f"[{platform} caption] {oembed}")
 
     if platform == "youtube":
         try:
