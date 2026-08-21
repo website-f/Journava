@@ -28,6 +28,11 @@ const TripHub = lazy(() =>
 const AccountHub = lazy(() =>
   import("@/features/account/AccountHub").then((m) => ({ default: m.AccountHub })),
 );
+// B2B desktop console — its own full-screen shell (no PWA bottom nav), served to
+// agency/corporate users. Split out so consumers never download it.
+const ConsoleApp = lazy(() =>
+  import("@/features/console/ConsoleApp").then((m) => ({ default: m.ConsoleApp })),
+);
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -52,7 +57,8 @@ function RouteFallback() {
 
 export function App() {
   const location = useLocation();
-  const { status } = useAuth();
+  const { status, isAgency, isPlatformAdmin } = useAuth();
+  const isB2B = isAgency || isPlatformAdmin;
 
   // Auth wall (spec §1): restoring a session, then either the app or login.
   if (status === "loading") {
@@ -64,6 +70,18 @@ export function App() {
   }
   if (status === "guest") {
     return <LoginPage />;
+  }
+
+  // B2B console: a desktop-first dashboard shell rendered OUTSIDE the PWA shell
+  // (no bottom nav). Consumers never reach it (redirects to "/").
+  if (location.pathname.startsWith("/console")) {
+    return (
+      <ErrorBoundary resetKey={location.pathname}>
+        <Suspense fallback={<RouteFallback />}>
+          <ConsoleApp />
+        </Suspense>
+      </ErrorBoundary>
+    );
   }
 
   return (
@@ -80,7 +98,7 @@ export function App() {
           <ErrorBoundary resetKey={location.pathname}>
             <Suspense fallback={<RouteFallback />}>
             <Routes location={location}>
-              <Route path="/" element={<CommandCenter />} />
+              <Route path="/" element={isB2B ? <Navigate to="/console" replace /> : <CommandCenter />} />
               <Route path="/research" element={<ResearchBoard />} />
               <Route path="/trip" element={<TripHub />} />
               <Route path="/agents" element={<AgentControl />} />

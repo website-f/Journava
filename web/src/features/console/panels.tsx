@@ -1,0 +1,434 @@
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import {
+  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2,
+} from "@/components/ui/icons";
+import { Button, Badge, Select } from "@/components/ui";
+import { Switch } from "@/components/ui/Switch";
+import { Money } from "@/components/ui/Money";
+import { api } from "@/lib/api";
+import { cn } from "@/lib/cn";
+
+/* ------------------------------------------------------------------ shared */
+
+function useGet<T>(path: string) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const reload = useCallback(() => {
+    setLoading(true);
+    api.get<T>(path).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [path]);
+  useEffect(() => { reload(); }, [reload]);
+  return { data, loading, reload };
+}
+
+function PageHead({ title, subtitle, icon: Icon }: { title: string; subtitle: string; icon: typeof Plane }) {
+  return (
+    <header className="mb-6 flex items-start gap-3">
+      <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-500)]">
+        <Icon className="h-5 w-5" />
+      </span>
+      <div>
+        <h1 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">{title}</h1>
+        <p className="mt-0.5 text-sm text-[var(--muted)]">{subtitle}</p>
+      </div>
+    </header>
+  );
+}
+
+function Card({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("surface-card p-5", className)}>{children}</div>;
+}
+
+function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: "success" | "warning" | "brand" }) {
+  const color = tone === "success" ? "text-[var(--success)]" : tone === "warning" ? "text-[var(--warning)]" : "text-[var(--brand-500)]";
+  return (
+    <div className="surface-card p-4">
+      <p className={cn("text-2xl font-bold", color)}>{value}</p>
+      <p className="mt-1 text-xs text-[var(--muted)]">{label}</p>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- Overview */
+
+type Overview = { metrics: { managed_trips: number; total_saved: number; currency: string } };
+type Corporate = {
+  policy: { configured: boolean };
+  policy_violations: number;
+  duty_of_care: { at_risk: number; travellers: unknown[] };
+  esg: { total_co2_kg: number; trips_measured: number };
+};
+type Hold = { id: string; amount: number; currency: string; released: number; refunded: number; status: string; remaining?: number; booking_ref: string; description?: string };
+type FirewallState = { listings: { healthy: boolean; discrepancies: unknown[] }[] };
+
+export function ConsoleOverview() {
+  const ov = useGet<Overview>("/agency/overview");
+  const corp = useGet<Corporate>("/agency/corporate");
+  const holds = useGet<{ holds: Hold[] }>("/escrow/holds");
+  const fw = useGet<FirewallState>("/firewall/state");
+
+  const m = ov.data?.metrics;
+  const currency = m?.currency ?? "MYR";
+  const held = (holds.data?.holds ?? []).reduce((s, h) => s + (h.amount - h.released - h.refunded), 0);
+  const unhealthy = (fw.data?.listings ?? []).filter((l) => !l.healthy).length;
+
+  return (
+    <div>
+      <PageHead icon={TrendingUp} title="Agency console" subtitle="Your agents book, monitor and settle direct — bypassing the OTAs." />
+
+      <Card className="mb-4 border-l-4 border-[var(--success)]">
+        <p className="text-xs uppercase tracking-wide text-[var(--muted)]">OTA commission avoided</p>
+        <p className="mt-1 text-4xl font-bold text-[var(--success)]">
+          <Money amount={m?.total_saved ?? 0} currency={currency} />
+        </p>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          across {m?.managed_trips ?? 0} managed trips — booked direct via Atlas/NDC, no middleman cut.
+        </p>
+      </Card>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Managed trips" value={m?.managed_trips ?? 0} />
+        <Stat label="Escrow held" value={<Money amount={held} currency={currency} />} />
+        <Stat label="Travellers at risk" value={corp.data?.duty_of_care.at_risk ?? 0} tone={(corp.data?.duty_of_care.at_risk ?? 0) > 0 ? "warning" : "success"} />
+        <Stat label="Inventory alerts" value={unhealthy} tone={unhealthy > 0 ? "warning" : "success"} />
+        <Stat label="Policy breaches" value={corp.data?.policy_violations ?? 0} tone={(corp.data?.policy_violations ?? 0) > 0 ? "warning" : "success"} />
+        <Stat label="Fleet CO₂ (kg)" value={(corp.data?.esg.total_co2_kg ?? 0).toLocaleString()} />
+        <Stat label="Trips measured" value={corp.data?.esg.trips_measured ?? 0} />
+        <Stat label="Policy" value={corp.data?.policy.configured ? "On" : "Off"} tone={corp.data?.policy.configured ? "success" : "brand"} />
+      </div>
+
+      <p className="mt-6 text-sm text-[var(--muted)]">
+        Use the left rail: run disruption ops, guard hotel inventory, and let the AI adjudicator settle escrow.
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ Disruptions */
+
+type WatchAlt = { id: string; title: string; price_amount: number | null; price_currency: string | null; within_budget: boolean | null };
+type Watch = {
+  disrupted: boolean; reason?: string;
+  status?: { status: string; delay_minutes: number | null; carrier?: string; route?: string; mode: string };
+  recovery?: { summary: string; additional_cost: string }; notified?: boolean;
+  alternatives?: WatchAlt[]; budget?: { amount: number | null; currency: string; within_budget_count: number; total_alternatives: number };
+};
+type GraphNode = { id: string; kind: string; day: number; title: string; starts_at?: string; shift_minutes?: number; conflict?: string | null };
+type Replan = {
+  error?: string; source: string; delay_minutes: number;
+  graph: { nodes: GraphNode[] }; impacted: GraphNode[];
+  rebook: { summary: string; additional_cost: string };
+  settlement: { direction: string; fare_delta: number | null; currency: string; mode?: string };
+};
+
+export function ConsoleDisruptions() {
+  const [mode, setMode] = useState("delayed");
+  const [auto, setAuto] = useState(true);
+  const [watch, setWatch] = useState<Watch | null>(null);
+  const [wLoading, setWLoading] = useState(false);
+  const [replan, setReplan] = useState<Replan | null>(null);
+  const [rLoading, setRLoading] = useState(false);
+
+  const runWatch = async () => {
+    setWLoading(true);
+    try {
+      setWatch(await api.post<Watch>("/monitor/flight", { simulate: mode === "real" ? null : mode, auto_reschedule: auto, threshold_minutes: 90 }));
+    } catch { toast.error("Status check failed"); } finally { setWLoading(false); }
+  };
+  const runReplan = async () => {
+    setRLoading(true);
+    try {
+      const r = await api.post<Replan>("/itinerary/replan", { event_type: "flight_delayed", delay_minutes: 200, persist: false });
+      if (r.error) toast.info(r.error); else setReplan(r);
+    } catch { toast.error("Re-plan failed"); } finally { setRLoading(false); }
+  };
+
+  const s = watch?.status;
+  const b = watch?.budget;
+  return (
+    <div>
+      <PageHead icon={Plane} title="Disruption ops" subtitle="Detect a delay, auto-reschedule within budget, and cascade the itinerary graph." />
+
+      <Card className="mb-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Zap className="h-4 w-4 text-[var(--brand-500)]" /> Flight watch &amp; auto-reschedule</div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="w-48"><Select value={mode} onValueChange={setMode} options={[{ value: "real", label: "Check live status" }, { value: "delayed", label: "Demo: delay" }, { value: "cancelled", label: "Demo: cancellation" }]} aria-label="mode" /></div>
+          <label className="flex items-center gap-2 text-sm"><Switch checked={auto} onCheckedChange={setAuto} aria-label="auto" /> Auto-reschedule</label>
+          <Button onClick={runWatch} loading={wLoading} disabled={wLoading}><Zap className="h-4 w-4" /> Check now</Button>
+        </div>
+        {watch && (
+          <div className="mt-4">
+            {watch.reason ? <p className="text-sm text-[var(--muted)]">{watch.reason}</p>
+              : !watch.disrupted ? (
+                <div className="flex items-center gap-2 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--success)_12%,transparent)] px-3 py-2 text-sm text-[var(--success)]">
+                  <CheckCircle2 className="h-4 w-4" /> {s?.carrier} {s?.route} is {s?.status?.replace(/_/g, " ")}{s?.mode === "simulated" ? " (simulated)" : ""}.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="rounded-[var(--r-md)] border-l-4 border-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      <AlertTriangle className="h-4 w-4 text-[var(--warning)]" /> {s?.carrier} {s?.route} {s?.status?.toUpperCase()}{s?.delay_minutes ? ` · ~${s.delay_minutes} min` : ""}
+                      {watch.notified && <Badge variant="success">Alerted</Badge>}
+                    </div>
+                    <p className="mt-1 text-sm text-[var(--muted)]">{watch.recovery?.summary} · {watch.recovery?.additional_cost}</p>
+                  </div>
+                  {b?.amount != null && <p className="text-xs text-[var(--muted)]">{b.within_budget_count}/{b.total_alternatives} alternatives within {b.currency} {b.amount.toLocaleString()}</p>}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(watch.alternatives ?? []).map((a) => (
+                      <div key={a.id} className="surface-card flex items-center justify-between gap-2 p-3">
+                        <span className="min-w-0 truncate text-sm">{a.title}</span>
+                        {a.price_amount != null && <span className={cn("shrink-0 text-sm font-semibold", a.within_budget ? "text-[var(--success)]" : "text-[var(--warning)]")}><Money amount={a.price_amount} currency={a.price_currency ?? "MYR"} /></span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div className="mb-1 flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-[var(--brand-500)]" /> Itinerary dependency graph</div>
+        <p className="mb-3 text-sm text-[var(--muted)]">A delay to one leg cascades downstream. We re-plan every broken leg and settle the fare difference in real time.</p>
+        <Button variant="secondary" onClick={runReplan} loading={rLoading} disabled={rLoading}>Simulate 200-min delay &amp; auto-replan</Button>
+        {replan && (
+          <div className="mt-4 space-y-4">
+            <div className="rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">
+              <strong>Cascade:</strong> {replan.rebook.summary} · fare {replan.settlement.direction === "refund" ? "refund" : replan.settlement.direction === "upcharge" ? "top-up" : "unchanged"}
+              {replan.settlement.fare_delta != null ? ` ${replan.settlement.currency} ${Math.abs(replan.settlement.fare_delta).toLocaleString()}` : ""}
+              {replan.settlement.mode ? ` (${replan.settlement.mode})` : ""}
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Legs ({replan.graph.nodes.length}) — impacted highlighted</p>
+              <div className="space-y-1">
+                {replan.graph.nodes.map((n) => {
+                  const broken = replan.impacted.some((i) => i.id === n.id);
+                  return (
+                    <div key={n.id} className={cn("flex items-center gap-2 rounded-[var(--r-md)] px-3 py-1.5 text-sm", broken ? "bg-[color-mix(in_srgb,var(--warning)_12%,transparent)]" : "bg-[var(--bg)]")}>
+                      <LegDot kind={n.kind} />
+                      <span className="w-10 shrink-0 text-xs text-[var(--muted)]">D{n.day}</span>
+                      <span className="w-14 shrink-0 text-xs tabular-nums text-[var(--muted)]">{n.starts_at ?? "—"}</span>
+                      <span className="min-w-0 flex-1 truncate">{n.title}</span>
+                      {n.conflict && <Badge variant="warning">{n.conflict.replace(/_/g, " ")}</Badge>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function LegDot({ kind }: { kind: string }) {
+  const label: Record<string, string> = { flight: "✈", hotel: "🏨", activity: "◆", meal: "🍽", transport: "🚌" };
+  return <span className="w-5 shrink-0 text-center text-xs">{label[kind] ?? "◆"}</span>;
+}
+
+/* -------------------------------------------------------------- Firewall */
+
+type Channel = { channel: string; allocated: number; sold: number };
+type FwListing = { listing_id: string; title: string; property: string; capacity: number; physical_available: number; total_allocated: number; healthy: boolean; channels: Channel[]; discrepancies: { type: string; detail: string; severity?: string }[] };
+type Race = { error?: string; double_booking_prevented: boolean; summary: string; attempts: { channel: string; status: string; reason?: string }[] };
+
+export function ConsoleFirewall() {
+  const { data, loading, reload } = useGet<{ listings: FwListing[] }>("/firewall/state");
+  const [busy, setBusy] = useState("");
+  const [race, setRace] = useState<Race | null>(null);
+
+  const act = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    try { await fn(); await reloadAfter(); } catch { toast.error(`${label} failed`); } finally { setBusy(""); }
+  };
+  const reloadAfter = async () => { reload(); };
+
+  const seed = () => act("seed", async () => { await api.post("/firewall/seed", {}); toast.success("Demo inventory seeded"); });
+  const reconcile = () => act("reconcile", async () => { const r = await api.post<{ count: number }>("/firewall/reconcile", {}); toast.success(`${r.count} fix(es) applied`); });
+  const simulate = (id: string) => act("race", async () => { const r = await api.post<Race>("/firewall/simulate-race", { listing_id: id }); setRace(r); if (!r.error) toast[r.double_booking_prevented ? "success" : "error"](r.summary); });
+
+  const listings = data?.listings ?? [];
+  return (
+    <div>
+      <PageHead icon={ShieldCheck} title="Inventory firewall" subtitle="Reconcile room state across channels and block a double-booking before it happens." />
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={seed} loading={busy === "seed"}>Seed demo inventory</Button>
+        <Button variant="secondary" onClick={reconcile} loading={busy === "reconcile"}>Reconcile all</Button>
+      </div>
+
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
+        : !listings.length ? <Card><p className="text-sm text-[var(--muted)]">No listings yet — click <strong>Seed demo inventory</strong> to create an over-allocated room.</p></Card>
+          : listings.map((l) => (
+            <Card key={l.listing_id} className="mb-3">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span className="font-semibold">{l.title}</span>
+                <span className="text-xs text-[var(--muted)]">{l.property}</span>
+                {l.healthy ? <Badge variant="success">healthy</Badge> : <Badge variant="warning">{l.discrepancies.length} issue(s)</Badge>}
+                <span className="ml-auto text-xs text-[var(--muted)]">cap {l.capacity} · allocated {l.total_allocated} · available {l.physical_available}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs uppercase tracking-wide text-[var(--muted)]"><th className="py-1 pr-4">Channel</th><th className="py-1 pr-4">Allocated</th><th className="py-1 pr-4">Sold</th><th className="py-1">Open</th></tr></thead>
+                  <tbody>
+                    {l.channels.map((c) => (
+                      <tr key={c.channel} className="border-t border-[var(--border)]"><td className="py-1.5 pr-4">{c.channel}</td><td className="py-1.5 pr-4">{c.allocated}</td><td className="py-1.5 pr-4">{c.sold}</td><td className="py-1.5">{c.allocated - c.sold}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {l.discrepancies.map((d, i) => (
+                <p key={i} className="mt-2 flex items-start gap-1.5 text-xs text-[var(--warning)]"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {d.detail}</p>
+              ))}
+              <div className="mt-3">
+                <Button size="sm" variant="danger" onClick={() => simulate(l.listing_id)} loading={busy === "race"}>Simulate double-booking race</Button>
+              </div>
+              {race && !race.error && (
+                <div className="mt-3 rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">
+                  <p className="font-medium">{race.double_booking_prevented ? "✅ Double-booking prevented" : "⚠️ Check config"} — {race.summary}</p>
+                  {race.attempts.map((a, i) => (
+                    <p key={i} className={cn("text-xs", a.status === "confirmed" ? "text-[var(--success)]" : "text-[var(--warning)]")}>{a.channel}: {a.status}{a.reason ? ` — ${a.reason}` : ""}</p>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ))}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- Escrow */
+
+type LedgerEvent = { kind: string; amount: number; currency: string; actor: string; reason: string; settlement: string };
+type FullHold = Hold & { events?: LedgerEvent[] };
+type Decision = { verdict: string; refund_pct: number; refund_amount: number; release_amount: number; currency: string; rationale: string; policy_basis: string };
+
+export function ConsoleEscrow() {
+  const { data, loading, reload } = useGet<{ holds: Hold[] }>("/escrow/holds");
+  const [event, setEvent] = useState("flight_delayed");
+  const [delay, setDelay] = useState("200");
+  const [busy, setBusy] = useState(false);
+  const [decision, setDecision] = useState<{ decision: Decision; hold: FullHold } | null>(null);
+
+  const holds = data?.holds ?? [];
+
+  const openHold = async () => {
+    setBusy(true);
+    try { await api.post("/escrow/hold", { from_active_trip: true }); toast.success("Escrow hold opened from active trip"); reload(); }
+    catch { toast.error("Could not open a hold — plan & save a trip first"); } finally { setBusy(false); }
+  };
+  const adjudicate = async (holdId: string) => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ error?: string; decision: Decision; hold: FullHold }>("/escrow/adjudicate", { hold_id: holdId, event_type: event, delay_minutes: event.includes("delay") ? Number(delay) : null });
+      if (r.error) { toast.info(r.error); return; }
+      setDecision(r); reload(); toast.success(`AI verdict: ${r.decision.verdict.replace(/_/g, " ")}`);
+    } catch { toast.error("Adjudication failed"); } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <PageHead icon={CreditCard} title="Escrow & AI refunds" subtitle="Funds held on booking; an agent adjudicates disputes and settles autonomously." />
+
+      <Card className="mb-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <Button variant="secondary" onClick={openHold} loading={busy}>Open hold from active trip</Button>
+          <div className="w-48"><Select value={event} onValueChange={setEvent} options={[{ value: "flight_delayed", label: "Flight delayed" }, { value: "flight_cancelled", label: "Flight cancelled" }, { value: "downgrade", label: "Downgrade" }, { value: "no_show", label: "No-show" }, { value: "service_issue", label: "Service issue" }]} aria-label="event" /></div>
+          {event.includes("delay") && <div className="w-28"><Select value={delay} onValueChange={setDelay} options={[{ value: "90", label: "90 min" }, { value: "150", label: "150 min" }, { value: "200", label: "200 min" }, { value: "300", label: "300 min" }, { value: "400", label: "400 min" }]} aria-label="delay" /></div>}
+        </div>
+        <p className="mt-2 text-xs text-[var(--muted)]">Pick a hold below and press <strong>Adjudicate</strong> — the agent decides the refund/release split and settles it.</p>
+      </Card>
+
+      {decision && (
+        <Card className="mb-4 border-l-4 border-[var(--brand-500)]">
+          <div className="mb-1 flex items-center gap-2"><Badge variant="brand">AI verdict</Badge><span className="text-sm font-semibold capitalize">{decision.decision.verdict.replace(/_/g, " ")} · {decision.decision.refund_pct}% refund</span></div>
+          <p className="text-sm">Refund <strong><Money amount={decision.decision.refund_amount} currency={decision.decision.currency} /></strong> to traveller · release <strong><Money amount={decision.decision.release_amount} currency={decision.decision.currency} /></strong> to supplier.</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">{decision.decision.rationale}</p>
+          <p className="mt-1 text-xs text-[var(--muted)]"><strong>Basis:</strong> {decision.decision.policy_basis}</p>
+        </Card>
+      )}
+
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
+        : !holds.length ? <Card><p className="text-sm text-[var(--muted)]">No escrow holds yet — open one from your active trip above.</p></Card>
+          : (
+            <div className="space-y-2">
+              {holds.map((h) => (
+                <Card key={h.id} className="flex flex-wrap items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{h.description || h.booking_ref}</p>
+                    <p className="text-xs text-[var(--muted)]">held <Money amount={h.amount} currency={h.currency} /> · refunded <Money amount={h.refunded} currency={h.currency} /> · released <Money amount={h.released} currency={h.currency} /></p>
+                  </div>
+                  <Badge variant={h.status === "held" ? "brand" : h.status === "refunded" ? "warning" : "success"}>{h.status}</Badge>
+                  <Button size="sm" onClick={() => adjudicate(h.id)} loading={busy}>Adjudicate</Button>
+                </Card>
+              ))}
+            </div>
+          )}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- Policy */
+
+type Traveller = { trip_id: string; destination: string; safety_level: string };
+type CorpFull = {
+  policy: { configured: boolean; max_fare_amount: number | null; fare_currency: string; max_cabin: string | null; preferred_carriers: string[]; max_hotel_per_night: number | null };
+  policy_violations: number;
+  duty_of_care: { travellers: Traveller[]; at_risk: number };
+  esg: { total_co2_kg: number; total_offset_usd: number; trips_measured: number };
+};
+
+export function ConsolePolicy() {
+  const { data, loading } = useGet<CorpFull>("/agency/corporate");
+  const p = data?.policy;
+  return (
+    <div>
+      <PageHead icon={FileCheck2} title="Policy, duty of care & ESG" subtitle="Corporate controls the agents enforce on every search + fleet risk and carbon." />
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p> : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold">Travel policy {data && data.policy_violations > 0 ? <Badge variant="warning">{data.policy_violations} flagged</Badge> : p?.configured ? <Badge variant="success">compliant</Badge> : null}</div>
+            {!p?.configured ? <p className="text-sm text-[var(--muted)]">No policy set — upload one in the assistant (📎) and the flight/hotel agents will enforce it.</p>
+              : (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {p.max_fare_amount != null && <Chip>Fare cap {p.fare_currency} {p.max_fare_amount.toLocaleString()}</Chip>}
+                  {p.max_cabin && <Chip>Max cabin: {p.max_cabin.replace(/_/g, " ")}</Chip>}
+                  {p.max_hotel_per_night != null && <Chip>Hotel ≤ {p.max_hotel_per_night.toLocaleString()}/night</Chip>}
+                  {p.preferred_carriers.slice(0, 5).map((c) => <Chip key={c}>✈ {c}</Chip>)}
+                </div>
+              )}
+          </Card>
+          <Card>
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="h-4 w-4 text-[var(--brand-500)]" /> Duty of care {data && <span className="ml-auto text-xs text-[var(--muted)]">{data.duty_of_care.at_risk} need attention</span>}</div>
+            {!data?.duty_of_care.travellers.length ? <p className="text-sm text-[var(--muted)]">No trips with safety data yet.</p>
+              : <div className="space-y-1.5">{data.duty_of_care.travellers.slice(0, 8).map((t) => (
+                <div key={t.trip_id} className="flex items-center gap-2 text-sm"><RiskPill level={t.safety_level} /><span className="truncate">{t.destination}</span></div>
+              ))}</div>}
+          </Card>
+          <Card className="lg:col-span-2">
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><Leaf className="h-4 w-4 text-[var(--success)]" /> ESG · carbon</div>
+            {!data?.esg.trips_measured ? <p className="text-sm text-[var(--muted)]">Carbon appears once trips run the sustainability agent.</p>
+              : <div className="grid grid-cols-3 gap-3">
+                <Stat label="Flight CO₂ (kg)" value={data.esg.total_co2_kg.toLocaleString()} />
+                <Stat label="Offset cost" value={<Money amount={data.esg.total_offset_usd} currency="USD" />} />
+                <Stat label="Trips measured" value={data.esg.trips_measured} />
+              </div>}
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Chip({ children }: { children: ReactNode }) {
+  return <span className="rounded-[var(--r-pill)] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1">{children}</span>;
+}
+function RiskPill({ level }: { level: string }) {
+  const map: Record<string, string> = {
+    safe: "bg-[color-mix(in_srgb,var(--success)_18%,transparent)] text-[var(--success)]",
+    caution: "bg-[color-mix(in_srgb,var(--warning)_18%,transparent)] text-[var(--warning)]",
+    dangerous: "bg-[color-mix(in_srgb,var(--danger,#dc2626)_18%,transparent)] text-[var(--danger,#dc2626)]",
+  };
+  return <span className={cn("shrink-0 rounded-[var(--r-pill)] px-2 py-0.5 text-[0.65rem] font-medium capitalize", map[level] ?? "bg-[var(--bg)] text-[var(--muted)]")}>{level}</span>;
+}
