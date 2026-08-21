@@ -205,6 +205,16 @@ function Panel({
           <DataPanel result={results.language} title="Language & etiquette" />
         </>
       );
+    case "shopping":
+      return <DataPanel result={results.shopping} title="Shopping" />;
+    case "payment":
+      return <DataPanel result={results.payment} title="Money & payments" />;
+    case "sustainability":
+      return <DataPanel result={results.sustainability} title="Sustainability" />;
+    case "analytics":
+      return <DataPanel result={results.analytics} title="Trip analytics" />;
+    case "concierge":
+      return <DataPanel result={results.concierge} title="Concierge & reservations" />;
     default:
       return null;
   }
