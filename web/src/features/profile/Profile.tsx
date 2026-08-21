@@ -104,14 +104,25 @@ export function Profile() {
             <Switch.Root
               checked={profile.halal_required}
               onCheckedChange={(v) => update("halal_required", v)}
+              // Inline dimensions so the track can NEVER collapse to the thumb's
+              // width (a JIT/arbitrary-class miss made it render as a squashed
+              // near-square before). 52x28 track, 24px thumb sliding 2 -> 26px.
+              style={{ width: 52, height: 28 }}
               className={cn(
-                "relative h-7 w-[3.25rem] shrink-0 rounded-[var(--r-pill)] transition-colors",
+                "relative shrink-0 rounded-[var(--r-pill)] transition-colors",
                 "duration-[var(--dur)] ease-[var(--ease)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
                 profile.halal_required ? "bg-[var(--brand-500)]" : "bg-[var(--border)]",
               )}
             >
-              <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-white shadow-[var(--shadow-1)] transition-transform duration-[var(--dur)] data-[state=checked]:translate-x-[1.625rem]" />
+              <Switch.Thumb
+                style={{
+                  width: 24,
+                  height: 24,
+                  transform: `translateX(${profile.halal_required ? 26 : 2}px)`,
+                }}
+                className="block rounded-full bg-white shadow-[var(--shadow-1)] transition-transform duration-[var(--dur)]"
+              />
             </Switch.Root>
           </div>
         </section>
