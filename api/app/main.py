@@ -200,7 +200,10 @@ async def plan(body: PlanRequest, request: Request) -> PlanResponse:
 
     from app.brain import knowledge
 
-    await knowledge.record_from_plan(results)
+    try:
+        await knowledge.record_from_plan(results)
+    except Exception:  # noqa: BLE001 — knowledge capture must never fail a plan
+        logger.warning("record_from_plan failed", exc_info=True)
 
     # A plan is NOT auto-saved as the active trip — that only happens when the
     # traveller explicitly taps "Add to my trip" (POST /trip/save).

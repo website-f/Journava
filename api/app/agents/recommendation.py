@@ -135,6 +135,8 @@ class RecommendationAgent(BaseAgent):
                 agent="recommendation",
             )
             data = json.loads(resp)
+            if not isinstance(data, dict):
+                raise TypeError("LLM did not return a JSON object")
         except Exception:  # noqa: BLE001 — degrade to an empty result, never crash the plan
             data = {"activities": []}
 

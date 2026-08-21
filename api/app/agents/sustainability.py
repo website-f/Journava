@@ -77,6 +77,8 @@ class SustainabilityAgent(BaseAgent):
                 agent="sustainability",
             )
             data = json.loads(resp)
+            if not isinstance(data, dict):
+                raise TypeError("LLM did not return a JSON object")
         except Exception:  # noqa: BLE001
             data = {
                 "flight_co2_kg": 0,

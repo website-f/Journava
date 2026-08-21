@@ -91,10 +91,16 @@ async def _run_plan_job(body: PlanJobRequest, user_id: str | None) -> dict[str, 
     results = await run_plan(trip_request, profile, scope=scope)
     duration_ms = int((time.monotonic() - started) * 1000)
 
-    # Document what the agents just learned into the knowledge library.
+    # Document what the agents just learned into the knowledge library. Must
+    # never fail the plan — it's best-effort post-processing.
     from app.brain import knowledge
 
-    await knowledge.record_from_plan(results)
+    try:
+        await knowledge.record_from_plan(results)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("journava").warning("record_from_plan failed", exc_info=True)
 
     # NOTE: a plan is NOT auto-saved as the active trip. It becomes the trip only
     # when the traveller taps "Add to my trip" (POST /trip/save) after reviewing

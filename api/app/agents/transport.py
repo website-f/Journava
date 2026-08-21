@@ -80,6 +80,8 @@ class TransportAgent(BaseAgent):
                 agent="transport",
             )
             data = json.loads(resp)
+            if not isinstance(data, dict):
+                raise TypeError("LLM did not return a JSON object")
         except Exception:  # noqa: BLE001
             data = {
                 "airport_transfer": [

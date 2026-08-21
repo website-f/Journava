@@ -68,6 +68,8 @@ class PaymentAgent(BaseAgent):
                 agent="payment",
             )
             data = json.loads(resp)
+            if not isinstance(data, dict):
+                raise TypeError("LLM did not return a JSON object")
         except Exception:  # noqa: BLE001
             data = {
                 "cards_accepted": True,

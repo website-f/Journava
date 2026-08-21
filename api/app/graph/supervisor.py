@@ -252,12 +252,20 @@ def _node(slug: str):
         _clock.announce(phase)
 
         agent = REGISTRY[slug]
-        result: AgentResult = await agent(
-            state["request"],
-            state["profile"],
-            caused_by="chief" if slug != "chief" else None,
-            context=state["results"] if needs_context else None,
-        )
+        try:
+            result: AgentResult = await agent(
+                state["request"],
+                state["profile"],
+                caused_by="chief" if slug != "chief" else None,
+                context=state["results"] if needs_context else None,
+            )
+        except Exception as exc:  # noqa: BLE001 — one agent must never fail the whole plan
+            logger.warning("Agent '%s' failed, skipping: %s", slug, exc, exc_info=True)
+            result = AgentResult(
+                agent=slug,
+                summary=f"{slug} could not complete and was skipped.",
+                warnings=[f"The {slug} agent failed and was skipped."],
+            )
         update: dict[str, Any] = {"results": {slug: result.model_dump(mode="json")}}
 
         # The Chief is the only node that rewrites the request for everyone else.
@@ -529,7 +537,15 @@ async def _run_without_langgraph(
         if _clock.cancelled:
             return
         _clock.announce(_PHASE_OF.get(slug, "tier1"))
-        result = await REGISTRY[slug](request, profile, caused_by=caused_by, context=context)
+        try:
+            result = await REGISTRY[slug](request, profile, caused_by=caused_by, context=context)
+        except Exception as exc:  # noqa: BLE001 — one agent must never fail the whole plan
+            logger.warning("Agent '%s' failed, skipping: %s", slug, exc, exc_info=True)
+            result = AgentResult(
+                agent=slug,
+                summary=f"{slug} could not complete and was skipped.",
+                warnings=[f"The {slug} agent failed and was skipped."],
+            )
         results[slug] = result.model_dump(mode="json")
 
     # Chief — then fold its parsed fields into the request everyone else sees.
