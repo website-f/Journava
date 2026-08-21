@@ -381,6 +381,29 @@ async def build_itinerary(request: ItineraryBuild) -> dict[str, object]:
     return {"trip": updated}
 
 
+@app.post(f"{settings.api_prefix}/trip/local-intel", tags=["trip"])
+async def trip_local_intel() -> dict[str, object]:
+    """Crowd levels + best-times per place + social do's/don'ts for the trip."""
+    from app.tools import local_intel
+
+    results = await trip_store.load_trip_durable() or {}
+    if not results:
+        raise HTTPException(status_code=404, detail="No active trip")
+    chief = (results.get("chief") or {}).get("data") or {}
+    destination = chief.get("destination") or (chief.get("resolved_request") or {}).get("destination") or ""
+    seen: set[str] = set()
+    places: list[dict[str, object]] = []
+    for opt in (results.get("research") or {}).get("options", []) or []:
+        if opt.get("kind") in ("activity", "restaurant") and opt.get("title") and opt["title"] not in seen:
+            seen.add(opt["title"])
+            places.append({"name": opt["title"], "kind": opt["kind"]})
+    for item in (results.get("itinerary") or {}).get("items", []) or []:
+        if item.get("title") and item["title"] not in seen and item.get("kind") in ("activity", "meal"):
+            seen.add(item["title"])
+            places.append({"name": item["title"], "kind": item.get("kind")})
+    return await local_intel.gather(destination, places[:12])
+
+
 # --------------------------------------------------------------------------- #
 # Knowledge library — findings the agents documented, grouped by category
 # --------------------------------------------------------------------------- #

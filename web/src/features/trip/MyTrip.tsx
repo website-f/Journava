@@ -140,6 +140,7 @@ export function MyTrip() {
       <div className="mt-8">
         <TripExtraPanels results={results as PlanResults} />
       </div>
+      <LocalIntelCard />
       <FlightWatchCard />
       <ItineraryGraphCard />
       <GuardianCard />
@@ -409,6 +410,89 @@ function ItineraryGraphCard() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Local intelligence — crowd levels + best times + social do's / don'ts
+// --------------------------------------------------------------------------- //
+
+type LocalIntel = {
+  places: { name: string; crowd_level: string; best_time: string; note: string }[];
+  recommendations: string[];
+  donts: string[];
+  sourced: boolean;
+};
+
+function LocalIntelCard() {
+  const [loading, setLoading] = useState(false);
+  const [intel, setIntel] = useState<LocalIntel | null>(null);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      setIntel(await api.post<LocalIntel>("/trip/local-intel", {}));
+    } catch {
+      toast.error("Couldn't gather local intelligence.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const crowdTone: Record<string, string> = {
+    low: "bg-[color-mix(in_srgb,var(--success)_18%,transparent)] text-[var(--success)]",
+    medium: "bg-[color-mix(in_srgb,var(--warning)_18%,transparent)] text-[var(--warning)]",
+    high: "bg-[color-mix(in_srgb,var(--danger,#dc2626)_18%,transparent)] text-[var(--danger,#dc2626)]",
+  };
+
+  return (
+    <section className="mt-8">
+      <div className="surface-card p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <Newspaper className="h-5 w-5 text-[var(--brand-500)]" />
+          <h3 className="text-base font-semibold">Local intelligence</h3>
+          {intel && <Badge variant={intel.sourced ? "success" : "brand"}>{intel.sourced ? "from live sources" : "estimate"}</Badge>}
+        </div>
+        <p className="mb-4 text-sm text-[var(--muted)]">
+          How busy each place gets and when to go, plus what locals recommend — and what to avoid.
+        </p>
+        <Button variant="secondary" onClick={run} loading={loading} disabled={loading}>
+          <Sparkles className="h-4 w-4" /> Check crowds &amp; social tips
+        </Button>
+
+        {intel && (
+          <div className="mt-5 space-y-4">
+            {!!intel.places.length && (
+              <div className="space-y-1.5">
+                {intel.places.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className={cn("shrink-0 rounded-[var(--r-pill)] px-2 py-0.5 text-[0.6rem] font-medium uppercase capitalize", crowdTone[p.crowd_level] ?? "bg-[var(--bg)] text-[var(--muted)]")}>
+                      {p.crowd_level}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    {p.best_time && <span className="shrink-0 text-xs text-[var(--muted)]">best: {p.best_time}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {!!intel.recommendations.length && (
+                <div className="rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--success)_8%,transparent)] p-3">
+                  <p className="mb-1 text-xs font-semibold text-[var(--success)]">Recommended</p>
+                  {intel.recommendations.map((r, i) => <p key={i} className="text-xs text-[var(--muted)]">✓ {r}</p>)}
+                </div>
+              )}
+              {!!intel.donts.length && (
+                <div className="rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-3">
+                  <p className="mb-1 text-xs font-semibold text-[var(--warning)]">Avoid</p>
+                  {intel.donts.map((d, i) => <p key={i} className="text-xs text-[var(--muted)]">✕ {d}</p>)}
+                </div>
+              )}
             </div>
           </div>
         )}

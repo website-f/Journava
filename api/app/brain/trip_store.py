@@ -317,7 +317,9 @@ async def build_itinerary(picks: list[dict[str, Any]], days: int, *, arrival: st
         "(~08:00 breakfast, ~13:00 lunch, ~19:00 dinner), space activities with realistic "
         "travel gaps and NO overlaps, day 1 starts no earlier than the arrival time, and if there "
         "are more picks than fit keep the best and spread them; if fewer, add sensible "
-        "free-time / rest / local-stroll blocks so no day is empty. Return JSON "
+        "free-time / rest / local-stroll blocks so no day is empty. Schedule popular / crowd-heavy "
+        "landmarks for early morning or late afternoon (off-peak) and keep midday for meals or "
+        "indoor spots, so the traveller dodges the worst queues. Return JSON "
         "{\"items\":[{day_index:int(0-based), kind:'activity'|'meal'|'transport'|'hotel', title, "
         "starts_at:'HH:MM', ends_at:'HH:MM', reasoning}]}."
     )
