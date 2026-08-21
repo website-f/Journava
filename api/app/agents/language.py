@@ -56,7 +56,11 @@ class LanguageAgent(BaseAgent):
                 ]
             ),
         )
-        languages = ", ".join(country.get("languages", [])) if country else "unknown"
+        # REST Countries resolves a *country* name; a city (e.g. "Chengdu")
+        # returns nothing, so don't force "unknown" — let the LLM name the local
+        # language from the destination itself.
+        known_langs = ", ".join(country.get("languages", [])) if country else ""
+        prompt_langs = known_langs or "(determine the local language(s) from the destination)"
 
         try:
             resp = await llm.complete(
@@ -66,7 +70,7 @@ class LanguageAgent(BaseAgent):
                         "role": "user",
                         "content": USER.format(
                             destination=destination,
-                            languages=languages,
+                            languages=prompt_langs,
                             research=research["text"] or "(no live results — use best knowledge)",
                         ),
                     },
@@ -77,15 +81,19 @@ class LanguageAgent(BaseAgent):
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
             data = {
-                "languages": [languages],
+                "languages": [known_langs] if known_langs else [],
                 "essential_phrases": [],
                 "cultural_etiquette": ["Be respectful of local customs"],
                 "dress_code": "casual",
             }
 
+        # Prefer the LLM's languages (accurate for cities) over the country lookup.
+        resolved = data.get("languages") or ([known_langs] if known_langs else [])
+        lang_label = ", ".join(str(item) for item in resolved if item) or "local language"
+
         sources = discover.source_links(research["sources"])
         return AgentResult(
             agent=self.slug,
-            summary=f"Language guide for {destination} ({languages})",
+            summary=f"Language guide for {destination} ({lang_label})",
             data={"destination": destination, **data, "sources": sources},
         )

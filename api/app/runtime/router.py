@@ -96,8 +96,10 @@ async def _run_plan_job(body: PlanJobRequest, user_id: str | None) -> dict[str, 
 
     await knowledge.record_from_plan(results)
 
-    if scope.slug in ("full_trip", "itinerary_only"):
-        await trip_store.save_trip_durable(results)
+    # NOTE: a plan is NOT auto-saved as the active trip. It becomes the trip only
+    # when the traveller taps "Add to my trip" (POST /trip/save) after reviewing
+    # and picking flights/hotels. Auto-saving here made unconfirmed plans appear
+    # on the Trip page.
 
     entry = await history.record(
         scope=scope.slug,

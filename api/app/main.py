@@ -57,13 +57,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.init_schema()
     await auth_store.seed_demo_users()
     await cache.get_redis()
-    # Restore the last trip from Postgres, or seed the demo trip so My Trip has
-    # something to render on a cold first boot.
-    if await trip_store.load_trip_durable() is None:
+    # Restore the last trip from durable storage. Only seed the Venice demo trip
+    # in demo mode (SEED_DEMO_USERS) — in production My Trip must stay empty until
+    # the traveller adds one, never show a trip they didn't create.
+    if await trip_store.load_trip_durable() is not None:
+        logger.info("Active trip restored from durable storage")
+    elif settings.seed_demo_users:
         trip_store.save_trip(get_demo_trip())
         logger.info("Demo trip seeded (Venice 7-day)")
-    else:
-        logger.info("Active trip restored from durable storage")
     yield
     await cache.close_redis()
     await db.close_pool()
@@ -201,10 +202,8 @@ async def plan(body: PlanRequest, request: Request) -> PlanResponse:
 
     await knowledge.record_from_plan(results)
 
-    # A full trip becomes *the* active trip; a narrow lookup should not replace
-    # the itinerary the traveller is actually working from.
-    if scope.slug in ("full_trip", "itinerary_only"):
-        await trip_store.save_trip_durable(results)
+    # A plan is NOT auto-saved as the active trip — that only happens when the
+    # traveller explicitly taps "Add to my trip" (POST /trip/save).
 
     entry = await history.record(
         scope=scope.slug,
@@ -235,6 +234,20 @@ async def cancel_plan() -> dict[str, bool]:
 # --------------------------------------------------------------------------- #
 # Active trip
 # --------------------------------------------------------------------------- #
+
+
+@app.get(f"{settings.api_prefix}/rates", tags=["misc"])
+async def fx_rates(base: str = "MYR") -> dict[str, object]:
+    """FX rates keyed by currency, expressed as units-per-1-`base` (Frankfurter).
+
+    Drives the result-page currency switcher: to show a price of `amount` in
+    currency C using display base B, the frontend divides by `rates[C]`.
+    """
+    from app.tools import frankfurter
+
+    base = (base or "MYR").upper()
+    rates = await frankfurter.rates(base) or {}
+    return {"base": base, "rates": {base: 1.0, **rates}}
 
 
 @app.get(f"{settings.api_prefix}/trip", tags=["trip"])
