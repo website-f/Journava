@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 #: From the skill's config.InternalSettings.sandbox_api_base_url.
 SANDBOX_BASE = "https://sandbox.atriptech.com"
 
-#: From the skill's endpoints.BUSINESS_PATHS (+ /search.do).
+#: From the skill's endpoints.BUSINESS_PATHS (+ /search.do). The refund/cancel
+#: paths are NOT in the documented skill — they're best-effort candidates tried
+#: by `refund_raw`, which falls back to a labelled ledger settlement if none work.
 PATHS = {
     "search": "/search.do",
     "verify": "/verify.do",
@@ -52,6 +54,9 @@ PATHS = {
     "order": "/order.do",
     "pay": "/pay.do",
     "query": "/queryOrderDetails.do",
+    "applyRefund": "/applyRefund.do",
+    "refund": "/refund.do",
+    "cancel": "/cancelOrder.do",
 }
 
 _TIMEOUT = httpx.Timeout(30.0, connect=6.0)
@@ -719,6 +724,68 @@ async def status_raw(order_no: str) -> dict[str, Any]:
             "mode": "simulated",
         },
     )
+
+
+#: Refund endpoints to try, in order. None are documented in the skill — this is
+#: a best-effort real attempt before the ledger fallback (the escrow adjudicator
+#: records the result either way).
+_REFUND_CANDIDATES = ("applyRefund", "refund", "cancel")
+
+
+async def refund_raw(
+    order_no: str | None,
+    amount: float,
+    *,
+    currency: str = "MYR",
+    reason: str = "",
+) -> dict[str, Any]:
+    """Best-effort REAL refund via the sandbox; falls back to a labelled ledger
+    settlement (Atlas exposes no documented refund endpoint here).
+
+    Returns {mode: live|simulated, amount, currency, atlas_ref, endpoint?, sim_reason?}.
+    """
+    creds = await _creds()
+    if creds is None or not order_no:
+        return {
+            "mode": "simulated",
+            "amount": float(amount),
+            "currency": currency,
+            "atlas_ref": None,
+            "sim_reason": "no credentials" if creds is None else "no live order to refund",
+        }
+
+    access_key, secret_key, _environment = creds
+    payload = {
+        "orderNo": order_no,
+        "refundAmount": round(float(amount), 2),
+        "currency": currency,
+        "reason": reason or "adjudicated refund",
+    }
+    last = "no refund endpoint responded"
+    for op in _REFUND_CANDIDATES:
+        try:
+            status, msg, request_id, data = await _post(op, access_key, secret_key, payload)
+        except AtlasSandboxError as exc:
+            last = f"{op}.do: {exc}"
+            continue
+        if status == 0:
+            return {
+                "mode": "live",
+                "amount": float(amount),
+                "currency": currency,
+                "atlas_ref": data.get("refundNo") or data.get("refundOrderNo") or request_id or order_no,
+                "endpoint": op,
+            }
+        last = f"{op}.do status {status} ({msg})"
+
+    logger.info("Atlas refund falling back to ledger: %s", last)
+    return {
+        "mode": "simulated",
+        "amount": float(amount),
+        "currency": currency,
+        "atlas_ref": None,
+        "sim_reason": last,
+    }
 
 
 def _requirements(value: object) -> dict[str, Any]:

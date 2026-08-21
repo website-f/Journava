@@ -392,3 +392,44 @@ CREATE TABLE IF NOT EXISTS org_policies (
     policy      JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Escrow ledger + AI adjudication (the "impossible without AI" multiplier).
+-- On booking, the fare is HELD in escrow. When something goes wrong (delay,
+-- downgrade, no-show), an adjudicator agent reasons about the claim and settles
+-- autonomously: release to the supplier, partial refund, or full refund. Money
+-- OUT (upcharges / fare-difference top-ups) settles for real via Atlas pay.do;
+-- refunds are recorded here (Atlas has no refund endpoint) after a best-effort
+-- real attempt.  UUIDs are stored as TEXT because booking refs are external.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS escrow_holds (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_ref  TEXT NOT NULL,
+    user_id      UUID REFERENCES users(id) ON DELETE SET NULL,
+    org_id       UUID REFERENCES organizations(id) ON DELETE SET NULL,
+    description  TEXT,
+    amount       NUMERIC(12,2) NOT NULL,
+    currency     TEXT NOT NULL DEFAULT 'MYR',
+    released      NUMERIC(12,2) NOT NULL DEFAULT 0,
+    refunded      NUMERIC(12,2) NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL DEFAULT 'held',  -- held | released | refunded | partial
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS escrow_holds_ref_idx ON escrow_holds (booking_ref);
+CREATE INDEX IF NOT EXISTS escrow_holds_created_idx ON escrow_holds (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS escrow_events (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    hold_id     UUID NOT NULL REFERENCES escrow_holds(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,                  -- hold | release | refund | upcharge | adjust
+    amount      NUMERIC(12,2) NOT NULL,
+    currency    TEXT NOT NULL DEFAULT 'MYR',
+    actor       TEXT NOT NULL DEFAULT 'system', -- system | agent | user
+    reason      TEXT,
+    settlement  TEXT,                            -- atlas-live | ledger | simulated
+    atlas_ref   TEXT,
+    meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS escrow_events_hold_idx ON escrow_events (hold_id, created_at);
