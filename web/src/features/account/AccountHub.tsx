@@ -48,7 +48,7 @@ export function AccountHub() {
         value={active}
         onValueChange={(value) => setParams(value === "profile" ? {} : { tab: value })}
       >
-        <TabsList className="flex-wrap">
+        <TabsList>
           {tabs.map(({ value, label, icon: Icon }) => (
             <TabsTrigger key={value} value={value}>
               <Icon className="h-4 w-4" /> {label}

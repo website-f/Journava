@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/cn";
 import { Button, Select, Badge } from "@/components/ui";
+import { CURRENCIES } from "@/lib/currencies";
 import { useAsync } from "@/lib/useAsync";
 import { api } from "@/lib/api";
 
@@ -194,15 +195,11 @@ export function Profile() {
               value={profile.budget_currency}
               onValueChange={(v) => update("budget_currency", v)}
               aria-label="Budget currency"
-              options={[
-                { value: "MYR", label: "MYR — Malaysian Ringgit" },
-                { value: "SGD", label: "SGD — Singapore Dollar" },
-                { value: "USD", label: "USD — US Dollar" },
-                { value: "EUR", label: "EUR — Euro" },
-                { value: "GBP", label: "GBP — British Pound" },
-                { value: "AED", label: "AED — UAE Dirham" },
-              ]}
+              options={CURRENCIES}
             />
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Every agent prices in this currency, and it's the default on results.
+            </p>
           </label>
           <label className="block">
             <span className="mb-2 block text-sm font-medium">Home airport</span>
