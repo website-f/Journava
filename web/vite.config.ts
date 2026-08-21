@@ -37,6 +37,12 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         // Never cache the agent SSE stream or API mutations.
         navigateFallbackDenylist: [/^\/api\//],
+        // Take over immediately on a new deploy instead of waiting for every tab
+        // to close — otherwise a rebuild keeps serving the old cached bundle
+        // (which is exactly why a fixed UI looked unchanged after redeploy).
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
       },
       devOptions: { enabled: false },
     }),
