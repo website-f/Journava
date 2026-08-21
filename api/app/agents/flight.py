@@ -154,7 +154,9 @@ class FlightAgent(BaseAgent):
                 "scope": "global",
                 "ranking": ranking,
                 "route": {"origin": origin, "destination": destination, "depart": depart},
-                "sources": source_report,
+                # destination_airports is metadata (surfaced via warnings), not a
+                # fare source — keep it out of the source badges.
+                "sources": {k: v for k, v in source_report.items() if k != "destination_airports"},
                 "bookable_count": sum(1 for o in options if o.bookable),
                 "recalled_from_memory": bool(recalled),
             },
