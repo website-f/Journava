@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Sparkles, X, Plus, ArrowUp, CheckCircle2 } from "@/components/ui/icons";
+import { Sparkles, X, Plus, ArrowUp, CheckCircle2, Paperclip } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { API_BASE, api } from "@/lib/api";
@@ -18,6 +18,7 @@ import { cn } from "@/lib/cn";
 
 type Action = { type: string; job_id?: string; scope?: string; goal?: string } | null;
 type Msg = { role: "user" | "assistant"; content: string; action?: Action; image?: string };
+type Doc = { filename: string; kind: string; summary: string; text: string };
 
 /** Three bouncing dots shown in the assistant bubble before the first token. */
 function TypingDots() {
@@ -134,6 +135,8 @@ export function AssistantPanel({
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<string | null>(null);
+  const [doc, setDoc] = useState<Doc | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -144,14 +147,30 @@ export function AssistantPanel({
 
   const send = async (text?: string) => {
     const content = (text ?? input).trim();
-    if (!content || sending) return;
+    if ((!content && !doc) || sending) return;
     const img = image;
-    const base: Msg[] = [...messages, { role: "user", content, image: img ?? undefined }];
+    const attached = doc;
+    const base: Msg[] = [
+      ...messages,
+      { role: "user", content: content || `About ${attached?.filename ?? "this document"}…`, image: img ?? undefined },
+    ];
     // Add an empty assistant placeholder we stream tokens into.
     setMessages([...base, { role: "assistant", content: "" }]);
     setInput("");
     setImage(null);
+    setDoc(null);
     setSending(true);
+
+    // The document text rides along as context on the last user turn, but stays
+    // out of the visible bubble (the summary was already shown on upload).
+    const apiMessages = base.map((m, i) =>
+      attached && i === base.length - 1
+        ? {
+            role: m.role,
+            content: `${m.content}\n\n[Attached document "${attached.filename}" — kind: ${attached.kind}]\n${attached.text}`,
+          }
+        : { role: m.role, content: m.content },
+    );
 
     const patchLast = (fn: (m: Msg) => Msg) =>
       setMessages((prev) => {
@@ -169,10 +188,7 @@ export function AssistantPanel({
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({
-          messages: base.map((m) => ({ role: m.role, content: m.content })),
-          image: img,
-        }),
+        body: JSON.stringify({ messages: apiMessages, image: img }),
       });
       if (!res.ok || !res.body) throw new Error("stream failed");
       const reader = res.body.getReader();
@@ -211,13 +227,58 @@ export function AssistantPanel({
     }
   };
 
+  const uploadDoc = async (file: File) => {
+    setUploading(true);
+    try {
+      const token = getAccessToken();
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API_BASE}/assistant/upload`, {
+        method: "POST",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: form,
+      });
+      const data = (await res.json()) as Doc & { error?: string; highlights?: string[] };
+      if (!res.ok || data.error) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `⚠️ ${data.error ?? "Couldn't read that file."}` },
+        ]);
+        return;
+      }
+      setDoc({ filename: data.filename, kind: data.kind, summary: data.summary, text: data.text });
+      const hl = (data.highlights ?? []).map((h) => `- ${h}`).join("\n");
+      const hint =
+        data.kind === "booking"
+          ? "\n\nWant me to add this to your trip?"
+          : data.kind === "policy"
+            ? "\n\nI'll keep this policy in mind for your next search."
+            : "";
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `📄 **${data.filename}** · ${data.kind}\n\n${data.summary}${hl ? "\n\n" + hl : ""}${hint}`,
+        },
+      ]);
+    } catch {
+      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Couldn't upload that file." }]);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const onFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setImage(reader.result as string);
-    reader.readAsDataURL(file);
     event.target.value = "";
+    if (!file) return;
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => setImage(reader.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      void uploadDoc(file);
+    }
   };
 
   return (
@@ -309,12 +370,40 @@ export function AssistantPanel({
                 </button>
               </div>
             )}
+            {uploading && (
+              <div className="mb-2 flex items-center gap-2 text-xs text-[var(--muted)]">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--brand-500)]" />
+                Reading document…
+              </div>
+            )}
+            {doc && (
+              <div className="mb-2 flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5">
+                <Paperclip className="h-3.5 w-3.5 shrink-0 text-[var(--brand-500)]" />
+                <span className="min-w-0 flex-1 truncate text-xs">
+                  {doc.filename} <span className="text-[var(--muted)]">· {doc.kind}</span>
+                </span>
+                <button
+                  onClick={() => setDoc(null)}
+                  aria-label="Remove document"
+                  className="shrink-0 text-[var(--muted)] hover:text-[var(--text)]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
             <div className="flex items-end gap-2">
-              <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,application/pdf,.pdf,text/plain,.txt,.md"
+                hidden
+                onChange={onFile}
+              />
               <button
                 onClick={() => fileRef.current?.click()}
-                aria-label="Attach image"
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--r-md)] border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--bg)]"
+                disabled={uploading}
+                aria-label="Attach image or document"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--r-md)] border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-50"
               >
                 <Plus className="h-5 w-5" />
               </button>
@@ -334,7 +423,7 @@ export function AssistantPanel({
               <Button
                 onClick={() => void send()}
                 loading={sending}
-                disabled={!input.trim()}
+                disabled={!input.trim() && !doc}
                 size="icon"
                 aria-label="Send"
               >

@@ -9,12 +9,13 @@ plan.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -209,3 +210,91 @@ async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
     action = data.get("action") if isinstance(data.get("action"), dict) else None
     launched = _launch(action, user_id, body.messages) if action else None
     return {"reply": reply, "action": launched}
+
+
+# --------------------------------------------------------------------------- #
+# Document upload (booking imports, corporate policy docs)                     #
+# --------------------------------------------------------------------------- #
+
+#: Cap uploads so a huge PDF can't OOM the worker or blow the LLM context.
+_MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB
+_MAX_LLM_CHARS = 12_000  # text sent to the summarizer
+_MAX_RETURN_CHARS = 6_000  # text handed back for the next chat turn's context
+
+_DOC_SYSTEM = """You are reading a document a traveller uploaded to a travel \
+assistant. Classify it and pull out the travel-relevant facts.
+
+kind:
+- "booking": a flight/hotel/transport confirmation (dates, times, PNR/confirmation \
+number, airline/hotel names, cities).
+- "policy": a corporate/company travel policy (fare caps, cabin-class rules, \
+preferred carriers/hotels, approval or per-diem rules).
+- "itinerary": a day-by-day plan.
+- "other": anything else.
+
+Respond ONLY as JSON:
+{"kind": "...", "summary": "2-4 sentence plain summary", "highlights": ["key fact", "..."]}"""
+
+
+def _extract_text(filename: str, data: bytes) -> str:
+    """Best-effort text extraction. Handles PDF (pypdf) and plain-text uploads."""
+    name = (filename or "").lower()
+    if name.endswith(".pdf") or data[:5] == b"%PDF-":
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(data))
+            parts = [(page.extract_text() or "") for page in reader.pages[:40]]
+            return "\n".join(parts).strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("pdf extract failed for %s: %s", filename, exc)
+            return ""
+    try:
+        return data.decode("utf-8", errors="replace").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _summarize_doc(text: str) -> dict[str, Any]:
+    """Classify + summarize the extracted text. Degrades to a generic summary."""
+    convo = [
+        {"role": "system", "content": _DOC_SYSTEM},
+        {"role": "user", "content": text[:_MAX_LLM_CHARS]},
+    ]
+    try:
+        resp = await llm.complete(convo, response_format={"type": "json_object"}, agent="assistant")
+        data = json.loads(resp)
+        if not isinstance(data, dict):
+            raise TypeError("doc summary not an object")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("doc summarize failed: %s", exc)
+        return {"kind": "other", "summary": "", "highlights": []}
+    kind = str(data.get("kind") or "other").strip().lower()
+    if kind not in ("booking", "policy", "itinerary", "other"):
+        kind = "other"
+    highlights = [str(h) for h in data.get("highlights", []) if isinstance(h, (str, int, float))][:8]
+    return {"kind": kind, "summary": str(data.get("summary") or "").strip(), "highlights": highlights}
+
+
+@router.post("/upload")
+async def upload(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    """Extract + summarize an uploaded document (PDF or text). Returns a summary
+    and the (capped) extracted text, which the client attaches as context to the
+    next chat turn. A "policy" doc is the seed for the corporate policy engine."""
+    raw = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        return {"error": "File too large (max 8 MB).", "filename": file.filename}
+    text = _extract_text(file.filename or "upload", raw)
+    if not text:
+        return {
+            "error": "Couldn't read any text from that file.",
+            "filename": file.filename,
+            "kind": "other",
+        }
+    summary = await _summarize_doc(text)
+    return {
+        "filename": file.filename,
+        "chars": len(text),
+        "text": text[:_MAX_RETURN_CHARS],
+        **summary,
+    }

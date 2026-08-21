@@ -29,6 +29,11 @@ dependencies = [
     # Auth: Argon2id password hashing + JWT access/refresh tokens.
     "argon2-cffi>=23,<25",
     "pyjwt>=2.9,<3",
+    # PDF text extraction for the assistant's document upload (booking imports,
+    # corporate policy docs). Pure-Python, no native build.
+    "pypdf>=5,<7",
+    # Multipart form parsing for file uploads (FastAPI UploadFile).
+    "python-multipart>=0.0.9,<1",
 ]
 
 [project.optional-dependencies]
