@@ -40,6 +40,21 @@ def require_platform_admin(request: Request) -> dict[str, Any]:
 _AGENCY_ROLES = {"owner", "admin", "staff"}
 
 
+async def resolve_org_id(request: Request) -> str:
+    """Best-effort org id for org-scoped features (policy, corporate console).
+
+    Prefers an agency membership, falls back to the caller's first org, then to
+    "default". Unlike `require_agency` this never 403s — a platform admin gets
+    their platform org so support/testing works.
+    """
+    claims = current_claims(request)
+    user_id = str(claims["sub"])
+    memberships = await store.memberships_for_user(user_id)
+    agency = next((m for m in memberships if m["org_kind"] == "agency"), None)
+    chosen = agency or (memberships[0] if memberships else None)
+    return str(chosen["org_id"]) if chosen else "default"
+
+
 async def require_agency(request: Request) -> dict[str, Any]:
     """Resolve the caller's agency (supplier) org, or 403.
 

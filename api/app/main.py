@@ -23,6 +23,7 @@ from app.auth.middleware import AuthMiddleware
 from app.auth.router import router as auth_router
 from app.agency import router as agency_router
 from app.assistant import router as assistant_router
+from app.policy import router as policy_router
 from app.runtime.router import router as runtime_router
 from app.supplier.router import router as supplier_router
 from app.brain import bookings, gnosion_client, history, outcomes, trip_store
@@ -97,6 +98,7 @@ app.include_router(runtime_router)
 app.include_router(supplier_router)
 app.include_router(assistant_router)
 app.include_router(agency_router)
+app.include_router(policy_router)
 
 
 # --------------------------------------------------------------------------- #

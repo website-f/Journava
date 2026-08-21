@@ -380,3 +380,15 @@ CREATE TABLE IF NOT EXISTS supplier_leads (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS supplier_leads_org_idx ON supplier_leads (org_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Corporate travel policy (Phase 2.3). One active policy per org — fare caps,
+-- cabin rules, preferred carriers/hotels, approval thresholds. The Flight/Hotel
+-- agents read it as an org-policy layer on top of the traveller's own prefs and
+-- flag violations; the Agency console shows compliance + duty-of-care + ESG.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS org_policies (
+    org_id      UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    policy      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

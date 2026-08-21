@@ -138,9 +138,18 @@ class FlightAgent(BaseAgent):
 
         # --- Preference-aware ranking (§7.5 soft signals only) ---
         options = self._apply_preferences(options, profile, request)
+
+        # --- Corporate policy layer (Phase 2.3): a soft nudge on top of personal
+        # prefs — preferred carriers rise, over-cap fares sink, nothing removed.
+        policy_eval = self._apply_policy(options)
+
         ranking = self._rank(options)
 
         self._remember_route(origin, destination, options, source_report)
+
+        warnings = self._warnings(options, source_report)
+        for v in policy_eval.get("violations", []):
+            warnings.append(f"Policy: {v['title']} — {v['reason']}.")
 
         summary = self._summarise(options, origin, destination, source_report)
         return AgentResult(
@@ -148,7 +157,7 @@ class FlightAgent(BaseAgent):
             summary=summary,
             options=options,
             applied_preferences=applied,
-            warnings=self._warnings(options, source_report),
+            warnings=warnings,
             data={
                 "special_requests": special_requests,
                 "scope": "global",
@@ -162,8 +171,29 @@ class FlightAgent(BaseAgent):
                 "commission_saved": _commission_saved(options),
                 "bookable_count": sum(1 for o in options if o.bookable),
                 "recalled_from_memory": bool(recalled),
+                "policy": policy_eval,
             },
         )
+
+    @staticmethod
+    def _apply_policy(options: list[Option]) -> dict[str, Any]:
+        """Re-rank by the active corporate policy and return its evaluation.
+
+        Best-effort and side-effecting on `options` order only — a missing or
+        empty policy is a no-op, and any failure leaves the flight result intact.
+        """
+        from app.brain import policy_store
+        from app.tools import policy as policy_tools
+
+        try:
+            active = policy_store.active()
+            if not active or policy_tools.is_empty(active):
+                return {"applied": False, "violations": []}
+            options.sort(key=lambda o: policy_tools.carrier_boost(o, active))
+            return policy_tools.evaluate_flights(options, active)
+        except Exception as exc:  # noqa: BLE001 — policy must never break flights
+            logger.debug("flight policy layer skipped: %s", exc)
+            return {"applied": False, "violations": []}
 
     # ---------------------------------------------------------------------- #
     # Search — the source ladder

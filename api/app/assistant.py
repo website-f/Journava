@@ -292,9 +292,28 @@ async def upload(request: Request, file: UploadFile = File(...)) -> dict[str, An
             "kind": "other",
         }
     summary = await _summarize_doc(text)
+
+    # A corporate policy doc closes the loop: extract the structured constraints
+    # and save them as the org's active policy, so the next flight/hotel search
+    # already respects it (Phase 2.3).
+    policy_saved = False
+    if summary.get("kind") == "policy":
+        try:
+            from app.auth.deps import resolve_org_id
+            from app.brain import policy_store
+            from app.tools import policy as policy_tools
+
+            org_id = await resolve_org_id(request)
+            extracted = await policy_tools.extract_from_text(text)
+            await policy_store.save_policy(org_id, extracted)
+            policy_saved = True
+        except Exception as exc:  # noqa: BLE001 — best-effort; the summary still returns
+            logger.warning("policy auto-save failed: %s", exc)
+
     return {
         "filename": file.filename,
         "chars": len(text),
         "text": text[:_MAX_RETURN_CHARS],
+        "policy_saved": policy_saved,
         **summary,
     }

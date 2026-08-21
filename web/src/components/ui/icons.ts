@@ -52,6 +52,7 @@ export {
   Image,
   Info,
   Key as KeyRound,
+  Leaf,
   List as Menu,
   Envelope as Mail,
   CircleNotch as Loader2,
