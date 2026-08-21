@@ -23,7 +23,9 @@ from app.auth.middleware import AuthMiddleware
 from app.auth.router import router as auth_router
 from app.agency import router as agency_router
 from app.assistant import router as assistant_router
+from app.bookings import router as bookings_router
 from app.escrow import router as escrow_router
+from app.finance import router as finance_router
 from app.firewall import router as firewall_router
 from app.itinerary import router as itinerary_router
 from app.monitor import router as monitor_router
@@ -111,6 +113,8 @@ app.include_router(escrow_router)
 app.include_router(itinerary_router)
 app.include_router(firewall_router)
 app.include_router(shared_router)
+app.include_router(bookings_router)
+app.include_router(finance_router)
 
 
 # --------------------------------------------------------------------------- #

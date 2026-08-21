@@ -90,7 +90,7 @@ async def get_hold(hold_id: str) -> dict[str, Any]:
 
 
 @router.post("/adjudicate")
-async def adjudicate(body: AdjudicateRequest) -> dict[str, Any]:
+async def adjudicate(body: AdjudicateRequest, request: Request) -> dict[str, Any]:
     """Agent decides the split, then the settlement executes autonomously."""
     hold = None
     if body.hold_id:
@@ -130,6 +130,22 @@ async def adjudicate(body: AdjudicateRequest) -> dict[str, Any]:
             meta={"policy_basis": decision["policy_basis"], "refund_pct": decision["refund_pct"]},
         )
         settlement["refund"] = atlas
+        # Post the refund to the finance ledger so it shows on the Finance page.
+        try:
+            from app.auth.deps import resolve_org_id
+            from app.finance import record as finance_record
+
+            await finance_record(
+                org_id=await resolve_org_id(request),
+                kind="refund",
+                amount=decision["refund_amount"],
+                currency=decision["currency"],
+                reference=hold.get("booking_ref"),
+                counterparty="traveller",
+                description=f"AI-adjudicated refund ({decision['refund_pct']}%) — {body.event_type}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.info("finance record (refund) skipped: %s", exc)
     # --- Release leg: remainder to the supplier ---
     if decision["release_amount"] > 0:
         await escrow_store.add_event(

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2,
+  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2, Calendar, Download,
 } from "@/components/ui/icons";
 import { Button, Badge, Select } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
 import { Money } from "@/components/ui/Money";
-import { api } from "@/lib/api";
+import { API_BASE, api } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 
 /* ------------------------------------------------------------------ shared */
@@ -526,6 +527,191 @@ export function ConsoleClients() {
               </Card>
             );
           })}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- Finance */
+
+type Tx = { id: string; kind: string; amount: number; currency: string; status: string; counterparty: string | null; description: string | null; reference: string | null; created_at: string };
+type FinSummary = { currency: string; income: number; refunds: number; payouts: number; net: number; count: number };
+
+const KIND_TONE: Record<string, "success" | "warning" | "brand" | "default"> = { income: "success", refund: "warning", payout: "brand", fee: "brand", adjustment: "default" };
+
+async function openReceipt(id: string) {
+  const token = getAccessToken();
+  const res = await fetch(`${API_BASE}/finance/receipt/${id}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) return toast.error("Receipt unavailable");
+  const url = URL.createObjectURL(await res.blob());
+  window.open(url, "_blank");
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+export function ConsoleFinance() {
+  const [filters, setFilters] = useState({ kind: "", status: "", q: "" });
+  const [rows, setRows] = useState<Tx[]>([]);
+  const [sum, setSum] = useState<FinSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [ai, setAi] = useState<{ summary: string; highlights: string[] } | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [sort, setSort] = useState<{ key: "created_at" | "amount"; dir: 1 | -1 }>({ key: "created_at", dir: -1 });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const qs = new URLSearchParams();
+    if (filters.kind) qs.set("kind", filters.kind);
+    if (filters.status) qs.set("status", filters.status);
+    if (filters.q) qs.set("q", filters.q);
+    try {
+      const [t, s] = await Promise.all([
+        api.get<{ transactions: Tx[] }>(`/finance/transactions?${qs.toString()}`),
+        api.get<FinSummary>("/finance/summary"),
+      ]);
+      setRows(t.transactions);
+      setSum(s);
+    } catch { /* ignore */ } finally { setLoading(false); }
+  }, [filters]);
+  useEffect(() => { load(); }, [load]);
+
+  const aiSummarize = async () => {
+    setAiBusy(true);
+    try { setAi(await api.post<{ summary: string; highlights: string[] }>("/finance/ai-summary", {})); }
+    catch { toast.error("AI summary failed"); } finally { setAiBusy(false); }
+  };
+
+  const sorted = [...rows].sort((a, b) =>
+    sort.key === "amount" ? (a.amount - b.amount) * sort.dir : (a.created_at < b.created_at ? -1 : 1) * sort.dir,
+  );
+  const toggleSort = (key: "created_at" | "amount") =>
+    setSort((s) => ({ key, dir: s.key === key && s.dir === -1 ? 1 : -1 }));
+
+  const cur = sum?.currency ?? "MYR";
+  return (
+    <div>
+      <PageHead icon={CreditCard} title="Finance" subtitle="Every money movement in one ledger — bookings, refunds, payouts — with a receipt on each and an AI readout." />
+
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Income" value={<Money amount={sum?.income ?? 0} currency={cur} />} tone="success" />
+        <Stat label="Refunds" value={<Money amount={sum?.refunds ?? 0} currency={cur} />} tone="warning" />
+        <Stat label="Payouts / fees" value={<Money amount={sum?.payouts ?? 0} currency={cur} />} />
+        <Stat label="Net" value={<Money amount={sum?.net ?? 0} currency={cur} />} tone="brand" />
+      </div>
+
+      <Card className="mb-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-[var(--brand-500)]" /> AI finance summary</div>
+          <Button size="sm" variant="secondary" onClick={aiSummarize} loading={aiBusy}>Summarise</Button>
+        </div>
+        {ai && (
+          <div className="mt-3 text-sm">
+            <p className="text-[var(--text)]">{ai.summary}</p>
+            {!!ai.highlights.length && (
+              <ul className="mt-2 space-y-1 text-[var(--muted)]">{ai.highlights.map((h, i) => <li key={i}>• {h}</li>)}</ul>
+            )}
+          </div>
+        )}
+      </Card>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="w-40"><Select value={filters.kind || "all"} onValueChange={(v) => setFilters({ ...filters, kind: v === "all" ? "" : v })} options={[{ value: "all", label: "All kinds" }, { value: "income", label: "Income" }, { value: "refund", label: "Refunds" }, { value: "payout", label: "Payouts" }, { value: "fee", label: "Fees" }]} aria-label="kind" /></div>
+        <input className={cn(inputCls, "max-w-[16rem]")} placeholder="Search party / description / ref" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} />
+        <span className="ml-auto text-xs text-[var(--muted)]">{sorted.length} transaction(s)</span>
+      </div>
+
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
+              <th className="cursor-pointer px-4 py-2" onClick={() => toggleSort("created_at")}>Date {sort.key === "created_at" ? (sort.dir === -1 ? "↓" : "↑") : ""}</th>
+              <th className="px-4 py-2">Kind</th>
+              <th className="px-4 py-2">Party</th>
+              <th className="px-4 py-2">Description</th>
+              <th className="cursor-pointer px-4 py-2 text-right" onClick={() => toggleSort("amount")}>Amount {sort.key === "amount" ? (sort.dir === -1 ? "↓" : "↑") : ""}</th>
+              <th className="px-4 py-2 text-right">Receipt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">Loading…</td></tr>
+            ) : !sorted.length ? (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">No transactions yet — take a booking and it lands here.</td></tr>
+            ) : sorted.map((t) => (
+              <tr key={t.id} className="border-b border-[var(--border)] last:border-0">
+                <td className="whitespace-nowrap px-4 py-2 text-xs text-[var(--muted)]">{(t.created_at || "").slice(0, 10)}</td>
+                <td className="px-4 py-2"><Badge variant={KIND_TONE[t.kind] ?? "default"}>{t.kind}</Badge></td>
+                <td className="px-4 py-2">{t.counterparty || "—"}</td>
+                <td className="max-w-[22rem] truncate px-4 py-2 text-[var(--muted)]">{t.description || "—"}</td>
+                <td className={cn("whitespace-nowrap px-4 py-2 text-right font-semibold", t.kind === "refund" ? "text-[var(--warning)]" : "text-[var(--text)]")}>
+                  {t.kind === "refund" ? "−" : ""}<Money amount={t.amount} currency={t.currency} />
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <button onClick={() => openReceipt(t.id)} className="inline-flex items-center gap-1 text-xs text-[var(--brand-600)] hover:underline"><Download className="h-3.5 w-3.5" /> PDF</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- Bookings */
+
+type Booking = { id: string; property_name: string; room_title: string; guest_name: string; channel: string; check_in: string | null; check_out: string | null; nights: number; amount: number; currency: string; status: string };
+type CalDay = { room: string; guest: string; amount: number; currency: string };
+
+export function ConsoleBookings() {
+  const { data, loading } = useGet<{ bookings: Booking[] }>("/bookings");
+  const cal = useGet<{ days: Record<string, CalDay[]> }>("/bookings/calendar");
+  const bookings = data?.bookings ?? [];
+  const days = Object.entries(cal.data?.days ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
+
+  return (
+    <div>
+      <PageHead icon={Building2} title="Bookings" subtitle="Direct reservations across channels — each one firewall-guarded, receipted, and posted to Finance." />
+
+      <Card className="mb-4">
+        <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><Calendar className="h-4 w-4 text-[var(--brand-500)]" /> Booking calendar</div>
+        {!days.length ? <p className="text-sm text-[var(--muted)]">No dated bookings yet.</p>
+          : (
+            <div className="flex flex-wrap gap-2">
+              {days.map(([d, list]) => (
+                <div key={d} className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3">
+                  <p className="text-xs font-semibold text-[var(--brand-600)]">{d}</p>
+                  {list.map((b, i) => (
+                    <p key={i} className="mt-1 text-xs text-[var(--muted)]">{b.guest} · {b.room}</p>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+      </Card>
+
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
+              <th className="px-4 py-2">Guest</th><th className="px-4 py-2">Room</th><th className="px-4 py-2">Dates</th>
+              <th className="px-4 py-2">Channel</th><th className="px-4 py-2 text-right">Amount</th><th className="px-4 py-2">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">Loading…</td></tr>
+              : !bookings.length ? <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">No bookings yet.</td></tr>
+                : bookings.map((b) => (
+                  <tr key={b.id} className="border-b border-[var(--border)] last:border-0">
+                    <td className="px-4 py-2 font-medium">{b.guest_name}</td>
+                    <td className="px-4 py-2 text-[var(--muted)]">{b.room_title}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-xs text-[var(--muted)]">{b.check_in || "—"} → {b.check_out || "—"} ({b.nights}n)</td>
+                    <td className="px-4 py-2 text-xs">{b.channel}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right font-semibold"><Money amount={b.amount} currency={b.currency} /></td>
+                    <td className="px-4 py-2"><Badge variant={b.status === "cancelled" ? "warning" : "success"}>{b.status}</Badge></td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+      </Card>
     </div>
   );
 }

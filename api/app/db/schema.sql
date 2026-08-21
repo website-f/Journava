@@ -478,3 +478,45 @@ CREATE TABLE IF NOT EXISTS shared_plans (
     snapshot    JSONB NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Hotel property ops (Track B): bookings + a single finance ledger.
+-- A consumer books a direct room -> the firewall guards it -> a booking is
+-- recorded -> an income transaction posts to finance -> the manager is
+-- notified. Refunds (from the escrow adjudicator) post here too, so one page
+-- shows every money movement with a receipt per transaction.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS hotel_bookings (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    listing_id    UUID REFERENCES supplier_listings(id) ON DELETE SET NULL,
+    property_name TEXT,
+    room_title    TEXT,
+    guest_name    TEXT NOT NULL,
+    guest_contact TEXT,
+    channel       TEXT NOT NULL DEFAULT 'journava',
+    check_in      DATE,
+    check_out     DATE,
+    nights        INTEGER NOT NULL DEFAULT 1,
+    amount        NUMERIC(12,2) NOT NULL DEFAULT 0,
+    currency      TEXT NOT NULL DEFAULT 'MYR',
+    status        TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | checked_in | completed | cancelled
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS hotel_bookings_org_idx ON hotel_bookings (org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS hotel_bookings_checkin_idx ON hotel_bookings (org_id, check_in);
+
+CREATE TABLE IF NOT EXISTS finance_transactions (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL,                 -- income | refund | payout | fee | adjustment
+    amount       NUMERIC(12,2) NOT NULL,
+    currency     TEXT NOT NULL DEFAULT 'MYR',
+    status       TEXT NOT NULL DEFAULT 'completed', -- completed | pending | failed
+    reference    TEXT,                          -- booking id, escrow hold id, order no
+    counterparty TEXT,                          -- guest / traveller / channel
+    description  TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS finance_tx_org_idx ON finance_transactions (org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS finance_tx_kind_idx ON finance_transactions (org_id, kind);

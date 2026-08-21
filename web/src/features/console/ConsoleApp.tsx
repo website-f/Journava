@@ -1,6 +1,6 @@
 import { Suspense, lazy, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2 } from "@/components/ui/icons";
+import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2, Calendar, Wallet } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui";
 import { useAuth } from "@/providers/AuthProvider";
 import { cn } from "@/lib/cn";
@@ -18,6 +18,8 @@ import { cn } from "@/lib/cn";
 const ConsoleOverview = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleOverview })));
 const ConsoleClients = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleClients })));
 const ConsoleListings = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleListings })));
+const ConsoleBookings = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleBookings })));
+const ConsoleFinance = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleFinance })));
 const ConsoleDisruptions = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleDisruptions })));
 const ConsoleFirewall = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleFirewall })));
 const ConsoleEscrow = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleEscrow })));
@@ -34,6 +36,7 @@ const NAV_CLIENTS = [
 ];
 const NAV_PROPERTY = [
   { to: "/console/listings", label: "Listings", icon: Building2 },
+  { to: "/console/bookings", label: "Bookings", icon: Calendar },
   { to: "/console/firewall", label: "Inventory firewall", icon: ShieldCheck },
 ];
 
@@ -41,6 +44,7 @@ function navFor(mode: ConsoleMode) {
   const items = [
     { to: "/console", label: "Overview", icon: TrendingUp, end: true },
     ...(mode === "clients" ? NAV_CLIENTS : NAV_PROPERTY),
+    { to: "/console/finance", label: "Finance", icon: Wallet },
     { to: "/console/escrow", label: "Escrow & refunds", icon: CreditCard },
     { to: "/console/policy", label: "Policy & ESG", icon: FileCheck2 },
   ];
@@ -133,6 +137,8 @@ export function ConsoleApp() {
               <Route path="/console" element={<ConsoleOverview />} />
               <Route path="/console/clients" element={<ConsoleClients />} />
               <Route path="/console/listings" element={<ConsoleListings />} />
+              <Route path="/console/bookings" element={<ConsoleBookings />} />
+              <Route path="/console/finance" element={<ConsoleFinance />} />
               <Route path="/console/disruptions" element={<ConsoleDisruptions />} />
               <Route path="/console/firewall" element={<ConsoleFirewall />} />
               <Route path="/console/escrow" element={<ConsoleEscrow />} />

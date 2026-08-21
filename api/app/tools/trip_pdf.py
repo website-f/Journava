@@ -143,3 +143,65 @@ def build_trip_pdf(results: dict[str, Any], *, title: str = "Your Trip", agency:
 
     doc.build(flow)
     return buf.getvalue()
+
+
+def build_receipt_pdf(txn: dict[str, Any], *, org: str = "Journava") -> bytes:
+    """A clean, well-formatted receipt for one finance transaction."""
+    from reportlab.platypus import Table, TableStyle
+
+    st = _styles()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * mm, bottomMargin=20 * mm, leftMargin=20 * mm, rightMargin=20 * mm)
+    flow: list[Any] = []
+
+    kind = str(txn.get("kind") or "income")
+    is_refund = kind == "refund"
+    heading = "REFUND RECEIPT" if is_refund else "RECEIPT"
+    amount = float(txn.get("amount") or 0)
+    cur = txn.get("currency") or "MYR"
+    sign = "-" if is_refund else ""
+
+    flow.append(Paragraph(_esc(org), st["title"]))
+    flow.append(Paragraph(heading, st["sub"]))
+    flow.append(HRFlowable(width="100%", color=_BRAND, thickness=1.2, spaceAfter=8))
+
+    rid = str(txn.get("id") or "")[:8].upper()
+    meta = [
+        ["Receipt no.", rid],
+        ["Date", str(txn.get("created_at") or "")[:19].replace("T", " ")],
+        ["Type", kind.title()],
+        ["Status", str(txn.get("status") or "completed").title()],
+        ["Reference", str(txn.get("reference") or "—")],
+        ["Party", str(txn.get("counterparty") or "—")],
+    ]
+    t = Table(meta, colWidths=[35 * mm, 120 * mm])
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+        ("TEXTCOLOR", (0, 0), (0, -1), _MUTED),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    flow.append(t)
+    flow.append(Spacer(1, 10))
+
+    line = Table(
+        [["Description", "Amount"], [_esc(txn.get("description") or kind.title()), f"{sign}{cur} {amount:,.2f}"]],
+        colWidths=[120 * mm, 35 * mm],
+    )
+    line.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 10),
+        ("FONT", (0, 1), (-1, -1), "Helvetica", 11),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, _MUTED),
+        ("LINEABOVE", (0, 1), (-1, 1), 0.25, colors.HexColor("#E2E8F0")),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TEXTCOLOR", (1, 1), (1, 1), colors.HexColor("#B91C1C") if is_refund else _BRAND),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    flow.append(line)
+    flow.append(Spacer(1, 14))
+    flow.append(HRFlowable(width="100%", color=_MUTED, thickness=0.5, spaceAfter=4))
+    flow.append(Paragraph(f"Issued by {_esc(org)} via Journava. This is a computer-generated receipt.", st["small"]))
+
+    doc.build(flow)
+    return buf.getvalue()
