@@ -1,6 +1,6 @@
 import { Suspense, lazy } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles } from "@/components/ui/icons";
+import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2 } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui";
 import { useAuth } from "@/providers/AuthProvider";
 import { cn } from "@/lib/cn";
@@ -16,6 +16,7 @@ import { cn } from "@/lib/cn";
  */
 
 const ConsoleOverview = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleOverview })));
+const ConsoleListings = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleListings })));
 const ConsoleDisruptions = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleDisruptions })));
 const ConsoleFirewall = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleFirewall })));
 const ConsoleEscrow = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleEscrow })));
@@ -23,7 +24,8 @@ const ConsolePolicy = lazy(() => import("./panels").then((m) => ({ default: m.Co
 
 const NAV = [
   { to: "/console", label: "Overview", icon: TrendingUp, end: true },
-  { to: "/console/disruptions", label: "Disruption ops", icon: Plane },
+  { to: "/console/listings", label: "Listings", icon: Building2 },
+  { to: "/console/disruptions", label: "Trip operations", icon: Plane },
   { to: "/console/firewall", label: "Inventory firewall", icon: ShieldCheck },
   { to: "/console/escrow", label: "Escrow & refunds", icon: CreditCard },
   { to: "/console/policy", label: "Policy & ESG", icon: FileCheck2 },
@@ -101,6 +103,7 @@ export function ConsoleApp() {
           <Suspense fallback={<PanelSkeleton />}>
             <Routes location={location}>
               <Route path="/console" element={<ConsoleOverview />} />
+              <Route path="/console/listings" element={<ConsoleListings />} />
               <Route path="/console/disruptions" element={<ConsoleDisruptions />} />
               <Route path="/console/firewall" element={<ConsoleFirewall />} />
               <Route path="/console/escrow" element={<ConsoleEscrow />} />

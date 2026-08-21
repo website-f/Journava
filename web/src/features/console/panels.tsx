@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2,
+  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2,
 } from "@/components/ui/icons";
 import { Button, Badge, Select } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
@@ -148,10 +148,10 @@ export function ConsoleDisruptions() {
   const b = watch?.budget;
   return (
     <div>
-      <PageHead icon={Plane} title="Disruption ops" subtitle="Detect a delay, auto-reschedule within budget, and cascade the itinerary graph." />
+      <PageHead icon={Plane} title="Trip operations" subtitle="Your agents monitor every managed traveller's flight; if one is disrupted they auto-rebook within budget and cascade the itinerary. Use a drill to watch the agent work." />
 
       <Card className="mb-4">
-        <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Zap className="h-4 w-4 text-[var(--brand-500)]" /> Flight watch &amp; auto-reschedule</div>
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Zap className="h-4 w-4 text-[var(--brand-500)]" /> Flight watch &amp; auto-reschedule <span className="ml-2 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-2 py-0.5 text-[0.65rem] font-medium text-[var(--success)]">monitoring on</span></div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="w-48"><Select value={mode} onValueChange={setMode} options={[{ value: "real", label: "Check live status" }, { value: "delayed", label: "Demo: delay" }, { value: "cancelled", label: "Demo: cancellation" }]} aria-label="mode" /></div>
           <label className="flex items-center gap-2 text-sm"><Switch checked={auto} onCheckedChange={setAuto} aria-label="auto" /> Auto-reschedule</label>
@@ -252,10 +252,11 @@ export function ConsoleFirewall() {
   const listings = data?.listings ?? [];
   return (
     <div>
-      <PageHead icon={ShieldCheck} title="Inventory firewall" subtitle="Reconcile room state across channels and block a double-booking before it happens." />
-      <div className="mb-4 flex flex-wrap gap-2">
-        <Button variant="secondary" onClick={seed} loading={busy === "seed"}>Seed demo inventory</Button>
-        <Button variant="secondary" onClick={reconcile} loading={busy === "reconcile"}>Reconcile all</Button>
+      <PageHead icon={ShieldCheck} title="Inventory firewall" subtitle="Every booking passes an atomic guard so two channels can never sell the same room. Auto-guard is always on — reconcile drift, or run a drill to watch it block a double-booking." />
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <span className="rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-2.5 py-1 text-xs font-medium text-[var(--success)]">Auto-guard ON</span>
+        <Button variant="secondary" onClick={reconcile} loading={busy === "reconcile"}>Reconcile channels</Button>
+        <Button variant="ghost" onClick={seed} loading={busy === "seed"}>Load sample inventory</Button>
       </div>
 
       {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
@@ -282,7 +283,7 @@ export function ConsoleFirewall() {
                 <p key={i} className="mt-2 flex items-start gap-1.5 text-xs text-[var(--warning)]"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {d.detail}</p>
               ))}
               <div className="mt-3">
-                <Button size="sm" variant="danger" onClick={() => simulate(l.listing_id)} loading={busy === "race"}>Simulate double-booking race</Button>
+                <Button size="sm" variant="danger" onClick={() => simulate(l.listing_id)} loading={busy === "race"}>Run drill: two channels, one room</Button>
               </div>
               {race && !race.error && (
                 <div className="mt-3 rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">
@@ -423,6 +424,154 @@ export function ConsolePolicy() {
 
 function Chip({ children }: { children: ReactNode }) {
   return <span className="rounded-[var(--r-pill)] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1">{children}</span>;
+}
+
+/* ------------------------------------------------------------- Listings */
+
+type SupplierListing = { id: string; title: string; price_amount: number | null; price_currency: string; capacity: number | null; perks: string[]; available: boolean };
+type SupplierProperty = { id: string; name: string; city: string; kind: string; halal_friendly: boolean; listings: SupplierListing[] };
+type Visibility = { cities: string[]; live_rooms: number; appeared_in_searches: number; leads: number };
+type Draft = { name: string; city: string; kind: string; room_title: string; description: string; perks: string[]; suggested_price: number; price_currency: string; capacity: number; halal_friendly: boolean };
+type Lead = { id: string; status: string; note: string | null; traveler_email: string | null; property_name: string | null; listing_title: string | null };
+type PriceRec = { recommended_price: number; currency: string; comp_low: number | null; comp_high: number | null; delta_pct: number; rationale: string; current_price: number | null; sourced: boolean };
+
+const inputCls = "w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]";
+
+export function ConsoleListings() {
+  const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
+  const vis = useGet<Visibility>("/supplier/ai/visibility");
+  const leads = useGet<{ leads: Lead[] }>("/supplier/leads");
+
+  const [hint, setHint] = useState({ name: "", city: "", room: "", notes: "", halal_friendly: true });
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [busy, setBusy] = useState("");
+  const [prices, setPrices] = useState<Record<string, PriceRec>>({});
+  const [replies, setReplies] = useState<Record<string, string>>({});
+
+  const aiDraft = async () => {
+    if (!hint.city) return toast.info("Enter a city first.");
+    setBusy("draft");
+    try {
+      const r = await api.post<{ draft: Draft }>("/supplier/ai/draft-listing", { ...hint, kind: "hotel" });
+      setDraft(r.draft);
+    } catch { toast.error("AI draft failed"); } finally { setBusy(""); }
+  };
+  const publish = async () => {
+    if (!draft) return;
+    setBusy("publish");
+    try {
+      await api.post("/supplier/ai/publish", {
+        name: draft.name, city: draft.city, kind: draft.kind, halal_friendly: draft.halal_friendly,
+        room_title: draft.room_title, description: draft.description, price_amount: draft.suggested_price,
+        price_currency: draft.price_currency, perks: draft.perks, capacity: draft.capacity,
+      });
+      toast.success("Published — live to travellers searching " + draft.city);
+      setDraft(null); setHint({ name: "", city: "", room: "", notes: "", halal_friendly: true });
+      props.reload(); vis.reload();
+    } catch { toast.error("Publish failed"); } finally { setBusy(""); }
+  };
+  const aiPrice = async (id: string) => {
+    setBusy("price:" + id);
+    try {
+      const rec = await api.post<PriceRec>(`/supplier/ai/price/${id}`, {});
+      setPrices((p) => ({ ...p, [id]: rec }));
+    } catch { toast.error("Price agent failed"); } finally { setBusy(""); }
+  };
+  const aiReply = async (id: string) => {
+    setBusy("reply:" + id);
+    try { const r = await api.post<{ reply: string }>(`/supplier/ai/lead-reply/${id}`, {}); setReplies((p) => ({ ...p, [id]: r.reply })); }
+    catch { toast.error("Concierge failed"); } finally { setBusy(""); }
+  };
+
+  const v = vis.data;
+  const properties = props.data?.properties ?? [];
+  const leadList = leads.data?.leads ?? [];
+
+  return (
+    <div>
+      <PageHead icon={Building2} title="Listings" subtitle="Your agents write, price and publish rooms — live to travellers, no OTA in the middle." />
+
+      <Card className="mb-4 border-l-4 border-[var(--brand-500)]">
+        <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Live to travellers</p>
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+          <span className="text-2xl font-bold text-[var(--brand-500)]">{v?.live_rooms ?? 0} rooms</span>
+          <span className="text-sm text-[var(--muted)]">surfaced in <strong className="text-[var(--text)]">{v?.appeared_in_searches ?? 0}</strong> traveller searches · <strong className="text-[var(--text)]">{v?.leads ?? 0}</strong> leads</span>
+        </div>
+        {!!v?.cities.length && <p className="mt-1 text-sm text-[var(--muted)]">Your direct rooms rank ahead of the OTAs when travellers search: {v.cities.join(", ")}.</p>}
+      </Card>
+
+      {/* AI listing composer */}
+      <Card className="mb-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-[var(--brand-500)]" /> AI listing composer</div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input className={inputCls} placeholder="Property name" value={hint.name} onChange={(e) => setHint({ ...hint, name: e.target.value })} />
+          <input className={inputCls} placeholder="City (e.g. Kota Kinabalu)" value={hint.city} onChange={(e) => setHint({ ...hint, city: e.target.value })} />
+          <input className={inputCls} placeholder="Room / ticket (e.g. Deluxe Sea View)" value={hint.room} onChange={(e) => setHint({ ...hint, room: e.target.value })} />
+          <input className={inputCls} placeholder="Notes (amenities, location…)" value={hint.notes} onChange={(e) => setHint({ ...hint, notes: e.target.value })} />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm"><Switch checked={hint.halal_friendly} onCheckedChange={(c) => setHint({ ...hint, halal_friendly: c })} aria-label="halal" /> Halal-friendly</label>
+          <Button onClick={aiDraft} loading={busy === "draft"}><Sparkles className="h-4 w-4" /> Draft with AI</Button>
+        </div>
+
+        {draft && (
+          <div className="mt-4 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-4">
+            <div className="mb-1 flex items-center gap-2"><Badge variant="brand">AI draft</Badge><span className="font-semibold">{draft.room_title}</span><span className="ml-auto text-sm font-semibold">{draft.price_currency} {draft.suggested_price.toLocaleString()}/night</span></div>
+            <p className="text-sm text-[var(--muted)]">{draft.description}</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">{draft.perks.map((p) => <Chip key={p}>{p}</Chip>)}</div>
+            <div className="mt-3 flex gap-2"><Button size="sm" onClick={publish} loading={busy === "publish"}>Publish — go live</Button><Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Discard</Button></div>
+          </div>
+        )}
+      </Card>
+
+      {/* Properties + rooms */}
+      <h3 className="mb-2 text-sm font-semibold">Your properties</h3>
+      {props.loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
+        : !properties.length ? <Card><p className="text-sm text-[var(--muted)]">No properties yet — draft your first room above.</p></Card>
+          : properties.map((prop) => (
+            <Card key={prop.id} className="mb-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="font-semibold">{prop.name}</span>
+                <span className="text-xs text-[var(--muted)]">{prop.city}</span>
+                {prop.halal_friendly && <Badge variant="success">halal-friendly</Badge>}
+              </div>
+              <div className="space-y-2">
+                {(prop.listings ?? []).map((l) => (
+                  <div key={l.id} className="rounded-[var(--r-md)] bg-[var(--bg)] p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{l.title}</span>
+                      <span className="shrink-0 text-sm font-semibold"><Money amount={l.price_amount ?? 0} currency={l.price_currency} />/night</span>
+                      <Button size="sm" variant="secondary" onClick={() => aiPrice(l.id)} loading={busy === "price:" + l.id}><TrendingUp className="h-3.5 w-3.5" /> AI price</Button>
+                    </div>
+                    {prices[l.id] && (
+                      <div className="mt-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-2 text-sm">
+                        <span className="font-semibold text-[var(--brand-500)]">Recommend {prices[l.id].currency} {prices[l.id].recommended_price.toLocaleString()}</span>
+                        {prices[l.id].delta_pct ? <span className={cn("ml-2 text-xs", prices[l.id].delta_pct > 0 ? "text-[var(--success)]" : "text-[var(--warning)]")}>{prices[l.id].delta_pct > 0 ? "+" : ""}{prices[l.id].delta_pct}%</span> : null}
+                        {prices[l.id].comp_low != null && <span className="ml-2 text-xs text-[var(--muted)]">comp {prices[l.id].currency} {prices[l.id].comp_low}–{prices[l.id].comp_high}</span>}
+                        <p className="mt-0.5 text-xs text-[var(--muted)]">{prices[l.id].rationale}{!prices[l.id].sourced ? " (estimate)" : ""}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ))}
+
+      {/* Leads */}
+      <h3 className="mb-2 mt-6 text-sm font-semibold">Leads from travellers</h3>
+      {!leadList.length ? <Card><p className="text-sm text-[var(--muted)]">No leads yet — they arrive when a traveller books your direct room.</p></Card>
+        : leadList.map((ld) => (
+          <Card key={ld.id} className="mb-2">
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{ld.listing_title || ld.property_name || "Enquiry"}</p><p className="truncate text-xs text-[var(--muted)]">{ld.traveler_email || "traveller"} · {ld.note || "no note"}</p></div>
+              <Badge variant={ld.status === "new" ? "brand" : "success"}>{ld.status}</Badge>
+              <Button size="sm" variant="secondary" onClick={() => aiReply(ld.id)} loading={busy === "reply:" + ld.id}><Sparkles className="h-3.5 w-3.5" /> AI reply</Button>
+            </div>
+            {replies[ld.id] && <p className="mt-2 whitespace-pre-wrap rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">{replies[ld.id]}</p>}
+          </Card>
+        ))}
+    </div>
+  );
 }
 function RiskPill({ level }: { level: string }) {
   const map: Record<string, string> = {
