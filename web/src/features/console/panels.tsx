@@ -74,9 +74,19 @@ export function ConsoleOverview() {
   const held = (holds.data?.holds ?? []).reduce((s, h) => s + (h.amount - h.released - h.refunded), 0);
   const unhealthy = (fw.data?.listings ?? []).filter((l) => !l.healthy).length;
 
+  const [seeding, setSeeding] = useState(false);
+  const prepareDemo = async () => {
+    setSeeding(true);
+    try { await api.post("/demo/seed", {}); toast.success("Demo data ready — every panel is populated."); }
+    catch { toast.error("Could not seed demo data"); } finally { setSeeding(false); }
+  };
+
   return (
     <div>
-      <PageHead icon={TrendingUp} title="Agency console" subtitle="Your agents book, monitor and settle direct — bypassing the OTAs." />
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <PageHead icon={TrendingUp} title="Agency console" subtitle="Your agents book, monitor and settle direct — bypassing the OTAs." />
+        <Button size="sm" variant="secondary" onClick={prepareDemo} loading={seeding}><Sparkles className="h-3.5 w-3.5" /> Prepare demo data</Button>
+      </div>
 
       <Card className="mb-4 border-l-4 border-[var(--success)]">
         <p className="text-xs uppercase tracking-wide text-[var(--muted)]">OTA commission avoided</p>
@@ -760,6 +770,90 @@ export function ConsoleBookings() {
           </tbody>
         </table>
       </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------- Negotiation */
+
+type NegTurn = { party: string; message: string; offer: number | null };
+type NegDeal = { agreed: boolean; list_price: number; price: number | null; currency: string; perk: string | null; savings: number; room: string; property: string };
+type NegResult = { error?: string; deal: NegDeal; transcript: NegTurn[]; booking: { status?: string; amount?: number; currency?: string } | null };
+
+export function ConsoleNegotiate() {
+  const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
+  const [form, setForm] = useState({ listing_id: "", guest_name: "Encik Rahman", traveller_ceiling: "", wants: "late checkout, sea view", nights: "2" });
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<NegResult | null>(null);
+
+  const listingOpts = (props.data?.properties ?? []).flatMap((p) =>
+    (p.listings ?? []).filter((l) => l.price_amount != null).map((l) => ({ value: l.id, label: `${p.name} — ${l.title} (${l.price_currency} ${l.price_amount})` })),
+  );
+
+  const run = async () => {
+    if (!form.listing_id) return toast.info("Pick a room to negotiate on.");
+    setBusy(true);
+    try {
+      const r = await api.post<NegResult>("/negotiate", {
+        listing_id: form.listing_id, guest_name: form.guest_name,
+        traveller_ceiling: form.traveller_ceiling ? Number(form.traveller_ceiling) : null,
+        wants: form.wants, nights: Number(form.nights) || 1, auto_book: true,
+      });
+      if (r.error) { toast.info(r.error); return; }
+      setRes(r);
+      toast[r.deal.agreed ? "success" : "info"](r.deal.agreed ? `Deal: ${r.deal.currency} ${r.deal.price}/night` : "No deal reached");
+    } catch { toast.error("Negotiation failed"); } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <PageHead icon={Sparkles} title="Rate negotiation" subtitle="The guest's AI agent and your AI agent negotiate a rate + perks on their own — then the deal books itself, firewall-guarded, into Finance." />
+
+      <Card className="mb-4">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Select value={form.listing_id} onValueChange={(v) => setForm({ ...form, listing_id: v })} options={listingOpts.length ? listingOpts : [{ value: "", label: "No priced rooms — add one under Listings" }]} placeholder="Room" aria-label="room" />
+          <input className={inputCls} placeholder="Guest name" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} />
+          <input className={inputCls} placeholder="Guest ceiling / night (optional)" value={form.traveller_ceiling} onChange={(e) => setForm({ ...form, traveller_ceiling: e.target.value })} />
+          <input className={inputCls} placeholder="Nights" value={form.nights} onChange={(e) => setForm({ ...form, nights: e.target.value })} />
+          <input className={cn(inputCls, "sm:col-span-2")} placeholder="Guest wants (perks)" value={form.wants} onChange={(e) => setForm({ ...form, wants: e.target.value })} />
+        </div>
+        <div className="mt-2"><Button onClick={run} loading={busy}><Sparkles className="h-4 w-4" /> Let the agents negotiate</Button></div>
+      </Card>
+
+      {res && (
+        <>
+          <Card className={cn("mb-4 border-l-4", res.deal.agreed ? "border-[var(--success)]" : "border-[var(--warning)]")}>
+            {res.deal.agreed ? (
+              <div>
+                <div className="flex flex-wrap items-baseline gap-x-3">
+                  <span className="text-sm text-[var(--muted)] line-through">{res.deal.currency} {res.deal.list_price.toLocaleString()}</span>
+                  <span className="text-2xl font-bold text-[var(--success)]">{res.deal.currency} {res.deal.price?.toLocaleString()}/night</span>
+                  <span className="text-sm font-medium text-[var(--success)]">saved {res.deal.currency} {res.deal.savings.toLocaleString()}</span>
+                </div>
+                {res.deal.perk && <p className="mt-1 text-sm">+ <strong>{res.deal.perk}</strong></p>}
+                {res.booking?.status === "confirmed" && (
+                  <p className="mt-2 text-sm text-[var(--muted)]">✅ Auto-booked <strong>{res.booking.currency} {res.booking.amount?.toLocaleString()}</strong> — firewall-guarded, escrow held, posted to Finance, manager notified.</p>
+                )}
+              </div>
+            ) : <p className="text-sm text-[var(--warning)]">No deal — the guest's ceiling was below the room's floor.</p>}
+          </Card>
+
+          <div className="space-y-2">
+            {res.transcript.map((t, i) => {
+              const guest = t.party === "guest_agent";
+              return (
+                <div key={i} className={cn("flex", guest ? "justify-start" : "justify-end")}>
+                  <div className={cn("max-w-[80%] rounded-[var(--r-lg)] px-3 py-2 text-sm", guest ? "bg-[var(--bg)]" : "bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)]")}>
+                    <p className="mb-0.5 text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--muted)]">{guest ? "Guest AI" : "Hotel AI"}</p>
+                    {t.message}
+                    {t.offer != null && <span className="ml-1 rounded-[var(--r-pill)] bg-[var(--surface)] px-1.5 py-0.5 text-xs font-semibold">{res.deal.currency} {t.offer.toLocaleString()}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }

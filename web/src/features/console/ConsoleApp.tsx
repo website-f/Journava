@@ -19,6 +19,7 @@ const ConsoleOverview = lazy(() => import("./panels").then((m) => ({ default: m.
 const ConsoleClients = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleClients })));
 const ConsoleListings = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleListings })));
 const ConsoleBookings = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleBookings })));
+const ConsoleNegotiate = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleNegotiate })));
 const ConsoleFinance = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleFinance })));
 const ConsoleDisruptions = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleDisruptions })));
 const ConsoleFirewall = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleFirewall })));
@@ -37,6 +38,7 @@ const NAV_CLIENTS = [
 const NAV_PROPERTY = [
   { to: "/console/listings", label: "Listings", icon: Building2 },
   { to: "/console/bookings", label: "Bookings", icon: Calendar },
+  { to: "/console/negotiate", label: "Rate negotiation", icon: Sparkles },
   { to: "/console/firewall", label: "Inventory firewall", icon: ShieldCheck },
 ];
 
@@ -138,6 +140,7 @@ export function ConsoleApp() {
               <Route path="/console/clients" element={<ConsoleClients />} />
               <Route path="/console/listings" element={<ConsoleListings />} />
               <Route path="/console/bookings" element={<ConsoleBookings />} />
+              <Route path="/console/negotiate" element={<ConsoleNegotiate />} />
               <Route path="/console/finance" element={<ConsoleFinance />} />
               <Route path="/console/disruptions" element={<ConsoleDisruptions />} />
               <Route path="/console/firewall" element={<ConsoleFirewall />} />
