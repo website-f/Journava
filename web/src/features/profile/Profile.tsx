@@ -94,7 +94,7 @@ export function Profile() {
                 Flights stay global — a halal meal (MOML) is requested at booking.
               </p>
               {profile.halal_required && (
-                <div className="mt-2 flex gap-1">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                   <Badge variant="success">Hard filter: restaurants</Badge>
                   <Badge variant="info">Soft: hotels</Badge>
                   <Badge variant="default">Flights: MOML only</Badge>
@@ -105,13 +105,13 @@ export function Profile() {
               checked={profile.halal_required}
               onCheckedChange={(v) => update("halal_required", v)}
               className={cn(
-                "relative h-6 w-11 shrink-0 rounded-[var(--r-pill)] transition-colors",
+                "relative h-7 w-[3.25rem] shrink-0 rounded-[var(--r-pill)] transition-colors",
                 "duration-[var(--dur)] ease-[var(--ease)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
                 profile.halal_required ? "bg-[var(--brand-500)]" : "bg-[var(--border)]",
               )}
             >
-              <Switch.Thumb className="block h-5 w-5 translate-x-0.5 rounded-full bg-white shadow-[var(--shadow-1)] transition-transform duration-[var(--dur)] data-[state=checked]:translate-x-[1.375rem]" />
+              <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-white shadow-[var(--shadow-1)] transition-transform duration-[var(--dur)] data-[state=checked]:translate-x-[1.625rem]" />
             </Switch.Root>
           </div>
         </section>
