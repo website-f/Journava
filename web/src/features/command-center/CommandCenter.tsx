@@ -37,8 +37,13 @@ export function CommandCenter() {
   const activeScope = usePlanStore((s) => s.activeScope);
   const inputs = usePlanStore((s) => s.inputs);
   const resetInputs = usePlanStore((s) => s.resetInputs);
+  const setInputs = usePlanStore((s) => s.setInputs);
   const jobRunning = usePlanStore((s) => s.jobRunning);
   const runPlanJob = usePlanStore((s) => s.runPlanJob);
+
+  // Remember the departure airport once resolved (typed or picked in the popup),
+  // so re-planning a nearby city from the results keeps flying from the same place.
+  const [replanOrigin, setReplanOrigin] = useState("");
 
   const scopeSlug = searchParams.get("scope");
   const scope = scopes?.find((entry) => entry.slug === scopeSlug) ?? null;
@@ -77,7 +82,11 @@ export function CommandCenter() {
         { goal: inputs.goal.trim(), scope: scope.slug },
       );
       if (check.needs_clarification) {
-        setClarify({ needs_origin: check.needs_origin, country_only: check.country_only });
+        setClarify({
+          needs_origin: check.needs_origin,
+          country_only: check.country_only,
+          date_suggestions: check.date_suggestions,
+        });
         return;
       }
     } catch {
@@ -86,16 +95,19 @@ export function CommandCenter() {
     await dispatchPlan();
   };
 
-  const dispatchPlan = async (extra?: { origin?: string; city?: string; country?: string }) => {
+  const dispatchPlan = async (extra?: {
+    origin?: string; city?: string; country?: string; start_date?: string; end_date?: string;
+  }) => {
     if (!scope) return;
     setClarify(null);
 
     // Fold the popup answers into the goal so the parser resolves a real airport.
     const clause: string[] = [];
     if (extra?.origin?.trim()) clause.push(`flying from ${extra.origin.trim()}`);
-    if (extra?.city?.trim()) {
-      clause.push(`to ${extra.city.trim()}${extra.country ? `, ${extra.country}` : ""}`);
-    }
+    const cityDest = extra?.city?.trim()
+      ? `${extra.city.trim()}${extra.country ? `, ${extra.country}` : ""}`
+      : "";
+    if (cityDest) clause.push(`to ${cityDest}`);
     const goal = clause.length
       ? [inputs.goal.trim(), clause.join(" ")].filter(Boolean).join(" — ")
       : inputs.goal.trim();
@@ -106,10 +118,21 @@ export function CommandCenter() {
       travellers: inputs.travellers,
       budget_currency: inputs.budget_currency,
     };
-    // Only send what the traveller actually filled in — an empty string would
-    // fail date validation, and a zero budget is not the same as "no budget".
-    if (inputs.start_date) payload.start_date = inputs.start_date;
-    if (inputs.end_date) payload.end_date = inputs.end_date;
+    // Set the destination EXPLICITLY to the chosen city — the Chief honours an
+    // explicit destination over goal-parsing, so "4 days in Japan" no longer
+    // searches flights to a whole country (KUL→Japan); it flies KUL→Osaka.
+    if (cityDest) payload.destination = cityDest;
+    // Dates: a clarify suggestion wins over the (empty) form field.
+    const startDate = extra?.start_date || inputs.start_date;
+    const endDate = extra?.end_date || inputs.end_date;
+    if (startDate) payload.start_date = startDate;
+    if (endDate) payload.end_date = endDate;
+    // Persist the resolved origin + dates so a later "re-plan a nearby city"
+    // reuses them instead of dropping back to a bare goal.
+    if (extra?.origin?.trim()) setReplanOrigin(extra.origin.trim());
+    if (extra?.start_date || extra?.end_date) {
+      setInputs({ start_date: startDate, end_date: endDate });
+    }
     if (inputs.budget_amount != null) payload.budget_amount = inputs.budget_amount;
     if (scope.inputs.includes("pace")) payload.pace = inputs.pace;
 
@@ -196,6 +219,9 @@ export function CommandCenter() {
           onAskAgain={() => usePlanStore.setState({ results: null, activeScope: null })}
           onBack={backToPicker}
           onOpenTrip={() => navigate("/trip")}
+          onReplanCity={(city, country) =>
+            void dispatchPlan({ city, country, origin: replanOrigin || undefined })
+          }
         />
       )}
 

@@ -39,7 +39,6 @@ from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
 from app.supplier.router import router as supplier_router
 from app.brain import bookings, gnosion_client, history, outcomes, trip_store
-from app.brain.demo_trip import get_demo_trip
 from app.brain.trip_store import reconstruct_request
 from app.core import (
     cache,
@@ -81,6 +80,27 @@ async def _reminder_loop() -> None:
             logger.info("reminder loop error: %s", exc)
 
 
+def _is_demo_trip(trip: dict[str, object] | None) -> bool:
+    """A seeded demo trip must never masquerade as the traveller's own trip.
+
+    Matches the current marker plus the legacy Venice-demo fingerprint, so a
+    trip auto-seeded by an older build (and stuck in durable storage) is
+    recognised and cleared without any manual DB surgery on prod.
+    """
+    if not trip:
+        return False
+    if trip.get("_demo"):
+        return True
+    chief = trip.get("chief") or {}
+    data = (chief.get("data") if isinstance(chief, dict) else {}) or {}
+    summary = str(chief.get("summary") or "") if isinstance(chief, dict) else ""
+    return (
+        data.get("destination") == "Venice, Italy"
+        and data.get("origin") == "Kuala Lumpur (KUL)"
+        and summary.startswith("7-day Venice trip for 2")
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Warm the optional dependencies; none of them are required to boot."""
@@ -91,14 +111,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await auth_store.seed_demo_users()
     await cache.get_redis()
     reminder_task = asyncio.create_task(_reminder_loop())
-    # Restore the last trip from durable storage. Only seed the Venice demo trip
-    # in demo mode (SEED_DEMO_USERS) — in production My Trip must stay empty until
-    # the traveller adds one, never show a trip they didn't create.
-    if await trip_store.load_trip_durable() is not None:
+    # Restore the last trip from durable storage. My Trip must stay EMPTY until
+    # the traveller plans one and taps "Add to my trip" — never show a trip they
+    # didn't create (the old Venice demo-trip seed confused real users). Any demo
+    # trip that leaked into durable storage from an older build is cleared here,
+    # so prod self-heals on the next deploy.
+    restored = await trip_store.load_trip_durable()
+    if _is_demo_trip(restored):
+        await trip_store.delete_active()
+        logger.info("Cleared a stale demo trip from durable storage")
+    elif restored is not None:
         logger.info("Active trip restored from durable storage")
-    elif settings.seed_demo_users:
-        trip_store.save_trip(get_demo_trip())
-        logger.info("Demo trip seeded (Venice 7-day)")
     yield
     reminder_task.cancel()
     await cache.close_redis()
@@ -307,7 +330,10 @@ async def fx_rates(base: str = "MYR") -> dict[str, object]:
 async def get_trip() -> dict[str, object]:
     """Return the latest active trip (most recent plan result)."""
     trip = await trip_store.load_trip_durable()
-    if trip is None:
+    # A seeded demo trip is never the traveller's own — keep My Trip empty until
+    # they confirm a real plan. (Filtered, not deleted: the agency demo reads the
+    # same store for its escrow/guardian panels.)
+    if trip is None or _is_demo_trip(trip):
         return {"trip": None}
     return {"trip": trip}
 
@@ -1025,13 +1051,42 @@ class ClarifyRequest(BaseModel):
     scope: str
 
 
+_MONTHS = (
+    "january february march april may june july august september october november december "
+    "jan feb mar apr jun jul aug sep sept oct nov dec"
+).split()
+
+
+def _date_suggestions(goal: str) -> list[dict[str, str]]:
+    """A few sensible date ranges when the traveller gave none — sized to the
+    duration in the goal ('4 days'), so the plan has real dates to work with."""
+    from datetime import date, timedelta
+
+    m = re.search(r"(\d+)\s*(?:day|days|d|night|nights)", goal.lower())
+    span = max(1, min(int(m.group(1)) if m else 4, 21)) - 1  # nights between check-in/out
+    today = date.today()
+
+    def _fwd(days: int) -> tuple[str, str]:
+        start = today + timedelta(days=days)
+        return start.isoformat(), (start + timedelta(days=span)).isoformat()
+
+    sat_offset = (5 - today.weekday()) % 7 or 7  # next Saturday
+    picks = [
+        ("This coming weekend", *_fwd(sat_offset)),
+        ("In 2 weeks", *_fwd(14)),
+        ("Next month", *_fwd(30)),
+    ]
+    return [{"label": lbl, "start_date": s, "end_date": e} for lbl, s, e in picks]
+
+
 @app.post(f"{settings.api_prefix}/plan/clarify", tags=["planning"])
 async def plan_clarify(request: ClarifyRequest) -> dict[str, object]:
-    """Check a prompt before running: does it need an origin, or a city for a
-    country-only destination? Drives the just-in-time clarification popup so the
-    CTA is always clickable and questions appear only when something's missing."""
+    """Check a prompt before running: does it need an origin, a city for a
+    country-only destination, or dates? Drives the just-in-time clarification
+    popup so the CTA is always clickable and questions appear only when needed."""
     scope = scopes.get(request.scope)
     needs_flights = bool(scope and "route" in scope.inputs)
+    needs_dates = bool(scope and ("dates" in scope.inputs or "date" in scope.inputs))
     text = request.goal.lower()
 
     parsed = goal_parser.parse_goal(request.goal)
@@ -1045,14 +1100,54 @@ async def plan_clarify(request: ClarifyRequest) -> dict[str, object]:
             cities = info["cities"]
             named_city = any(str(c).split(" (")[0].lower() in text for c in cities)  # type: ignore[union-attr]
             if not named_city:
-                country_only = {"country": info["label"], "cities": cities}
+                country_only = {
+                    "country": info["label"],
+                    "cities": cities,
+                    "recommended": cities[0],  # the agent's default pick if "You suggest"
+                }
             break
 
+    # Suggest dates when the plan wants them and the goal names none.
+    has_date = bool(re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)) or any(mo in text for mo in _MONTHS)
+    date_suggestions = _date_suggestions(request.goal) if (needs_dates or needs_flights) and not has_date else []
+
     return {
-        "needs_clarification": bool(needs_origin or country_only),
+        "needs_clarification": bool(needs_origin or country_only or date_suggestions),
         "needs_origin": needs_origin,
         "country_only": country_only,
+        "date_suggestions": date_suggestions,
     }
+
+
+@app.get(f"{settings.api_prefix}/plan/nearby-cities", tags=["planning"])
+async def nearby_cities(destination: str = "") -> dict[str, object]:
+    """Other cities in the same country as `destination` — powers the results
+    'not this city? try …' re-plan chips. Map-first, LLM fallback for anywhere."""
+    dest = destination.strip()
+    if not dest:
+        return {"country": None, "cities": []}
+    low = dest.lower().split(",")[0].strip()
+    for key, info in _CLARIFY_COUNTRIES.items():
+        cities = [str(c).split(" (")[0] for c in info["cities"]]  # type: ignore[union-attr]
+        if key in low or any(low == c.lower() for c in cities):
+            return {"country": info["label"], "cities": [c for c in cities if c.lower() != low][:6]}
+    try:
+        from app.core import llm
+
+        raw = await llm.complete(
+            [
+                {"role": "system", "content": "Return ONLY JSON {\"country\":\"...\",\"cities\":[up to 6 other notable travel cities in the SAME country as the given place, excluding it]}"},
+                {"role": "user", "content": dest},
+            ],
+            response_format={"type": "json_object"}, agent="chief",
+        )
+        import json as _json
+
+        data = _json.loads(raw)
+        return {"country": data.get("country"), "cities": [str(c) for c in (data.get("cities") or [])][:6]}
+    except Exception as exc:  # noqa: BLE001
+        logger.info("nearby-cities fell back: %s", exc)
+        return {"country": None, "cities": []}
 
 
 # --------------------------------------------------------------------------- #

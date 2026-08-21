@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 def get_demo_trip() -> dict[str, Any]:
     """Return a comprehensive pre-planned Venice trip for demo purposes."""
     return {
+        # Marker: this is a seeded demo, never a trip the traveller confirmed.
+        # The consumer "My Trip" filters it out, and boot self-heals any that
+        # leaked into durable storage from an older build.
+        "_demo": True,
         "chief": {
             "agent": "chief",
             "summary": "7-day Venice trip for 2 — food & culture focus, RM8,000 budget",

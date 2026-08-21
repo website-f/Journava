@@ -12,7 +12,8 @@ import { cn } from "@/lib/cn";
  */
 export interface ClarifyState {
   needs_origin: boolean;
-  country_only: { country: string; cities: string[] } | null;
+  country_only: { country: string; cities: string[]; recommended?: string } | null;
+  date_suggestions?: { label: string; start_date: string; end_date: string }[];
 }
 
 export function ClarifyDialog({
@@ -22,20 +23,30 @@ export function ClarifyDialog({
 }: {
   state: ClarifyState;
   onCancel: () => void;
-  onSubmit: (answers: { origin?: string; city?: string; country?: string }) => void;
+  onSubmit: (answers: { origin?: string; city?: string; country?: string; start_date?: string; end_date?: string }) => void;
 }) {
   const [origin, setOrigin] = useState("");
   // "" = let the agent suggest (the default); a chip or the text box sets it.
   const [city, setCity] = useState("");
+  const [dateIdx, setDateIdx] = useState<number | null>(null);
   const country = state.country_only?.country;
+  const recommended = state.country_only?.recommended || state.country_only?.cities?.[0];
+  const dates = state.date_suggestions ?? [];
   const ready = !state.needs_origin || origin.trim().length > 0;
 
-  const submit = () =>
+  const submit = () => {
+    const picked = dateIdx != null ? dates[dateIdx] : undefined;
     onSubmit({
       origin: origin.trim() || undefined,
-      city: city.trim() || undefined,
+      // "You suggest" (blank) resolves to the agent's recommended city, so the
+      // plan runs for a real city (and flights get a real airport) — never a
+      // bare country.
+      city: city.trim() || (state.country_only ? recommended : undefined),
       country: state.country_only ? country : undefined,
+      start_date: picked?.start_date,
+      end_date: picked?.end_date,
     });
+  };
 
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onCancel()}>
@@ -124,7 +135,7 @@ export function ClarifyDialog({
                       )}
                     >
                       <Sparkles className="h-3.5 w-3.5" />
-                      You suggest
+                      {recommended ? `Suggest (${recommended})` : "You suggest"}
                     </button>
                   </div>
                   <input
@@ -134,6 +145,32 @@ export function ClarifyDialog({
                     onChange={(event) => setCity(event.target.value)}
                     aria-label="Custom city"
                   />
+                  <p className="mt-1.5 text-[0.65rem] text-[var(--muted)]">
+                    We'll plan {city.trim() || recommended} first — you can try other cities on the results.
+                  </p>
+                </div>
+              )}
+
+              {dates.length > 0 && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">When? (no dates given)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {dates.map((d, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setDateIdx(dateIdx === i ? null : i)}
+                        className={cn(
+                          "rounded-[var(--r-pill)] border px-3 py-1.5 text-xs font-medium transition-colors",
+                          dateIdx === i
+                            ? "border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_18%,transparent)] text-[var(--brand-600)]"
+                            : "border-[var(--border)] hover:border-[var(--brand-400)]",
+                        )}
+                      >
+                        {d.label} · {d.start_date.slice(5)}→{d.end_date.slice(5)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

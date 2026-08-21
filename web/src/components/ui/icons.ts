@@ -59,6 +59,7 @@ export {
   SignIn as LogIn,
   SignOut as LogOut,
   Microphone as Mic,
+  MapPin,
   Moon,
   NavigationArrow as Navigation,
   Newspaper,

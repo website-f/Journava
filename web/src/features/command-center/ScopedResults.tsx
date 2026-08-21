@@ -6,10 +6,12 @@ import {
   Compass,
   ExternalLink,
   FileCheck2,
+  MapPin,
   RotateCcw,
   Save,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   TrendingUp,
   Utensils,
 } from "@/components/ui/icons";
@@ -48,15 +50,19 @@ export function ScopedResults({
   onAskAgain,
   onBack,
   onOpenTrip,
+  onReplanCity,
 }: {
   scope: Scope;
   results: PlanResults;
   onAskAgain: () => void;
   onBack: () => void;
   onOpenTrip: () => void;
+  /** Re-run this same scope for a different city in the same country. */
+  onReplanCity?: (city: string, country?: string) => void;
 }) {
   const panels = (results._scope?.panels?.length ? results._scope.panels : scope.panels) ?? [];
   const agents = results._scope?.agents ?? scope.agents;
+  const destination = (results.chief?.data as { destination?: string } | undefined)?.destination;
 
   // Default the display currency to the plan's native currency (once), so prices
   // aren't converted until the traveller picks a different one from the switcher.
@@ -89,6 +95,10 @@ export function ScopedResults({
         <Badge>{agents.length} agents ran</Badge>
       </div>
 
+      {onReplanCity && destination && (
+        <AltCityStrip destination={destination} onPick={onReplanCity} />
+      )}
+
       <div className="space-y-8">
         {panels.map((panel) => (
           <Panel key={panel} name={panel} results={results} onOpenTrip={onOpenTrip} />
@@ -96,6 +106,69 @@ export function ScopedResults({
       </div>
 
       <AddToTripBar results={results} onOpenTrip={onOpenTrip} />
+    </div>
+  );
+}
+
+/**
+ * "Not set on {city}? Try another." — the agents suggest same-country cities
+ * (map-first, else Camofox/LLM), so a traveller who searched a whole country and
+ * landed on one city can re-plan a sibling city in one tap, without retyping.
+ */
+function AltCityStrip({
+  destination,
+  onPick,
+}: {
+  destination: string;
+  onPick: (city: string, country?: string) => void;
+}) {
+  const [cities, setCities] = useState<string[] | null>(null);
+  const [country, setCountry] = useState<string | undefined>();
+
+  useEffect(() => {
+    let live = true;
+    api
+      .get<{ country?: string; cities?: string[] }>(
+        `/plan/nearby-cities?destination=${encodeURIComponent(destination)}`,
+      )
+      .then((res) => {
+        if (!live) return;
+        setCountry(res.country);
+        setCities((res.cities ?? []).slice(0, 6));
+      })
+      .catch(() => live && setCities([]));
+    return () => {
+      live = false;
+    };
+  }, [destination]);
+
+  if (!cities || cities.length === 0) return null;
+
+  // The city label from the plan may be "Osaka, Japan" — show just the city.
+  const here = destination.split(",")[0]?.trim() || destination;
+
+  return (
+    <div className="mb-6 rounded-[var(--r-lg)] border border-[var(--border)] bg-[color-mix(in_srgb,var(--accent)_6%,transparent)] p-4">
+      <p className="flex items-center gap-1.5 text-sm font-medium">
+        <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+        Not set on {here}? Re-plan a nearby city
+      </p>
+      <p className="mt-0.5 text-xs text-[var(--muted)]">
+        Same trip, same dates — your agents re-run flights, stays and places for the city you pick.
+      </p>
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {cities.map((city) => (
+          <button
+            key={city}
+            type="button"
+            onClick={() => onPick(city, country)}
+            className="inline-flex items-center gap-1 rounded-[var(--r-pill)] border border-[var(--border)] px-3 py-1.5 text-xs font-medium transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
+          >
+            <MapPin className="h-3.5 w-3.5" />
+            {city}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
