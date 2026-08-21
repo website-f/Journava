@@ -1,4 +1,8 @@
-"""Concierge Agent — restaurant reservations, event bookings, special requests."""
+"""Concierge Agent — restaurant reservations, event bookings, special requests.
+
+Research-backed: crawls Camofox for what's actually bookable/on at the
+destination and cites its sources.
+"""
 
 from __future__ import annotations
 
@@ -9,16 +13,22 @@ from typing import Any
 from app.agents.base import BaseAgent
 from app.agents.schemas import AgentResult, Option, TravelerProfile, TripRequest
 from app.core import llm
+from app.tools import discover
 
 logger = logging.getLogger(__name__)
 
-SYSTEM = """You are Journava's Concierge agent. Suggest bookable experiences.
+SYSTEM = """You are Journava's Concierge agent. Suggest bookable experiences, \
+grounded in the RESEARCH provided (real, named, currently-open places/events).
 Respond in JSON:
 {"reservations": [{"name": "restaurant", "cuisine": "type", "reserve_by": "phone|website", "avg_cost_usd": 30}],
  "events": [{"name": "event", "date": "date", "book_via": "website"}],
  "special_services": ["spa", "private tour"]}"""
 
-USER = "Destination: {destination}\nInterests: {interests}\nSuggest bookable experiences."
+USER = (
+    "Destination: {destination}\nInterests: {interests}\n\n"
+    "RESEARCH (live web crawl):\n{research}\n\n"
+    "Suggest bookable experiences, favouring specific named places from the research."
+)
 
 
 class ConciergeAgent(BaseAgent):
@@ -36,13 +46,25 @@ class ConciergeAgent(BaseAgent):
         destination = request.destination or "unknown"
         interests = ", ".join(profile.interests) if profile.interests else "general sightseeing"
 
+        self.emit("working", f"Researching what's bookable in {destination}")
+        research = await discover.crawl_sources(
+            [
+                f"{destination} best restaurants to book reservations {interests}",
+                f"{destination} events things to book this month",
+            ]
+        )
+
         try:
             resp = await llm.complete(
                 [
                     {"role": "system", "content": SYSTEM},
                     {
                         "role": "user",
-                        "content": USER.format(destination=destination, interests=interests),
+                        "content": USER.format(
+                            destination=destination,
+                            interests=interests,
+                            research=research["text"] or "(no live results — use best knowledge)",
+                        ),
                     },
                 ],
                 response_format={"type": "json_object"},
@@ -64,10 +86,12 @@ class ConciergeAgent(BaseAgent):
                 reasoning=r.get("cuisine", ""),
             )
             for i, r in enumerate(data.get("reservations", []))
+            if isinstance(r, dict)
         ]
+        sources = discover.source_links(research["sources"])
         return AgentResult(
             agent=self.slug,
             summary=f"Concierge picks for {destination}",
             options=options,
-            data={"destination": destination, **data},
+            data={"destination": destination, **data, "sources": sources},
         )
