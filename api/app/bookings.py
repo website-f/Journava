@@ -167,6 +167,49 @@ async def list_bookings(agency: dict = Depends(require_agency)) -> dict[str, Any
     return {"bookings": [_booking(dict(r)) for r in rows]}
 
 
+async def send_due_reminders(*, days_ahead: int = 2, org_id: str | None = None) -> dict[str, Any]:
+    """Notify managers of upcoming check-ins not yet reminded. Marks reminded_at
+    so each booking is only pinged once. Runs org-scoped (manual) or globally
+    (the periodic task)."""
+    from app.tools import telegram
+
+    pool = await db.get_pool()
+    if pool is None:
+        return {"sent": 0, "bookings": []}
+    clause = "status <> 'cancelled' AND reminded_at IS NULL AND check_in IS NOT NULL " \
+             f"AND check_in <= (current_date + interval '{int(days_ahead)} days') AND check_in >= current_date"
+    args: list[Any] = []
+    if org_id:
+        args.append(uuid.UUID(org_id))
+        clause += f" AND org_id = ${len(args)}"
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(f"SELECT * FROM hotel_bookings WHERE {clause} ORDER BY check_in LIMIT 100", *args)
+
+    sent = 0
+    done: list[dict[str, Any]] = []
+    for r in rows:
+        b = _booking(dict(r))
+        text = (
+            f"⏰ <b>Check-in reminder</b>\n{b['guest_name']} arrives <b>{b['check_in']}</b> at "
+            f"{b['property_name']} — {b['room_title']} ({b['nights']} night(s))."
+        )
+        try:
+            await telegram.notify(text)
+            sent += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.info("reminder notify failed: %s", exc)
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE hotel_bookings SET reminded_at = now() WHERE id = $1", uuid.UUID(b["id"]))
+        done.append({"guest": b["guest_name"], "check_in": b["check_in"], "room": b["room_title"]})
+    return {"sent": sent, "bookings": done}
+
+
+@router.post("/remind-due")
+async def remind_due(agency: dict = Depends(require_agency)) -> dict[str, Any]:
+    """Manually run the check-in reminder sweep for this org (demo-friendly)."""
+    return await send_due_reminders(days_ahead=7, org_id=agency["org_id"])
+
+
 @router.get("/calendar")
 async def calendar(agency: dict = Depends(require_agency)) -> dict[str, Any]:
     """Bookings keyed by check-in date, for a month-grid view."""

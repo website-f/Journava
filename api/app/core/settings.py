@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     #: needs an absolute URL). Override with PUBLIC_BASE_URL in production.
     public_base_url: str = "http://127.0.0.1:8401"
 
+    #: WhatsApp Cloud API (Meta). When both are set, client deliveries can go over
+    #: WhatsApp; otherwise the channel reports "not configured" and we fall back
+    #: to Telegram + the share link.
+    whatsapp_token: str = ""
+    whatsapp_phone_id: str = ""
+
     dashscope_api_key: str | None = None
     gemini_api_key: str | None = None
     groq_api_key: str | None = None

@@ -429,7 +429,7 @@ function Chip({ children }: { children: ReactNode }) {
 
 /* -------------------------------------------------------------- Clients */
 
-type Client = { id: string; name: string; email: string | null; telegram_chat_id: string | null; notes: string | null };
+type Client = { id: string; name: string; email: string | null; telegram_chat_id: string | null; whatsapp: string | null; channel: string; notes: string | null };
 type ClientRun = { dest: string; jobId?: string; status?: string; share_url?: string; delivered?: boolean; detail?: string };
 
 async function pollJob(id: string): Promise<string> {
@@ -446,7 +446,7 @@ async function pollJob(id: string): Promise<string> {
 
 export function ConsoleClients() {
   const { data, loading, reload } = useGet<{ clients: Client[] }>("/agency/clients");
-  const [form, setForm] = useState({ name: "", email: "", telegram_chat_id: "", notes: "" });
+  const [form, setForm] = useState({ name: "", email: "", telegram_chat_id: "", whatsapp: "", channel: "telegram", notes: "" });
   const [adding, setAdding] = useState(false);
   const [runs, setRuns] = useState<Record<string, ClientRun>>({});
   const [busy, setBusy] = useState("");
@@ -457,7 +457,7 @@ export function ConsoleClients() {
   const addClient = async () => {
     if (!form.name.trim()) return toast.info("Name is required.");
     setAdding(true);
-    try { await api.post("/agency/clients", form); toast.success("Client added"); setForm({ name: "", email: "", telegram_chat_id: "", notes: "" }); reload(); }
+    try { await api.post("/agency/clients", form); toast.success("Client added"); setForm({ name: "", email: "", telegram_chat_id: "", whatsapp: "", channel: "telegram", notes: "" }); reload(); }
     catch { toast.error("Could not add client"); } finally { setAdding(false); }
   };
   const buildPackage = async (id: string) => {
@@ -479,10 +479,11 @@ export function ConsoleClients() {
     if (!jobId) return;
     setBusy("deliver:" + id);
     try {
-      const r = await api.post<{ error?: string; share_url?: string; delivered?: boolean; detail?: string }>("/agency/deliver", { client_id: id, job_id: jobId });
+      const r = await api.post<{ error?: string; share_url?: string; delivered?: boolean; deliveries?: { channel: string; ok: boolean; detail: string }[] }>("/agency/deliver", { client_id: id, job_id: jobId });
       if (r.error) { toast.info(r.error); return; }
-      setRun(id, { share_url: r.share_url, delivered: r.delivered, detail: r.detail });
-      toast[r.delivered ? "success" : "info"](r.delivered ? "Sent to client on Telegram" : "PDF + link ready");
+      const detail = (r.deliveries ?? []).map((d) => `${d.channel}: ${d.ok ? "sent" : d.detail}`).join(" · ");
+      setRun(id, { share_url: r.share_url, delivered: r.delivered, detail });
+      toast[r.delivered ? "success" : "info"](r.delivered ? "Delivered to client" : "PDF + link ready");
     } catch { toast.error("Delivery failed"); } finally { setBusy(""); }
   };
 
@@ -496,6 +497,8 @@ export function ConsoleClients() {
           <input className={inputCls} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <input className={inputCls} placeholder="Email (optional)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <input className={inputCls} placeholder="Telegram chat id" value={form.telegram_chat_id} onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })} />
+          <input className={inputCls} placeholder="WhatsApp number (e.g. 60123456789)" value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} />
+          <Select value={form.channel} onValueChange={(v) => setForm({ ...form, channel: v })} options={[{ value: "telegram", label: "Deliver via Telegram" }, { value: "whatsapp", label: "Deliver via WhatsApp" }, { value: "both", label: "Telegram + WhatsApp" }]} aria-label="channel" />
           <input className={inputCls} placeholder="Notes (party size, prefs)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         </div>
         <div className="mt-2"><Button onClick={addClient} loading={adding}>Add client</Button></div>
@@ -509,7 +512,9 @@ export function ConsoleClients() {
               <Card key={c.id} className="mb-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="font-semibold">{c.name}</span>
-                  {c.telegram_chat_id ? <Badge variant="success">Telegram linked</Badge> : <Badge variant="warning">no Telegram</Badge>}
+                  <Badge variant="brand">via {c.channel}</Badge>
+                  {(c.channel !== "whatsapp" && !c.telegram_chat_id) && <Badge variant="warning">no Telegram id</Badge>}
+                  {(c.channel !== "telegram" && !c.whatsapp) && <Badge variant="warning">no WhatsApp</Badge>}
                   {c.notes && <span className="text-xs text-[var(--muted)]">{c.notes}</span>}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -662,14 +667,57 @@ type Booking = { id: string; property_name: string; room_title: string; guest_na
 type CalDay = { room: string; guest: string; amount: number; currency: string };
 
 export function ConsoleBookings() {
-  const { data, loading } = useGet<{ bookings: Booking[] }>("/bookings");
+  const { data, loading, reload } = useGet<{ bookings: Booking[] }>("/bookings");
   const cal = useGet<{ days: Record<string, CalDay[]> }>("/bookings/calendar");
+  const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
   const bookings = data?.bookings ?? [];
   const days = Object.entries(cal.data?.days ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
+
+  const [form, setForm] = useState({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
+  const [busy, setBusy] = useState("");
+
+  const listingOpts = (props.data?.properties ?? []).flatMap((p) =>
+    (p.listings ?? []).map((l) => ({ value: l.id, label: `${p.name} — ${l.title}` })),
+  );
+
+  const createBooking = async () => {
+    if (!form.listing_id || !form.guest_name.trim()) return toast.info("Pick a room and enter a guest name.");
+    setBusy("book");
+    try {
+      const r = await api.post<{ status: string; reason?: string; amount?: number; currency?: string }>("/bookings", form);
+      if (r.status === "blocked") toast.warning(r.reason ?? "Firewall blocked this booking.");
+      else toast.success(`Booked — ${r.currency} ${r.amount?.toLocaleString()} · manager notified`);
+      setForm({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
+      reload(); cal.reload();
+    } catch { toast.error("Booking failed"); } finally { setBusy(""); }
+  };
+  const remind = async () => {
+    setBusy("remind");
+    try { const r = await api.post<{ sent: number }>("/bookings/remind-due", {}); toast.success(`${r.sent} check-in reminder(s) sent`); }
+    catch { toast.error("Reminder sweep failed"); } finally { setBusy(""); }
+  };
 
   return (
     <div>
       <PageHead icon={Building2} title="Bookings" subtitle="Direct reservations across channels — each one firewall-guarded, receipted, and posted to Finance." />
+
+      {/* Quick booking */}
+      <Card className="mb-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <span className="text-sm font-semibold">New booking</span>
+          <Button size="sm" variant="secondary" onClick={remind} loading={busy === "remind"}><Calendar className="h-3.5 w-3.5" /> Send check-in reminders</Button>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div><Select value={form.listing_id} onValueChange={(v) => setForm({ ...form, listing_id: v })} options={listingOpts.length ? listingOpts : [{ value: "", label: "No rooms — add one under Listings" }]} placeholder="Room" aria-label="room" /></div>
+          <input className={inputCls} placeholder="Guest name" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} />
+          <input className={inputCls} placeholder="Guest contact (email/phone)" value={form.guest_contact} onChange={(e) => setForm({ ...form, guest_contact: e.target.value })} />
+          <div className="flex gap-2">
+            <input type="date" className={inputCls} value={form.check_in} onChange={(e) => setForm({ ...form, check_in: e.target.value })} />
+            <input type="date" className={inputCls} value={form.check_out} onChange={(e) => setForm({ ...form, check_out: e.target.value })} />
+          </div>
+        </div>
+        <div className="mt-2"><Button onClick={createBooking} loading={busy === "book"}>Book &amp; notify</Button></div>
+      </Card>
 
       <Card className="mb-4">
         <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><Calendar className="h-4 w-4 text-[var(--brand-500)]" /> Booking calendar</div>

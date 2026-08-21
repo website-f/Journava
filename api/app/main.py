@@ -61,13 +61,32 @@ logging.basicConfig(
 logger = logging.getLogger("journava")
 
 
+async def _reminder_loop() -> None:
+    """Every ~6h, ping managers about upcoming check-ins (best-effort)."""
+    import asyncio
+
+    from app.bookings import send_due_reminders
+
+    while True:
+        try:
+            await asyncio.sleep(6 * 3600)
+            await send_due_reminders()
+        except asyncio.CancelledError:  # noqa: PERF203
+            break
+        except Exception as exc:  # noqa: BLE001
+            logger.info("reminder loop error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Warm the optional dependencies; none of them are required to boot."""
+    import asyncio
+
     logger.info("Journava API starting (%s)", settings.environment)
     await db.init_schema()
     await auth_store.seed_demo_users()
     await cache.get_redis()
+    reminder_task = asyncio.create_task(_reminder_loop())
     # Restore the last trip from durable storage. Only seed the Venice demo trip
     # in demo mode (SEED_DEMO_USERS) — in production My Trip must stay empty until
     # the traveller adds one, never show a trip they didn't create.
@@ -77,6 +96,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         trip_store.save_trip(get_demo_trip())
         logger.info("Demo trip seeded (Venice 7-day)")
     yield
+    reminder_task.cancel()
     await cache.close_redis()
     await db.close_pool()
     logger.info("Journava API stopped")

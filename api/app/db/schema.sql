@@ -466,6 +466,8 @@ CREATE TABLE IF NOT EXISTS agency_clients (
     name             TEXT NOT NULL,
     email            TEXT,
     telegram_chat_id TEXT,
+    whatsapp         TEXT,
+    channel          TEXT NOT NULL DEFAULT 'telegram',  -- telegram | whatsapp | both
     notes            TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -501,10 +503,14 @@ CREATE TABLE IF NOT EXISTS hotel_bookings (
     amount        NUMERIC(12,2) NOT NULL DEFAULT 0,
     currency      TEXT NOT NULL DEFAULT 'MYR',
     status        TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | checked_in | completed | cancelled
+    reminded_at   TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS hotel_bookings_org_idx ON hotel_bookings (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS hotel_bookings_checkin_idx ON hotel_bookings (org_id, check_in);
+ALTER TABLE hotel_bookings ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMPTZ;
+ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS whatsapp TEXT;
+ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'telegram';
 
 CREATE TABLE IF NOT EXISTS finance_transactions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),

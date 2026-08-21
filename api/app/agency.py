@@ -149,6 +149,8 @@ class ClientCreate(BaseModel):
     name: str
     email: str | None = None
     telegram_chat_id: str | None = None
+    whatsapp: str | None = None
+    channel: str = "telegram"  # telegram | whatsapp | both
     notes: str | None = None
 
 
@@ -171,15 +173,16 @@ async def list_clients(agency: dict = Depends(require_agency)) -> dict[str, Any]
         return {"clients": []}
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, email, telegram_chat_id, notes, created_at FROM agency_clients "
-            "WHERE org_id = $1 ORDER BY created_at DESC",
+            "SELECT id, name, email, telegram_chat_id, whatsapp, channel, notes, created_at "
+            "FROM agency_clients WHERE org_id = $1 ORDER BY created_at DESC",
             uuid.UUID(agency["org_id"]),
         )
     return {
         "clients": [
             {
                 "id": str(r["id"]), "name": r["name"], "email": r["email"],
-                "telegram_chat_id": r["telegram_chat_id"], "notes": r["notes"],
+                "telegram_chat_id": r["telegram_chat_id"], "whatsapp": r["whatsapp"],
+                "channel": r["channel"], "notes": r["notes"],
             }
             for r in rows
         ]
@@ -191,11 +194,13 @@ async def create_client(body: ClientCreate, agency: dict = Depends(require_agenc
     pool = await db.get_pool()
     if pool is None:
         return {"error": "database unavailable"}
+    channel = body.channel if body.channel in ("telegram", "whatsapp", "both") else "telegram"
     async with pool.acquire() as conn:
         cid = await conn.fetchval(
-            """INSERT INTO agency_clients (org_id, name, email, telegram_chat_id, notes)
-               VALUES ($1, $2, $3, $4, $5) RETURNING id""",
-            uuid.UUID(agency["org_id"]), body.name, body.email, body.telegram_chat_id, body.notes,
+            """INSERT INTO agency_clients (org_id, name, email, telegram_chat_id, whatsapp, channel, notes)
+               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id""",
+            uuid.UUID(agency["org_id"]), body.name, body.email, body.telegram_chat_id,
+            body.whatsapp, channel, body.notes,
         )
     return {"id": str(cid), "name": body.name}
 
@@ -218,7 +223,8 @@ async def _get_client(org_id: str, client_id: str) -> dict[str, Any] | None:
         return None
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, name, email, telegram_chat_id FROM agency_clients WHERE id = $1 AND org_id = $2",
+            "SELECT id, name, email, telegram_chat_id, whatsapp, channel "
+            "FROM agency_clients WHERE id = $1 AND org_id = $2",
             uuid.UUID(client_id), uuid.UUID(org_id),
         )
     return dict(row) if row else None
@@ -245,7 +251,7 @@ async def plan_for_client(client_id: str, body: PlanForClient, agency: dict = De
 async def deliver(body: DeliverRequest, agency: dict = Depends(require_agency)) -> dict[str, Any]:
     """Compile a completed plan into a PDF + interactive link and send to the client."""
     from app.shared import create_shared
-    from app.tools import telegram, trip_pdf
+    from app.tools import telegram, trip_pdf, whatsapp
 
     client = await _get_client(agency["org_id"], body.client_id)
     if not client:
@@ -264,16 +270,30 @@ async def deliver(body: DeliverRequest, agency: dict = Depends(require_agency)) 
     pdf = trip_pdf.build_trip_pdf(results, title=title, agency=agency.get("org_name") or "Journava")
     filename = f"{dest.replace(' ', '_')}_itinerary.pdf"
 
-    delivered, detail = False, "No Telegram chat id on file for this client."
-    if client.get("telegram_chat_id"):
-        caption = f"<b>{title}</b>\nYour full itinerary is attached. View it interactively: {share_url}"
-        delivered, detail = await telegram.deliver_document(
-            client["telegram_chat_id"], pdf, filename, caption
-        )
+    # Route by the client's preferred channel. Telegram carries the actual PDF;
+    # WhatsApp carries the message + the interactive link (the link is the PDF's
+    # home). The link is always the fallback.
+    channel = client.get("channel") or "telegram"
+    deliveries: list[dict[str, Any]] = []
+    if channel in ("telegram", "both"):
+        if client.get("telegram_chat_id"):
+            caption = f"<b>{title}</b>\nYour full itinerary is attached. View it interactively: {share_url}"
+            ok, detail = await telegram.deliver_document(client["telegram_chat_id"], pdf, filename, caption)
+        else:
+            ok, detail = False, "No Telegram chat id on file."
+        deliveries.append({"channel": "telegram", "ok": ok, "detail": detail})
+    if channel in ("whatsapp", "both"):
+        if client.get("whatsapp"):
+            msg = f"*{title}*\nYour full itinerary is ready — open it here: {share_url}"
+            ok, detail = await whatsapp.send_text(client["whatsapp"], msg)
+        else:
+            ok, detail = False, "No WhatsApp number on file."
+        deliveries.append({"channel": "whatsapp", "ok": ok, "detail": detail})
+
     return {
         "share_url": share_url,
         "token": token,
         "pdf_bytes": len(pdf),
-        "delivered": delivered,
-        "detail": detail,
+        "delivered": any(d["ok"] for d in deliveries),
+        "deliveries": deliveries,
     }
