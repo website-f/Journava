@@ -10,8 +10,14 @@ import { usePlanStore, type AgentPlanResult } from "@/stores/planStore";
  * backend still has the active trip. Every surface that renders trip data should
  * call this so they all agree on what the active trip is.
  *
- * Returns `loading` for the first fetch only; once the store has results the
- * hook is a no-op and never re-fetches over newer local state.
+ * Fetches `GET /trip` on every mount and reconciles: the server's saved trip is
+ * authoritative for the trip surface. Previously it skipped the fetch whenever
+ * the shared store already held *anything*, so a leftover scoped search (e.g. a
+ * flights-only result) masked the real saved trip until a full page refresh —
+ * that's the "only works after refresh" symptom on the trip page. It only
+ * overwrites when the server actually returns a trip, so a just-planned (unsaved)
+ * plan still survives, and edits made on the trip surface persist server-side so
+ * they come back on the next mount.
  */
 export function useActiveTrip() {
   const results = usePlanStore((s) => s.results);
@@ -19,11 +25,6 @@ export function useActiveTrip() {
   const [loading, setLoading] = useState(results === null);
 
   useEffect(() => {
-    if (results !== null) {
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
     (async () => {
       try {
@@ -41,8 +42,7 @@ export function useActiveTrip() {
     return () => {
       cancelled = true;
     };
-    // Deliberately keyed on nothing but mount: `results` becoming non-null must
-    // not retrigger a fetch, and `setResults` is stable in zustand.
+    // Runs once per mount to reconcile with the server. `setResults` is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
