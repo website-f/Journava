@@ -779,12 +779,32 @@ export function ConsoleBookings() {
 type NegTurn = { party: string; message: string; offer: number | null };
 type NegDeal = { agreed: boolean; list_price: number; price: number | null; currency: string; perk: string | null; savings: number; room: string; property: string };
 type NegResult = { error?: string; deal: NegDeal; transcript: NegTurn[]; booking: { status?: string; amount?: number; currency?: string } | null };
+type Bid = { listing_id: string; property: string; room: string; list_price: number; bid: number; currency: string; perk: string; savings: number; winner: boolean; pitch: string };
+type AuctionResult = { error?: string; headline: string; bids: Bid[]; winner: Bid; booking: { status?: string; amount?: number; currency?: string } | null };
 
 export function ConsoleNegotiate() {
   const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
+  const [mode, setMode] = useState<"single" | "auction">("single");
   const [form, setForm] = useState({ listing_id: "", guest_name: "Encik Rahman", traveller_ceiling: "", wants: "late checkout, sea view", nights: "2" });
+  const [dest, setDest] = useState("Kota Kinabalu");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<NegResult | null>(null);
+  const [auction, setAuction] = useState<AuctionResult | null>(null);
+
+  const runAuction = async () => {
+    if (!dest.trim()) return toast.info("Enter a destination.");
+    setBusy(true);
+    try {
+      const r = await api.post<AuctionResult>("/negotiate/auction", {
+        destination: dest, guest_name: form.guest_name,
+        traveller_ceiling: form.traveller_ceiling ? Number(form.traveller_ceiling) : null,
+        wants: form.wants, nights: Number(form.nights) || 1, auto_book: true,
+      });
+      if (r.error) { toast.info(r.error); return; }
+      setAuction(r);
+      toast.success(`${r.bids.length} hotels bid — ${r.winner.property} won`);
+    } catch { toast.error("Auction failed"); } finally { setBusy(false); }
+  };
 
   const listingOpts = (props.data?.properties ?? []).flatMap((p) =>
     (p.listings ?? []).filter((l) => l.price_amount != null).map((l) => ({ value: l.id, label: `${p.name} — ${l.title} (${l.price_currency} ${l.price_amount})` })),
@@ -807,20 +827,64 @@ export function ConsoleNegotiate() {
 
   return (
     <div>
-      <PageHead icon={Sparkles} title="Rate negotiation" subtitle="The guest's AI agent and your AI agent negotiate a rate + perks on their own — then the deal books itself, firewall-guarded, into Finance." />
+      <PageHead icon={Sparkles} title="Rate negotiation" subtitle="AI agents settle a rate on their own — one-to-one, or let every hotel's agent bid for the guest." />
 
-      <Card className="mb-4">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <Select value={form.listing_id} onValueChange={(v) => setForm({ ...form, listing_id: v })} options={listingOpts.length ? listingOpts : [{ value: "", label: "No priced rooms — add one under Listings" }]} placeholder="Room" aria-label="room" />
-          <input className={inputCls} placeholder="Guest name" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} />
-          <input className={inputCls} placeholder="Guest ceiling / night (optional)" value={form.traveller_ceiling} onChange={(e) => setForm({ ...form, traveller_ceiling: e.target.value })} />
-          <input className={inputCls} placeholder="Nights" value={form.nights} onChange={(e) => setForm({ ...form, nights: e.target.value })} />
-          <input className={cn(inputCls, "sm:col-span-2")} placeholder="Guest wants (perks)" value={form.wants} onChange={(e) => setForm({ ...form, wants: e.target.value })} />
+      <div className="mb-4 inline-flex gap-1 rounded-[var(--r-md)] bg-[var(--bg)] p-1 text-sm font-medium">
+        {(["single", "auction"] as const).map((m) => (
+          <button key={m} onClick={() => setMode(m)} className={cn("rounded-[calc(var(--r-md)-2px)] px-3 py-1.5", mode === m ? "bg-[var(--surface)] text-[var(--brand-600)] shadow-[var(--shadow-1)]" : "text-[var(--muted)]")}>
+            {m === "single" ? "One room (1:1)" : "City auction (N hotels bid)"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "single" ? (
+        <Card className="mb-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Select value={form.listing_id} onValueChange={(v) => setForm({ ...form, listing_id: v })} options={listingOpts.length ? listingOpts : [{ value: "", label: "No priced rooms — add one under Listings" }]} placeholder="Room" aria-label="room" />
+            <input className={inputCls} placeholder="Guest name" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} />
+            <input className={inputCls} placeholder="Guest ceiling / night (optional)" value={form.traveller_ceiling} onChange={(e) => setForm({ ...form, traveller_ceiling: e.target.value })} />
+            <input className={inputCls} placeholder="Nights" value={form.nights} onChange={(e) => setForm({ ...form, nights: e.target.value })} />
+            <input className={cn(inputCls, "sm:col-span-2")} placeholder="Guest wants (perks)" value={form.wants} onChange={(e) => setForm({ ...form, wants: e.target.value })} />
+          </div>
+          <div className="mt-2"><Button onClick={run} loading={busy}><Sparkles className="h-4 w-4" /> Let the agents negotiate</Button></div>
+        </Card>
+      ) : (
+        <Card className="mb-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input className={inputCls} placeholder="Destination (e.g. Kota Kinabalu)" value={dest} onChange={(e) => setDest(e.target.value)} />
+            <input className={inputCls} placeholder="Guest name" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} />
+            <input className={inputCls} placeholder="Guest ceiling / night (optional)" value={form.traveller_ceiling} onChange={(e) => setForm({ ...form, traveller_ceiling: e.target.value })} />
+            <input className={inputCls} placeholder="Nights" value={form.nights} onChange={(e) => setForm({ ...form, nights: e.target.value })} />
+          </div>
+          <div className="mt-2"><Button onClick={runAuction} loading={busy}><Sparkles className="h-4 w-4" /> Broadcast — let the hotels bid</Button></div>
+        </Card>
+      )}
+
+      {mode === "auction" && auction && (
+        <div className="space-y-2">
+          <p className="text-sm text-[var(--muted)]">{auction.headline}</p>
+          {auction.bids.map((b) => (
+            <Card key={b.listing_id} className={cn("flex flex-wrap items-center gap-3", b.winner && "border-l-4 border-[var(--success)]")}>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{b.property} — {b.room} {b.winner && <Badge variant="success">winner</Badge>}</p>
+                <p className="truncate text-xs text-[var(--muted)]">{b.pitch}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-sm font-semibold">{b.currency} {b.bid.toLocaleString()}<span className="ml-1 text-xs font-normal text-[var(--muted)] line-through">{b.list_price.toLocaleString()}</span></p>
+                <p className="text-[0.65rem] text-[var(--muted)]">+ {b.perk}</p>
+              </div>
+            </Card>
+          ))}
+          {auction.booking?.status === "confirmed" && (
+            <p className="text-sm text-[var(--muted)]">✅ Auto-booked the winner <strong>{auction.booking.currency} {auction.booking.amount?.toLocaleString()}</strong> — firewall-guarded, escrow held, in Finance.</p>
+          )}
+          {auction.booking?.status === "blocked" && (
+            <p className="text-sm text-[var(--warning)]">Winner was sold out — the firewall blocked the auto-book. Pick the next bid or free inventory.</p>
+          )}
         </div>
-        <div className="mt-2"><Button onClick={run} loading={busy}><Sparkles className="h-4 w-4" /> Let the agents negotiate</Button></div>
-      </Card>
+      )}
 
-      {res && (
+      {mode === "single" && res && (
         <>
           <Card className={cn("mb-4 border-l-4", res.deal.agreed ? "border-[var(--success)]" : "border-[var(--warning)]")}>
             {res.deal.agreed ? (

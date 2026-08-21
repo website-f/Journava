@@ -140,6 +140,7 @@ export function MyTrip() {
       </div>
       <FlightWatchCard />
       <ItineraryGraphCard />
+      <GuardianCard />
       <DisruptionSection recovery={recovery} setRecovery={setRecovery} setRecoveryLoading={setRecoveryLoading} recoveryLoading={recoveryLoading} />
     </div>
   );
@@ -407,6 +408,114 @@ function ItineraryGraphCard() {
                 );
               })}
             </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Predictive guardian — forecast a disruption before it happens + act
+// --------------------------------------------------------------------------- //
+
+type GuardianReport = {
+  error?: string;
+  destination: string;
+  risk_level: string;
+  disruption_probability_pct: number;
+  signals: string[];
+  predicted: { event: string; likelihood: string; window: string }[];
+  actions: { action: string; status: string; detail: string }[];
+  overnight_feed: { time: string; note: string }[];
+  armed: boolean;
+};
+
+function GuardianCard() {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<GuardianReport | null>(null);
+
+  const scan = async () => {
+    setLoading(true);
+    try {
+      const r = await api.post<GuardianReport>("/guardian/scan", { horizon_days: 4 });
+      if (r.error) toast.info(r.error);
+      else setReport(r);
+    } catch {
+      toast.error("Guardian scan failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const riskTone: Record<string, string> = {
+    low: "text-[var(--success)]",
+    medium: "text-[var(--warning)]",
+    high: "text-[var(--danger,#dc2626)]",
+  };
+  const statusTone: Record<string, "success" | "warning" | "brand"> = { done: "success", watching: "brand", recommended: "warning" };
+
+  return (
+    <section className="mt-8">
+      <div className="surface-card p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-[var(--brand-500)]" />
+          <h3 className="text-base font-semibold">Predictive guardian</h3>
+          {report?.armed && <Badge variant="success">armed</Badge>}
+        </div>
+        <p className="mb-4 text-sm text-[var(--muted)]">
+          Journava forecasts a disruption <strong>before it happens</strong> and acts on your behalf — then
+          reports what it did while you slept.
+        </p>
+        <Button variant="secondary" onClick={scan} loading={loading} disabled={loading}>
+          <Sparkles className="h-4 w-4" /> Run guardian scan
+        </Button>
+
+        {report && (
+          <div className="mt-5 space-y-4">
+            <div className="flex flex-wrap items-baseline gap-x-4">
+              <span className={cn("text-2xl font-bold capitalize", riskTone[report.risk_level] ?? "")}>{report.risk_level} risk</span>
+              <span className="text-sm text-[var(--muted)]">~{report.disruption_probability_pct}% chance of disruption · {report.destination}</span>
+            </div>
+            {!!report.signals.length && (
+              <p className="text-sm text-[var(--muted)]"><strong className="text-[var(--text)]">Signals:</strong> {report.signals.join(" · ")}</p>
+            )}
+            {!!report.predicted.length && (
+              <div>
+                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Predicted</p>
+                <div className="space-y-1">
+                  {report.predicted.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--warning)]" />
+                      <span className="flex-1">{p.event}</span>
+                      <span className="text-xs text-[var(--muted)]">{p.likelihood} · {p.window}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!!report.actions.length && (
+              <div>
+                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Pre-emptive actions</p>
+                <div className="space-y-1">
+                  {report.actions.map((a, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <Badge variant={statusTone[a.status] ?? "brand"}>{a.status}</Badge>
+                      <span className="flex-1">{a.action}</span>
+                      <span className="hidden text-xs text-[var(--muted)] sm:inline">{a.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!!report.overnight_feed.length && (
+              <div className="rounded-[var(--r-md)] bg-[var(--bg)] p-3">
+                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">While you slept</p>
+                {report.overnight_feed.map((f, i) => (
+                  <p key={i} className="text-xs text-[var(--muted)]"><span className="font-semibold tabular-nums text-[var(--brand-600)]">{f.time}</span> · {f.note}</p>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

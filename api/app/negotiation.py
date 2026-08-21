@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from app.core import db, llm
 from app.core.settings import settings
+from app.supplier import store as supplier_store
 
 logger = logging.getLogger("journava")
 
@@ -198,3 +199,95 @@ async def negotiate(body: NegotiateRequest, request: Request) -> dict[str, Any]:
         booking = await _book_deal(listing, body.guest_name, agreed, body.nights, perk)
 
     return {"deal": deal, "transcript": transcript, "booking": booking}
+
+
+# --------------------------------------------------------------------------- #
+# Reverse auction — N hotel agents bid for one traveller                      #
+# --------------------------------------------------------------------------- #
+
+
+class AuctionRequest(BaseModel):
+    destination: str
+    guest_name: str = "A guest"
+    traveller_ceiling: float | None = None
+    wants: str = ""
+    nights: int = 1
+    auto_book: bool = True
+
+
+_PITCH_SYSTEM = """You are writing one-line sales pitches for a reverse auction: \
+several hotels' AI agents are bidding to win one traveller. Given each bid, write \
+a short, distinct pitch per hotel (why pick us at this price), and name the winner.
+
+Respond ONLY as JSON:
+{"pitches": {"<listing_id>": "one-line pitch"}, "headline": "one line summarising the auction"}"""
+
+
+async def _auction_pitches(bids: list[dict[str, Any]], winner_id: str | None) -> dict[str, Any]:
+    ctx = {"bids": [{"id": b["listing_id"], "hotel": b["property"], "room": b["room"],
+                     "bid": b["bid"], "currency": b["currency"], "perk": b["perk"]} for b in bids],
+           "winner": winner_id}
+    try:
+        raw = await llm.complete(
+            [{"role": "system", "content": _PITCH_SYSTEM}, {"role": "user", "content": json.dumps(ctx)}],
+            response_format={"type": "json_object"}, agent="negotiation",
+        )
+        data = json.loads(raw)
+        if isinstance(data, dict) and isinstance(data.get("pitches"), dict):
+            return {"pitches": data["pitches"], "headline": str(data.get("headline") or "")}
+    except Exception as exc:  # noqa: BLE001
+        logger.info("auction pitches fell back: %s", exc)
+    return {"pitches": {}, "headline": "Hotels competed on price + perks; the best value won."}
+
+
+@router.post("/auction")
+async def auction(body: AuctionRequest, request: Request) -> dict[str, Any]:
+    """Broadcast one traveller request; every partner hotel's agent bids to win."""
+    listings = await supplier_store.search_for_destination(body.destination)
+    if not listings:
+        return {"error": f"No partner rooms in {body.destination} to bid — add listings first."}
+
+    ceiling = float(body.traveller_ceiling) if body.traveller_ceiling else None
+    bids: list[dict[str, Any]] = []
+    for item in listings[:8]:
+        lp = float(item["price_amount"]) if item.get("price_amount") is not None else None
+        if lp is None or lp <= 0:
+            continue
+        floor = round(lp * _FLOOR_FRACTION, 2)
+        # Each hotel bids as low as its floor allows to win, capped by the list
+        # price and nudged under the traveller's ceiling when there is one.
+        target = min(lp, (ceiling * 0.92) if ceiling else lp * 0.9)
+        bid = round(max(floor, target), 2)
+        perk = "free breakfast + late checkout" if bid >= lp * 0.9 else "free breakfast"
+        bids.append({
+            "listing_id": item["listing_id"], "org_id": item["org_id"],
+            "property": item["property_name"], "room": item["title"],
+            "list_price": lp, "bid": bid, "currency": item.get("price_currency", "MYR"), "perk": perk,
+        })
+    if not bids:
+        return {"error": "Partner rooms in that destination have no price to bid with."}
+
+    eligible = [b for b in bids if ceiling is None or b["bid"] <= ceiling]
+    winner = min(eligible or bids, key=lambda b: b["bid"])
+    for b in bids:
+        b["savings"] = round(b["list_price"] - b["bid"], 2)
+        b["winner"] = b["listing_id"] == winner["listing_id"]
+
+    pitched = await _auction_pitches(bids, winner["listing_id"])
+    for b in bids:
+        b["pitch"] = pitched["pitches"].get(b["listing_id"], f"{b['property']} — {b['currency']} {b['bid']:.0f}, {b['perk']}.")
+    bids.sort(key=lambda b: b["bid"])
+
+    booking = None
+    if body.auto_book:
+        win_listing = await _listing(winner["listing_id"])
+        if win_listing:
+            booking = await _book_deal(win_listing, body.guest_name, winner["bid"], body.nights, winner["perk"])
+
+    return {
+        "destination": body.destination,
+        "headline": pitched["headline"],
+        "bids": bids,
+        "winner": winner,
+        "booking": booking,
+    }

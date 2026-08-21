@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -9,13 +9,15 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { toast } from "sonner";
 import { Brain, Bot, Activity, GitCompareArrows } from "@/components/ui/icons";
 
 import { cn } from "@/lib/cn";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui";
+import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import type { AgentStatus } from "@/lib/sse";
 import { useIsMobile } from "@/hooks/useMediaQuery";
+import { api } from "@/lib/api";
 import { BrainGraph } from "./BrainGraph";
 
 /** All 20 agents — the full vision roster (spec section 4). */
@@ -235,8 +237,11 @@ export function AgentControl() {
     <div className="mx-auto w-full max-w-6xl">
       <ControlHeader connected={connected} />
 
-      <Tabs defaultValue={isMobile ? "roster" : "topology"}>
+      <Tabs defaultValue="mission">
         <TabsList>
+          <TabsTrigger value="mission">
+            <Activity className="h-4 w-4" /> Mission Control
+          </TabsTrigger>
           <TabsTrigger value="topology">
             <GitCompareArrows className="h-4 w-4" /> Topology
           </TabsTrigger>
@@ -250,6 +255,10 @@ export function AgentControl() {
             <Brain className="h-4 w-4" /> Brain
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="mission">
+          <MissionControl events={events} statusMap={statusMap} connected={connected} />
+        </TabsContent>
 
         <TabsContent value="topology">
           <div className="surface-card overflow-hidden" style={{ height: isMobile ? 360 : 480 }}>
@@ -309,6 +318,94 @@ function ControlHeader({ connected }: { connected: boolean }) {
         {connected ? "Stream connected" : "Stream offline"}
       </span>
     </header>
+  );
+}
+
+type StatusMap = Record<string, { status: AgentStatus; message?: string }>;
+
+/** Cinematic live view of the mesh — cores ignite as agents work, with a HUD. */
+function MissionControl({ events, statusMap, connected }: {
+  events: Array<{ id: string; ts: string; agent: string; message: string }>;
+  statusMap: StatusMap;
+  connected: boolean;
+}) {
+  const [launching, setLaunching] = useState(false);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (startedAt == null) return;
+    const t = window.setInterval(() => setElapsed(Math.floor((performance.now() - startedAt) / 1000)), 500);
+    return () => window.clearInterval(t);
+  }, [startedAt]);
+
+  const engaged = AGENTS.filter((a) => { const s = statusMap[a.slug]?.status; return s && s !== "idle"; }).length;
+  const done = AGENTS.filter((a) => statusMap[a.slug]?.status === "active").length;
+
+  const launch = async () => {
+    setLaunching(true);
+    setStartedAt(performance.now());
+    setElapsed(0);
+    try {
+      await api.post("/jobs/plan", { goal: "5-day Bali trip in December, halal food", destination: "Bali", scope: "full_trip" });
+      toast.success("Live plan launched — watch the mesh work.");
+    } catch {
+      toast.error("Couldn't launch the plan.");
+    } finally {
+      setLaunching(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="surface-card flex flex-wrap items-center gap-x-6 gap-y-3 p-4">
+        <div className="flex items-center gap-2">
+          <span className={cn("h-2.5 w-2.5 rounded-full", connected ? "bg-[var(--success)] animate-pulse" : "bg-[var(--muted)]")} />
+          <span className="text-sm font-semibold">{connected ? "Mesh live" : "Idle"}</span>
+        </div>
+        <Hud label="Agents engaged" value={`${engaged}/${AGENTS.length}`} />
+        <Hud label="Completed" value={String(done)} />
+        <Hud label="Events" value={String(events.length)} />
+        <Hud label="Elapsed" value={`${elapsed}s`} />
+        <Button className="ml-auto" onClick={launch} loading={launching}>
+          <Activity className="h-4 w-4" /> Launch live plan
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {AGENTS.map((a) => {
+          const s = (statusMap[a.slug]?.status ?? "idle") as AgentStatus;
+          const busy = s === "working" || s === "monitoring" || s === "waiting";
+          const color = STATUS_COLORS[s];
+          return (
+            <div
+              key={a.slug}
+              className="surface-card relative overflow-hidden p-3 transition-shadow"
+              style={s === "idle" ? undefined : { borderColor: color, borderWidth: 1, boxShadow: `0 0 0 1px ${color}22, 0 4px 16px ${color}22` }}
+            >
+              {busy && <span className="absolute right-2 top-2 h-2 w-2 animate-ping rounded-full" style={{ background: color }} />}
+              <div className="flex items-center gap-2">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[0.6rem] font-bold text-white" style={{ background: color }}>
+                  {a.name.slice(0, 2)}
+                </span>
+                <span className="truncate text-sm font-medium">{a.name}</span>
+              </div>
+              <p className="mt-1 truncate text-[0.65rem] text-[var(--muted)]">{statusMap[a.slug]?.message || a.role}</p>
+              <p className="mt-1 text-[0.6rem] font-semibold uppercase tracking-wide" style={{ color }}>{s === "active" ? "done" : s}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Hud({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xl font-bold tabular-nums text-[var(--brand-500)]">{value}</p>
+      <p className="text-[0.65rem] text-[var(--muted)]">{label}</p>
+    </div>
   );
 }
 

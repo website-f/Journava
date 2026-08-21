@@ -28,6 +28,7 @@ from app.demo import router as demo_router
 from app.escrow import router as escrow_router
 from app.finance import router as finance_router
 from app.firewall import router as firewall_router
+from app.guardian import router as guardian_router
 from app.negotiation import router as negotiation_router
 from app.itinerary import router as itinerary_router
 from app.monitor import router as monitor_router
@@ -138,6 +139,7 @@ app.include_router(shared_router)
 app.include_router(bookings_router)
 app.include_router(finance_router)
 app.include_router(negotiation_router)
+app.include_router(guardian_router)
 app.include_router(demo_router)
 
 
