@@ -34,6 +34,7 @@ from app.itinerary import router as itinerary_router
 from app.monitor import router as monitor_router
 from app.policy import router as policy_router
 from app.runtime.router import router as runtime_router
+from app.saved import router as saved_router
 from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
 from app.supplier.router import router as supplier_router
@@ -141,6 +142,7 @@ app.include_router(finance_router)
 app.include_router(negotiation_router)
 app.include_router(guardian_router)
 app.include_router(demo_router)
+app.include_router(saved_router)
 
 
 # --------------------------------------------------------------------------- #
@@ -326,6 +328,14 @@ async def delete_active_trip() -> dict[str, object]:
     """Remove the active trip (My Trip goes back to empty)."""
     await trip_store.delete_active()
     return {"deleted": True}
+
+
+@app.get(f"{settings.api_prefix}/trip/thumbnail", tags=["trip"])
+async def trip_thumbnail(destination: str = "") -> dict[str, object]:
+    """A compressed data-URI photo for a destination (trip-card thumbnail)."""
+    from app.tools import destination_image
+
+    return {"destination": destination, "thumbnail": await destination_image.thumbnail(destination)}
 
 
 class ItineraryUpdate(BaseModel):

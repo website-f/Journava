@@ -2,13 +2,13 @@ import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Compass, Globe, ShieldAlert, Newspaper, ThumbsUp, ThumbsDown,
-  TrendingUp, GitCompareArrows, BadgeCheck, ShieldQuestion,
+  TrendingUp, GitCompareArrows, BadgeCheck, ShieldQuestion, Save,
 } from "@/components/ui/icons";
 import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge, Skeleton } from "@/components/ui";
 import type { ItineraryItem, PlanOption } from "@/stores/planStore";
 import { useActiveTrip } from "@/hooks/useActiveTrip";
 import { recordOptionOutcome, recordOutcome } from "@/lib/outcomes";
-import { KnowledgeLibrary } from "./KnowledgeLibrary";
+import { SavedResults } from "./SavedResults";
 
 type SocialSignal = {
   score: number | null;
@@ -31,20 +31,20 @@ type Contradiction = {
 export function ResearchBoard() {
   return (
     <div className="mx-auto w-full max-w-6xl">
-      <Tabs defaultValue="knowledge">
+      <Tabs defaultValue="trip">
         <TabsList>
-          <TabsTrigger value="knowledge">
-            <BadgeCheck className="h-4 w-4" /> Knowledge library
-          </TabsTrigger>
           <TabsTrigger value="trip">
             <Compass className="h-4 w-4" /> This trip
           </TabsTrigger>
+          <TabsTrigger value="saved">
+            <Save className="h-4 w-4" /> Saved results
+          </TabsTrigger>
         </TabsList>
-        <TabsContent value="knowledge">
-          <KnowledgeLibrary />
-        </TabsContent>
         <TabsContent value="trip">
           <TripResearch />
+        </TabsContent>
+        <TabsContent value="saved">
+          <SavedResults />
         </TabsContent>
       </Tabs>
     </div>

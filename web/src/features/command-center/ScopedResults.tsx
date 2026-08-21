@@ -7,6 +7,7 @@ import {
   ExternalLink,
   FileCheck2,
   RotateCcw,
+  Save,
   ShieldAlert,
   ShieldCheck,
   TrendingUp,
@@ -109,6 +110,8 @@ function AddToTripBar({
 }) {
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const add = async () => {
     setBusy(true);
@@ -120,6 +123,25 @@ function AddToTripBar({
       toast.error("Could not add this to your trip.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveResult = async () => {
+    const dest = (results.chief?.data as { destination?: string } | undefined)?.destination;
+    const scope = results.itinerary?.items?.length
+      ? "full_trip"
+      : results.flight && !results.hotel
+        ? "flights_only"
+        : (results._scope as { label?: string } | undefined)?.label ?? "result";
+    setSaving(true);
+    try {
+      await api.post("/saved", { scope, destination: dest, results });
+      setSaved(true);
+      toast.success("Saved — find it under Research → Saved results.");
+    } catch {
+      toast.error("Couldn't save this result.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -140,6 +162,10 @@ function AddToTripBar({
             Add to my trip
           </Button>
         )}
+        <Button variant="ghost" loading={saving} disabled={saved} onClick={() => void saveResult()}>
+          <Save className="h-4 w-4" />
+          {saved ? "Saved" : "Save result"}
+        </Button>
       </div>
     </div>
   );

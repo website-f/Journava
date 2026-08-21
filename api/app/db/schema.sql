@@ -512,6 +512,19 @@ ALTER TABLE hotel_bookings ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMPTZ;
 ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS whatsapp TEXT;
 ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'telegram';
 
+-- Saved research results — a traveller keeps any result (flights / places /
+-- full trip) to revisit or re-run later, shown in Research → Saved results.
+CREATE TABLE IF NOT EXISTS saved_results (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    scope       TEXT NOT NULL DEFAULT 'full_trip',
+    title       TEXT NOT NULL DEFAULT 'Saved result',
+    destination TEXT,
+    snapshot    JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS saved_results_user_idx ON saved_results (user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS finance_transactions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

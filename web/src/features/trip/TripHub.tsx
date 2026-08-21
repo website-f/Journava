@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -40,6 +40,9 @@ function bandFor(seed: string): string {
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return BANDS[h % BANDS.length];
 }
+
+/** Module cache so a destination's compressed thumbnail is fetched once. */
+const thumbCache = new Map<string, string | null>();
 
 function formatWhen(value: string | null): string {
   if (!value) return "";
@@ -187,6 +190,8 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   };
 
   const showCurrent = current && currentScope && TRIP_SCOPES.has(currentScope);
+  const currentDestination =
+    (current?.chief?.data as { destination?: string } | undefined)?.destination ?? "";
 
   if (isLoading && !showCurrent) {
     return (
@@ -214,10 +219,11 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
     <div className="grid gap-3 py-3 sm:grid-cols-2 lg:grid-cols-3">
       {showCurrent && (
         <TripCard
-          title="Current trip"
+          title={currentDestination || "Current trip"}
           subtitle={(current?._scope as { label?: string } | undefined)?.label ?? "Active plan"}
           band={bandFor("current")}
           badge="Active"
+          thumbKey={currentDestination || undefined}
           onClick={() => onOpen(current!)}
           onDelete={() => void removeCurrent()}
         />
@@ -231,6 +237,7 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
           when={formatWhen(entry.created_at)}
           optionCount={entry.option_count}
           loading={opening === entry.id}
+          thumbKey={entry.destination || undefined}
           onClick={() => void openHistory(entry)}
           onDelete={() => void deleteTrip(entry)}
         />
@@ -247,6 +254,7 @@ function TripCard({
   optionCount,
   badge,
   loading,
+  thumbKey,
   onClick,
   onDelete,
 }: {
@@ -257,9 +265,26 @@ function TripCard({
   optionCount?: number;
   badge?: string;
   loading?: boolean;
+  thumbKey?: string;
   onClick: () => void;
   onDelete?: () => void;
 }) {
+  // Fetch a real, compressed destination photo (cached), falling back to the
+  // colour band while it loads or if none is found.
+  const [thumb, setThumb] = useState<string | null>(thumbKey ? thumbCache.get(thumbKey) ?? null : null);
+  useEffect(() => {
+    if (!thumbKey || thumbCache.has(thumbKey)) return;
+    let cancelled = false;
+    api
+      .get<{ thumbnail: string | null }>(`/trip/thumbnail?destination=${encodeURIComponent(thumbKey)}`)
+      .then((d) => {
+        thumbCache.set(thumbKey, d.thumbnail);
+        if (!cancelled) setThumb(d.thumbnail);
+      })
+      .catch(() => thumbCache.set(thumbKey, null));
+    return () => { cancelled = true; };
+  }, [thumbKey]);
+
   return (
     <div className="surface-card group relative overflow-hidden p-0 transition-colors hover:border-[var(--brand-400)]">
       <button
@@ -267,10 +292,12 @@ function TripCard({
         disabled={loading}
         className="block w-full text-left disabled:opacity-70"
       >
-        {/* Flat colour banner "thumbnail" */}
-        <div className="relative flex h-24 items-end p-3" style={{ background: band }}>
-          <Plane className="absolute right-3 top-3 h-6 w-6 text-white/70" />
-          <span className="font-[family-name:var(--font-display)] text-lg leading-tight text-white drop-shadow-sm">
+        {/* Destination thumbnail — real photo when found, colour band otherwise */}
+        <div className="relative flex h-28 items-end overflow-hidden p-3" style={{ background: band }}>
+          {thumb && <img src={thumb} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+          <span className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
+          <Plane className="absolute right-3 top-3 h-6 w-6 text-white/80 drop-shadow" />
+          <span className="relative font-[family-name:var(--font-display)] text-lg leading-tight text-white drop-shadow">
             {title}
           </span>
           {badge && (
