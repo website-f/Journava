@@ -126,12 +126,14 @@ export function MyTrip() {
 
       <TripHeader results={results} onDelete={handleDeleteTrip} />
       <TripSummary results={results} />
+      <PlanReadinessNote results={results} />
       <RiskBanner results={results} />
       <Suspense fallback={<Skeleton className="mb-6 h-64 w-full" />}>
         <TripMap className="mb-6" />
       </Suspense>
       <BudgetCard results={results} />
       <WeatherCard results={results} />
+      <CompleteItineraryCard results={results} setTrip={setTrip} />
       <ItinerarySection results={results} setTrip={setTrip} />
       {/* The full plan — flights, stays, food, places, visa, insurance — so the
           saved trip shows everything the agents produced, not just the summary. */}
@@ -520,6 +522,122 @@ function GuardianCard() {
         )}
       </div>
     </section>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Complete-your-itinerary place picker + plan readiness
+// --------------------------------------------------------------------------- //
+
+function CompleteItineraryCard({
+  results,
+  setTrip,
+}: {
+  results: Record<string, AgentPlanResult>;
+  setTrip: (trip: Record<string, AgentPlanResult>) => void;
+}) {
+  const suggestions = ((results.research?.options ?? []) as Array<{ title: string; kind?: string }>).filter(
+    (o) => o.kind === "activity" || o.kind === "restaurant",
+  );
+  const [days, setDays] = useState(() => {
+    const items = results.itinerary?.items ?? [];
+    return items.length ? Math.max(...items.map((i) => Number(i.day_index) || 0)) + 1 : 3;
+  });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  if (suggestions.length === 0) return null;
+
+  const toggle = (t: string) =>
+    setPicked((s) => {
+      const n = new Set(s);
+      if (n.has(t)) n.delete(t);
+      else n.add(t);
+      return n;
+    });
+
+  const build = async () => {
+    const picks = suggestions.filter((s) => picked.has(s.title)).map((s) => ({ title: s.title, kind: s.kind }));
+    if (!picks.length) return toast.info("Pick a few places first.");
+    setBusy(true);
+    try {
+      const r = await api.post<{ trip: Record<string, AgentPlanResult> }>("/trip/itinerary/build", { days, picks });
+      setTrip(r.trip);
+      toast.success(`Scheduled ${picks.length} place(s) across ${days} days.`);
+    } catch {
+      toast.error("Couldn't build the itinerary.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="surface-card mb-6 p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <Sparkles className="h-5 w-5 text-[var(--brand-500)]" />
+        <h3 className="text-base font-semibold">Complete your itinerary</h3>
+      </div>
+      <p className="mb-3 text-sm text-[var(--muted)]">
+        The agents surfaced <strong className="text-[var(--text)]">{suggestions.length}</strong> places. A{" "}
+        {days}-day plan fits about <strong className="text-[var(--text)]">{days * 3}</strong> — pick the ones you
+        want and we'll schedule them into full days. <strong className="text-[var(--text)]">{picked.size}</strong> picked.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {suggestions.map((s) => (
+          <button
+            key={s.title}
+            onClick={() => toggle(s.title)}
+            className={cn(
+              "rounded-[var(--r-pill)] border px-3 py-1.5 text-xs transition-colors",
+              picked.has(s.title)
+                ? "border-transparent bg-[var(--brand-500)] text-white"
+                : "border-[var(--border)] hover:bg-[var(--bg)]",
+            )}
+          >
+            {s.kind === "restaurant" ? "🍽 " : "◆ "}
+            {s.title}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="w-28">
+          <Select
+            value={String(days)}
+            onValueChange={(v) => setDays(Number(v))}
+            options={[2, 3, 4, 5, 6, 7].map((n) => ({ value: String(n), label: `${n} days` }))}
+            aria-label="days"
+          />
+        </div>
+        <Button onClick={build} loading={busy} disabled={!picked.size}>
+          <Sparkles className="h-4 w-4" /> Build my {days}-day itinerary
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/** A one-line readiness banner: what's in the plan and what still needs a choice. */
+function PlanReadinessNote({ results }: { results: Record<string, AgentPlanResult> }) {
+  const flights = results.flight?.options ?? [];
+  const bySource = (src: string) => flights.filter((o) => (o.source ?? o.raw?.source) === src).length;
+  const atlas = bySource("atlas");
+  const research = bySource("camofox");
+  const places = (results.research?.options ?? []).filter((o) => o.kind === "activity" || o.kind === "restaurant").length;
+  const scheduled = results.itinerary?.items?.length ?? 0;
+  if (!flights.length && !places) return null;
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-4 py-2.5 text-xs">
+      {flights.length > 0 && (
+        <span className="flex items-center gap-1.5">
+          <Plane className="h-3.5 w-3.5 text-[var(--brand-500)]" />
+          {flights.length} flight options ({atlas} Atlas · {research} research) — <strong>outbound &amp; return not chosen yet</strong>
+        </span>
+      )}
+      {places > 0 && (
+        <span className="flex items-center gap-1.5 text-[var(--muted)]">
+          · {places} places found · {scheduled ? `${scheduled} scheduled` : "none scheduled — pick below"}
+        </span>
+      )}
+    </div>
   );
 }
 

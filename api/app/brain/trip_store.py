@@ -274,3 +274,73 @@ async def refine_itinerary(instruction: str | None = None) -> dict[str, Any] | N
     trip["itinerary"] = itinerary
     await save_trip_durable(trip)
     return trip
+
+
+def _naive_schedule(picks: list[dict[str, Any]], days: int) -> list[dict[str, Any]]:
+    """Deterministic fallback: spread picks across days with sensible meal/activity
+    slots so every day is filled even when the LLM is unavailable."""
+    activities = [p for p in picks if str(p.get("kind")) != "restaurant"]
+    meals = [p for p in picks if str(p.get("kind")) == "restaurant"]
+    slots = [("09:00", "11:00", "activity"), ("11:30", "13:00", "activity"),
+             ("13:00", "14:00", "meal"), ("15:00", "17:30", "activity"), ("19:00", "20:30", "meal")]
+    items: list[dict[str, Any]] = []
+    ai = mi = 0
+    for day in range(days):
+        for start, end, kind in slots:
+            if kind == "meal" and mi < len(meals):
+                p = meals[mi]; mi += 1
+            elif ai < len(activities):
+                p = activities[ai]; ai += 1; kind = "activity"
+            else:
+                continue
+            items.append({"day_index": day, "kind": "meal" if kind == "meal" else "activity",
+                          "title": p.get("title") or "Explore", "starts_at": start, "ends_at": end,
+                          "reasoning": "Scheduled from your picks."})
+    return items
+
+
+async def build_itinerary(picks: list[dict[str, Any]], days: int, *, arrival: str | None = None) -> dict[str, Any] | None:
+    """Schedule the traveller's PICKED places into a complete N-day itinerary —
+    every day filled with smart, non-overlapping timing and meals at meal times."""
+    from app.core import llm
+
+    trip = await load_trip_durable()
+    if trip is None:
+        return None
+    chief_data = (trip.get("chief") or {}).get("data") or {}
+    destination = chief_data.get("destination") or "the destination"
+
+    system = (
+        "You are Journava's meticulous itinerary planner. Schedule the traveller's SELECTED "
+        "places into a COMPLETE day-by-day plan across the given number of days. Rules: fill "
+        "every day (morning + afternoon + evening), put restaurants at meal times "
+        "(~08:00 breakfast, ~13:00 lunch, ~19:00 dinner), space activities with realistic "
+        "travel gaps and NO overlaps, day 1 starts no earlier than the arrival time, and if there "
+        "are more picks than fit keep the best and spread them; if fewer, add sensible "
+        "free-time / rest / local-stroll blocks so no day is empty. Return JSON "
+        "{\"items\":[{day_index:int(0-based), kind:'activity'|'meal'|'transport'|'hotel', title, "
+        "starts_at:'HH:MM', ends_at:'HH:MM', reasoning}]}."
+    )
+    user = (
+        f"Destination: {destination}\nDays: {days}\nArrival (day-1 earliest start): {arrival or '10:00'}\n"
+        f"Selected places to schedule:\n{json.dumps(picks, default=str)[:6000]}"
+    )
+    items: list[dict[str, Any]] | None = None
+    try:
+        raw = await llm.complete(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"}, agent="itinerary",
+        )
+        parsed = json.loads(raw).get("items")
+        if isinstance(parsed, list) and parsed:
+            items = [i for i in parsed if isinstance(i, dict) and i.get("title")]
+    except Exception as exc:  # noqa: BLE001
+        logger.info("build_itinerary LLM failed, using naive schedule: %s", exc)
+    if not items:
+        items = _naive_schedule(picks, max(1, days))
+
+    itinerary = dict(trip.get("itinerary") or {})
+    itinerary["items"] = items
+    trip["itinerary"] = itinerary
+    await save_trip_durable(trip)
+    return trip

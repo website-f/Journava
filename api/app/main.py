@@ -364,6 +364,23 @@ async def refine_itinerary(request: ItineraryRefine) -> dict[str, object]:
     return {"trip": updated}
 
 
+class ItineraryBuild(BaseModel):
+    days: int = 3
+    picks: list[dict[str, object]] = []
+    arrival: str | None = None
+
+
+@app.post(f"{settings.api_prefix}/trip/itinerary/build", tags=["trip"])
+async def build_itinerary(request: ItineraryBuild) -> dict[str, object]:
+    """Schedule the traveller's PICKED places into a full N-day itinerary."""
+    updated = await trip_store.build_itinerary(
+        list(request.picks), max(1, request.days), arrival=request.arrival
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No active trip to build")
+    return {"trip": updated}
+
+
 # --------------------------------------------------------------------------- #
 # Knowledge library — findings the agents documented, grouped by category
 # --------------------------------------------------------------------------- #
