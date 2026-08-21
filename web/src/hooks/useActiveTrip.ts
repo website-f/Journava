@@ -1,50 +1,41 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { usePlanStore, type AgentPlanResult } from "@/stores/planStore";
+import type { AgentPlanResult } from "@/stores/planStore";
+
+type TripResults = Record<string, AgentPlanResult> | null;
 
 /**
- * Hydrate the plan store from `GET /trip` when it is empty.
+ * The user's SAVED trip, fetched from `GET /trip`.
  *
- * The store only holds what the current tab planned, so any page that reads it
- * directly shows an empty state after a reload or a deep link — even though the
- * backend still has the active trip. Every surface that renders trip data should
- * call this so they all agree on what the active trip is.
+ * A trip only exists after the traveller taps "Add to my trip" (which POSTs
+ * /trip/save). This hook intentionally does NOT fall back to the transient plan
+ * store, so a plan you merely *searched* for no longer shows up on the Trip page
+ * before you've added it. Fetched fresh on every mount, so navigating in from a
+ * scoped search never shows stale data until a manual refresh.
  *
- * Fetches `GET /trip` on every mount and reconciles: the server's saved trip is
- * authoritative for the trip surface. Previously it skipped the fetch whenever
- * the shared store already held *anything*, so a leftover scoped search (e.g. a
- * flights-only result) masked the real saved trip until a full page refresh —
- * that's the "only works after refresh" symptom on the trip page. It only
- * overwrites when the server actually returns a trip, so a just-planned (unsaved)
- * plan still survives, and edits made on the trip surface persist server-side so
- * they come back on the next mount.
+ * `setTrip` lets the trip surface update the trip in place after an
+ * edit / refine / delete, without a refetch.
  */
 export function useActiveTrip() {
-  const results = usePlanStore((s) => s.results);
-  const setResults = usePlanStore((s) => s.setResults);
-  const [loading, setLoading] = useState(results === null);
+  const [results, setResults] = useState<TripResults>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get<{ trip: Record<string, AgentPlanResult> | null }>(
-          "/trip",
-        );
-        if (!cancelled && res.trip) setResults(res.trip);
+        const res = await api.get<{ trip: TripResults }>("/trip");
+        if (!cancelled) setResults(res.trip ?? null);
       } catch {
-        // No active trip yet — the caller renders its empty state.
+        // No saved trip yet — the caller renders its empty state.
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-
     return () => {
       cancelled = true;
     };
-    // Runs once per mount to reconcile with the server. `setResults` is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { results, loading };
+  return { results, loading, setTrip: setResults };
 }

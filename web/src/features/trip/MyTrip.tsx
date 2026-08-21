@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper } from "@/components/ui/icons";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
 import { cn } from "@/lib/cn";
 
@@ -44,7 +44,7 @@ export function MyTrip() {
   const { recovery, setRecovery, recoveryLoading, setRecoveryLoading } = usePlanStore();
   const { events } = useAgentStream();
   // Shared with the Research Board so both surfaces agree on the active trip.
-  const { results, loading: tripLoading } = useActiveTrip();
+  const { results, loading: tripLoading, setTrip } = useActiveTrip();
 
   const handleCancelRecovery = async () => {
     const ok = await confirm({
@@ -73,6 +73,7 @@ export function MyTrip() {
     try {
       await api.del("/trip");
       usePlanStore.getState().clear();
+      setTrip(null);
       toast.success("Trip removed.");
     } catch {
       toast.error("Could not remove the trip.");
@@ -129,7 +130,7 @@ export function MyTrip() {
       </Suspense>
       <BudgetCard results={results} />
       <WeatherCard results={results} />
-      <ItinerarySection results={results} />
+      <ItinerarySection results={results} setTrip={setTrip} />
       {/* The full plan — flights, stays, food, places, visa, insurance — so the
           saved trip shows everything the agents produced, not just the summary. */}
       <div className="mt-8">
@@ -182,14 +183,29 @@ function TripSummary({ results }: { results: Record<string, AgentPlanResult> }) 
   const chief = results.chief;
   const data = chief?.data ?? {};
   const destination = (data as Record<string, unknown>).destination as string | undefined;
+  const heroImage = (results.research?.data as Record<string, unknown> | undefined)?.hero_image as
+    | string
+    | undefined;
 
   return (
-    <div className="surface-card p-4 border-l-4 border-[var(--brand-500)] mb-6">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h3 className="text-lg font-semibold">{destination ?? "Your Trip"}</h3>
-        {chief?.summary && (
-          <Badge variant="brand" className="normal-case">{chief.summary}</Badge>
-        )}
+    <div className="surface-card mb-6 overflow-hidden border-l-4 border-[var(--brand-500)]">
+      {heroImage && (
+        <img
+          src={heroImage}
+          alt={destination ?? "Trip"}
+          loading="lazy"
+          className="h-40 w-full object-cover"
+        />
+      )}
+      <div className="p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-lg font-semibold">{destination ?? "Your Trip"}</h3>
+          {chief?.summary && (
+            <Badge variant="brand" className="normal-case">
+              {chief.summary}
+            </Badge>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -400,8 +416,13 @@ function WeatherCard({ results }: { results: Record<string, AgentPlanResult> }) 
   );
 }
 
-function ItinerarySection({ results }: { results: Record<string, AgentPlanResult> }) {
-  const setResults = usePlanStore((s) => s.setResults);
+function ItinerarySection({
+  results,
+  setTrip,
+}: {
+  results: Record<string, AgentPlanResult>;
+  setTrip: (trip: Record<string, AgentPlanResult>) => void;
+}) {
   const [items, setItems] = useState<ItineraryItem[]>(results.itinerary?.items ?? []);
   const [refining, setRefining] = useState(false);
 
@@ -441,7 +462,7 @@ function ItinerarySection({ results }: { results: Record<string, AgentPlanResult
         {},
       );
       if (res.trip) {
-        setResults(res.trip);
+        setTrip(res.trip);
         setItems(res.trip.itinerary?.items ?? []);
         toast.success("Your agents added ideas and realigned the schedule.");
       }
@@ -467,7 +488,7 @@ function ItinerarySection({ results }: { results: Record<string, AgentPlanResult
         </Button>
       </div>
       <p className="mb-3 text-xs text-[var(--muted)]">
-        Drag items to reorder within a day — changes save automatically.
+        Use the arrows (or drag on desktop) to reorder within a day — changes save automatically.
       </p>
 
       <div className="space-y-4">
@@ -512,11 +533,11 @@ function DayItinerary({
               setDrag(null);
             }}
             className={cn(
-              "surface-card flex cursor-grab items-start gap-2 p-3 active:cursor-grabbing",
+              "surface-card flex items-start gap-2 p-3",
               drag === idx && "opacity-50",
             )}
           >
-            <GripHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-[var(--muted)]" />
+            <GripHorizontal className="mt-0.5 hidden h-4 w-4 shrink-0 cursor-grab text-[var(--muted)] active:cursor-grabbing sm:block" />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">{item.title}</p>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
@@ -533,6 +554,27 @@ function DayItinerary({
                   </span>
                 )}
               </div>
+            </div>
+            {/* Reorder controls — work on touch (HTML5 drag is desktop-only). */}
+            <div className="flex shrink-0 flex-col gap-1">
+              <button
+                type="button"
+                aria-label="Move up"
+                disabled={idx === 0}
+                onClick={() => onReorder(idx, idx - 1)}
+                className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-30"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="Move down"
+                disabled={idx === dayItems.length - 1}
+                onClick={() => onReorder(idx, idx + 1)}
+                className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-30"
+              >
+                <ArrowDown className="h-4 w-4" />
+              </button>
             </div>
           </li>
         ))}

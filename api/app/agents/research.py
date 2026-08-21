@@ -32,7 +32,7 @@ from app.agents.prompts import research_messages
 from app.agents.schemas import AgentResult, Option, Scope, TravelerProfile, TripRequest
 from app.brain import knowledge
 from app.core.llm import LLMUnavailableError, complete
-from app.tools import camofox, halal, reddit, youtube
+from app.tools import camofox, halal, imagery, reddit, youtube
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +141,9 @@ class ResearchAgent(BaseAgent):
         # Top video reviews (YouTube most-viewed + TikTok best-effort) for the
         # "video reviews" tab of the places/food sections.
         data["video_reviews"] = await self._video_reviews(destination, profile)
+
+        # A real destination photo for the trip thumbnail (keyless, Wikipedia).
+        data["hero_image"] = await imagery.destination_image(destination)
 
         # Build option list from attractions + dining (for the Research Board tab)
         options = self._build_options(
