@@ -26,7 +26,6 @@ import {
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import { usePlanStore, type PlanResults } from "@/stores/planStore";
-import type { HistoryEntry } from "@/lib/types";
 import { MyTrip } from "@/features/trip/MyTrip";
 import { History } from "@/features/history/History";
 import { BookingsHub } from "@/features/trip/BookingsHub";
@@ -121,30 +120,33 @@ function TripTabs({ onOpen }: { onOpen: (r: PlanResults) => void }) {
 
 // --------------------------------------------------------------------------- //
 
+type SavedTrip = { id: string; title: string; destination: string | null; scope: string; created_at: string | null };
+
 function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   const setResults = usePlanStore((s) => s.setResults);
   const current = usePlanStore((s) => s.results);
   const currentScope = usePlanStore((s) => s.activeScope);
-  const lastHistoryId = usePlanStore((s) => s.lastHistoryId);
   const [opening, setOpening] = useState<string | null>(null);
   const qc = useQueryClient();
 
+  // Only trips the traveller CONFIRMED ("Add to my trip") — not every search.
+  // Raw searches stay in the History tab.
   const { data, isLoading } = useQuery({
-    queryKey: ["trips"],
-    queryFn: () => api.get<HistoryEntry[]>("/history/searches"),
+    queryKey: ["confirmed-trips"],
+    queryFn: () => api.get<{ saved: SavedTrip[] }>("/saved?kind=trip").then((d) => d.saved),
   });
 
-  const deleteTrip = async (entry: HistoryEntry) => {
+  const deleteTrip = async (t: SavedTrip) => {
     const ok = await confirm({
       title: "Delete this trip?",
-      body: "It's removed from your trips and history. This can't be undone.",
+      body: "It's removed from your trips. Past searches stay in History.",
       confirmText: "Delete",
       tone: "danger",
     });
     if (!ok) return;
     try {
-      await api.del(`/history/searches/${entry.id}`);
-      await qc.invalidateQueries({ queryKey: ["trips"] });
+      await api.del(`/saved/${t.id}`);
+      await qc.invalidateQueries({ queryKey: ["confirmed-trips"] });
       toast.success("Trip deleted.");
     } catch {
       toast.error("Could not delete that trip.");
@@ -154,7 +156,7 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   const removeCurrent = async () => {
     const ok = await confirm({
       title: "Remove the active trip?",
-      body: "Your active trip is cleared. Past searches stay in History.",
+      body: "Your active trip is cleared. Confirmed trips + searches stay saved.",
       confirmText: "Remove",
       tone: "danger",
     });
@@ -168,20 +170,18 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
     }
   };
 
-  const trips = (data ?? []).filter(
-    (e) => TRIP_SCOPES.has(e.scope) && e.id !== lastHistoryId,
-  );
+  const trips = data ?? [];
 
-  const openHistory = async (entry: HistoryEntry) => {
-    setOpening(entry.id);
+  const openTrip = async (t: SavedTrip) => {
+    setOpening(t.id);
     try {
-      const full = await api.get<HistoryEntry>(`/history/searches/${entry.id}`);
-      if (!full.result_snapshot) {
-        toast.error("That trip wasn't saved in full — run it again.");
+      const full = await api.get<{ scope: string; results: PlanResults }>(`/saved/${t.id}`);
+      if (!full.results) {
+        toast.error("That trip couldn't be opened.");
         return;
       }
-      setResults(full.result_snapshot, full.scope);
-      onOpen(full.result_snapshot);
+      setResults(full.results, full.scope);
+      onOpen(full.results);
     } catch {
       toast.error("Could not open that trip.");
     } finally {
@@ -209,7 +209,7 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
         <EmptyState
           icon={<Briefcase className="h-10 w-10" />}
           title="No trips yet"
-          description="Plan one from Home — full trips show up here as cards you can reopen anytime."
+          description="Plan from Home, then tap “Add to my trip” to keep it here. Every search stays in History."
         />
       </div>
     );
@@ -228,18 +228,17 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
           onDelete={() => void removeCurrent()}
         />
       )}
-      {trips.map((entry) => (
+      {trips.map((t) => (
         <TripCard
-          key={entry.id}
-          title={entry.destination || "Trip"}
-          subtitle={entry.goal}
-          band={bandFor(entry.destination || entry.goal || entry.id)}
-          when={formatWhen(entry.created_at)}
-          optionCount={entry.option_count}
-          loading={opening === entry.id}
-          thumbKey={entry.destination || undefined}
-          onClick={() => void openHistory(entry)}
-          onDelete={() => void deleteTrip(entry)}
+          key={t.id}
+          title={t.destination || t.title || "Trip"}
+          subtitle={t.title}
+          band={bandFor(t.destination || t.title || t.id)}
+          when={formatWhen(t.created_at)}
+          loading={opening === t.id}
+          thumbKey={t.destination || undefined}
+          onClick={() => void openTrip(t)}
+          onDelete={() => void deleteTrip(t)}
         />
       ))}
     </div>

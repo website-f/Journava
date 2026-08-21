@@ -518,12 +518,14 @@ CREATE TABLE IF NOT EXISTS saved_results (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
     scope       TEXT NOT NULL DEFAULT 'full_trip',
+    kind        TEXT NOT NULL DEFAULT 'result',  -- result | trip (confirmed)
     title       TEXT NOT NULL DEFAULT 'Saved result',
     destination TEXT,
     snapshot    JSONB NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS saved_results_user_idx ON saved_results (user_id, created_at DESC);
+ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'result';
 
 CREATE TABLE IF NOT EXISTS finance_transactions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),

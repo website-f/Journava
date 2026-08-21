@@ -22,6 +22,7 @@ router = APIRouter(prefix=f"{settings.api_prefix}/saved", tags=["saved"])
 
 class SaveRequest(BaseModel):
     scope: str = "full_trip"
+    kind: str = "result"  # result | trip (a confirmed trip)
     title: str | None = None
     destination: str | None = None
     results: dict[str, Any]
@@ -45,32 +46,35 @@ async def save(body: SaveRequest, request: Request) -> dict[str, Any]:
     if pool is None:
         return {"error": "database unavailable"}
     uid = _user_id(request)
+    kind = body.kind if body.kind in ("result", "trip") else "result"
     dest = body.destination or ((body.results.get("chief") or {}).get("data") or {}).get("destination")
     async with pool.acquire() as conn:
         sid = await conn.fetchval(
-            """INSERT INTO saved_results (user_id, scope, title, destination, snapshot)
-               VALUES ($1, $2, $3, $4, $5) RETURNING id""",
-            uuid.UUID(uid) if uid else None, body.scope, _title(body), dest,
+            """INSERT INTO saved_results (user_id, scope, kind, title, destination, snapshot)
+               VALUES ($1, $2, $3, $4, $5, $6) RETURNING id""",
+            uuid.UUID(uid) if uid else None, body.scope, kind, _title(body), dest,
             json.dumps(body.results, default=str),
         )
-    return {"id": str(sid), "title": _title(body)}
+    return {"id": str(sid), "title": _title(body), "kind": kind}
 
 
 @router.get("")
-async def list_saved(request: Request) -> dict[str, Any]:
+async def list_saved(request: Request, kind: str = "result") -> dict[str, Any]:
     pool = await db.get_pool()
     if pool is None:
         return {"saved": []}
     uid = _user_id(request)
+    kind = kind if kind in ("result", "trip") else "result"
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, scope, title, destination, created_at FROM saved_results "
-            "WHERE user_id = $1 OR $1 IS NULL ORDER BY created_at DESC LIMIT 100",
-            uuid.UUID(uid) if uid else None,
+            "SELECT id, scope, kind, title, destination, created_at FROM saved_results "
+            "WHERE (user_id = $1 OR $1 IS NULL) AND kind = $2 ORDER BY created_at DESC LIMIT 100",
+            uuid.UUID(uid) if uid else None, kind,
         )
     return {
         "saved": [
-            {"id": str(r["id"]), "scope": r["scope"], "title": r["title"], "destination": r["destination"],
+            {"id": str(r["id"]), "scope": r["scope"], "kind": r["kind"], "title": r["title"],
+             "destination": r["destination"],
              "created_at": r["created_at"].isoformat() if r.get("created_at") else None}
             for r in rows
         ]

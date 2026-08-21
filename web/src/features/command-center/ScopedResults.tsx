@@ -117,6 +117,10 @@ function AddToTripBar({
     setBusy(true);
     try {
       await api.post("/trip/save", { results });
+      // Confirming also records it as a saved TRIP, so the Trips gallery shows
+      // only trips the traveller actually added — not every search.
+      const dest = (results.chief?.data as { destination?: string } | undefined)?.destination;
+      await api.post("/saved", { kind: "trip", scope: "full_trip", destination: dest, results }).catch(() => {});
       setAdded(true);
       toast.success("Added to your trip — open it any time from Trip.");
     } catch {

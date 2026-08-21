@@ -19,7 +19,7 @@ export function SavedResults() {
   const navigate = useNavigate();
 
   const load = () =>
-    api.get<{ saved: Saved[] }>("/saved").then((d) => setItems(d.saved)).catch(() => setItems([]));
+    api.get<{ saved: Saved[] }>("/saved?kind=result").then((d) => setItems(d.saved)).catch(() => setItems([]));
   useEffect(() => { void load(); }, []);
 
   const reopen = async (id: string) => {
