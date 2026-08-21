@@ -76,6 +76,16 @@ class ChatRequest(BaseModel):
     image: str | None = None
 
 
+class SocialRequest(BaseModel):
+    #: A social-media URL (YouTube/TikTok/Instagram/X/Facebook/blog).
+    url: str | None = None
+    #: Pasted caption / post text (the most reliable input).
+    text: str | None = None
+    #: A screenshot of a post, as a data URL (read via the vision model).
+    image: str | None = None
+    scope: str = "full_trip"
+
+
 def _sse(obj: dict[str, Any]) -> str:
     return f"data: {json.dumps(obj)}\n\n"
 
@@ -210,6 +220,50 @@ async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
     action = data.get("action") if isinstance(data.get("action"), dict) else None
     launched = _launch(action, user_id, body.messages) if action else None
     return {"reply": reply, "action": launched}
+
+
+# --------------------------------------------------------------------------- #
+# Plan from a social-media post (any platform)                                #
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/from-social")
+async def from_social(body: SocialRequest, request: Request) -> dict[str, Any]:
+    """Extract a trip seed from a post (URL / caption / screenshot) and launch a
+    background plan for it. Returns the seed + the launched job."""
+    from app.tools import social
+
+    claims = getattr(request.state, "auth", {}) or {}
+    user_id = claims.get("sub")
+
+    seed = await social.extract_trip_seed(url=body.url, text=body.text, image=body.image)
+    if seed.get("error"):
+        return {"seed": None, "job": None, "error": seed["error"]}
+
+    scope = body.scope if body.scope in _RUNNABLE_SCOPES else "full_trip"
+    goal = seed.get("goal") or f"Plan a trip to {seed.get('destination')}"
+    job_body = PlanJobRequest(
+        goal=goal,
+        origin=(seed.get("origin_hint") or None),
+        destination=(seed.get("destination") or None),
+        scope=scope,
+    )
+    try:
+        job = jobs.launch(
+            "plan",
+            lambda: _run_plan_job(job_body, user_id),
+            meta={"scope": scope, "goal": goal, "from_social": seed.get("source_kind")},
+            user_id=user_id,
+        )
+        pub = jobs.public(job)
+        return {
+            "seed": seed,
+            "job": {"id": pub.get("id"), "scope": scope, "goal": goal},
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("from-social launch failed: %s", exc)
+        return {"seed": seed, "job": None, "error": "Couldn't start the plan — try again."}
 
 
 # --------------------------------------------------------------------------- #

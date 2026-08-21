@@ -125,6 +125,24 @@ const SUGGESTIONS = [
   "Plan a 5-day Bali trip",
 ];
 
+const SOCIAL_URL_RE =
+  /https?:\/\/\S*(tiktok\.com|instagram\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|facebook\.com|fb\.watch)\S*/i;
+const PLAN_INTENT_RE = /\b(plan|trip|itinerary|travel|visit|go here|take me)\b/i;
+const FROM_POST_RE = /\b(from|based on|off)\b[^.]*\b(this|post|reel|video|clip|screenshot|photo|pic|it)\b/i;
+
+/** True when the message is a "plan a trip from this post" request — a social
+ *  link, a screenshot with planning intent, or a pasted caption with an explicit
+ *  "from this post" phrasing. Routes to /assistant/from-social. */
+function detectSocial(content: string, hasImage: boolean): boolean {
+  if (SOCIAL_URL_RE.test(content)) return true;
+  if (hasImage && (PLAN_INTENT_RE.test(content) || FROM_POST_RE.test(content))) return true;
+  // A pasted caption after the "Plan from a post" prompt (needs real text, not
+  // just the bare prompt) also routes to the extractor.
+  if (FROM_POST_RE.test(content) && content.replace(/plan a trip from this post:?/i, "").trim().length > 40)
+    return true;
+  return false;
+}
+
 export function AssistantPanel({
   open,
   onOpenChange,
@@ -179,6 +197,48 @@ export function AssistantPanel({
         if (copy[i]?.role === "assistant") copy[i] = fn(copy[i]);
         return copy;
       });
+
+    // "Plan a trip from this post" — a social link or a screenshot + intent goes
+    // to the extractor, which launches a background plan we track with a card.
+    if (detectSocial(content, !!img)) {
+      try {
+        const token = getAccessToken();
+        const url = content.match(SOCIAL_URL_RE)?.[0] ?? null;
+        const res = await fetch(`${API_BASE}/assistant/from-social`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ url, text: content, image: img, scope: "full_trip" }),
+        });
+        const data = (await res.json()) as {
+          error?: string;
+          job?: { id: string; scope: string; goal: string };
+          seed?: { destination: string; vibe?: string; source_kind?: string; places?: { name: string }[] };
+        };
+        if (data.error || !data.job || !data.seed) {
+          patchLast((m) => ({ ...m, content: data.error ?? "I couldn't plan from that post." }));
+        } else {
+          const s = data.seed;
+          const job = data.job;
+          const places = (s.places ?? []).slice(0, 4).map((p) => p.name).filter(Boolean).join(", ");
+          patchLast((m) => ({
+            ...m,
+            content:
+              `📍 From your ${s.source_kind ?? "social"} post: **${s.destination}**` +
+              (s.vibe ? ` · ${s.vibe}` : "") +
+              `\n\nPlanning a trip${places ? ` around ${places}` : ""}… I'll add it to your History when it's done.`,
+            action: { type: "plan_started", job_id: job.id, scope: job.scope, goal: job.goal },
+          }));
+        }
+      } catch {
+        patchLast((m) => ({ ...m, content: "Sorry — I couldn't reach the server. Try again?" }));
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
 
     try {
       const token = getAccessToken();
@@ -327,6 +387,12 @@ export function AssistantPanel({
                       {s}
                     </button>
                   ))}
+                  <button
+                    onClick={() => setInput("Plan a trip from this post: ")}
+                    className="rounded-[var(--r-pill)] border border-dashed border-[var(--brand-400)] px-3 py-1.5 text-xs text-[var(--brand-600)] hover:bg-[var(--bg)]"
+                  >
+                    📱 Plan from a TikTok / IG / YouTube post
+                  </button>
                 </div>
               </div>
             )}
