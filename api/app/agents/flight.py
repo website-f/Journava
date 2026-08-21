@@ -184,13 +184,30 @@ class FlightAgent(BaseAgent):
         )
 
         async def producer() -> dict[str, Any]:
+            # Resolve the destination to candidate airports first. The static
+            # table is instant; anything it misses (e.g. "Chengdu") goes to the
+            # smart resolver, which asks the LLM for the right codes — or the
+            # NEAREST airport when the place has none — so Atlas/Amadeus aren't
+            # skipped on a perfectly valid trip.
+            dest_candidates = _dest_airports(destination)
+            used_nearest = False
+            if not dest_candidates:
+                dest_candidates, used_nearest = await _resolve_airports_llm(destination)
+                if dest_candidates:
+                    self.emit(
+                        "active",
+                        f"No exact airport match for {destination} — searching "
+                        f"{'nearest ' if used_nearest else ''}airport(s): "
+                        f"{', '.join(dest_candidates)}",
+                    )
+
             # Atlas (bookable truth), Amadeus (breadth) and Camofox (discovery)
             # run concurrently — they are independent and the slowest one sets
             # the wall clock either way.
             self.emit("working", "Querying Atlas, Amadeus and Camofox research")
             atlas_raw, amadeus_raw, camofox_raw = await asyncio.gather(
-                self._try_atlas(request, origin, destination, depart),
-                self._try_amadeus(request, origin, destination, depart),
+                self._try_atlas(request, origin, dest_candidates, depart),
+                self._try_amadeus(request, origin, dest_candidates, depart),
                 self._try_camofox(
                     origin,
                     destination,
@@ -213,6 +230,10 @@ class FlightAgent(BaseAgent):
                     "sites_read": camofox_raw.get("sites_read", 0),
                     "sites_failed": camofox_raw.get("sites_failed", []),
                 },
+            }
+            report["destination_airports"] = {
+                "codes": list(dest_candidates),
+                "nearest": used_nearest,
             }
             merged = [*atlas_raw, *amadeus_raw, *camofox_raw["options"]]
             if merged:
@@ -248,19 +269,19 @@ class FlightAgent(BaseAgent):
         self,
         request: TripRequest,
         origin: str,
-        destination: str,
+        candidates: tuple[str, ...],
         depart: str,
     ) -> list[dict[str, Any]]:
         """Search Atlas. Returns [] (never raises) when the CLI is unavailable.
 
-        A country destination (e.g. "Japan") resolves to several gateway
-        airports; we try each until one returns inventory, so a full-trip search
-        still yields bookable Atlas fares instead of an empty section.
+        `candidates` is the pre-resolved list of destination gateway airports
+        (from the static table or the smart LLM resolver); we try each until one
+        returns inventory, so a full-trip search still yields bookable Atlas fares
+        instead of an empty section.
         """
         if depart == "flexible":
             return []  # Atlas requires a concrete departure date.
 
-        candidates = _dest_airports(destination)
         if not candidates:
             return []
 
@@ -303,18 +324,17 @@ class FlightAgent(BaseAgent):
         self,
         request: TripRequest,
         origin: str,
-        destination: str,
+        candidates: tuple[str, ...],
         depart: str,
     ) -> list[dict[str, Any]]:
         """Search Amadeus for breadth. Returns [] when unconfigured or failing."""
         if depart == "flexible":
             return []
-        dest_candidates = _dest_airports(destination)
-        if not dest_candidates:
+        if not candidates:
             return []
         offers = await amadeus.search_flights(
             origin,
-            dest_candidates[0],
+            candidates[0],
             depart,
             return_date=str(request.end_date) if request.end_date else None,
             adults=max(1, request.travellers),
@@ -1096,6 +1116,12 @@ class FlightAgent(BaseAgent):
     @staticmethod
     def _warnings(options: list[Option], report: dict[str, Any]) -> list[str]:
         warnings: list[str] = []
+        airports = report.get("destination_airports") or {}
+        if airports.get("nearest") and airports.get("codes"):
+            warnings.append(
+                "This destination has no airport of its own — searched the "
+                f"nearest instead: {', '.join(airports['codes'])}."
+            )
         if not any(o.bookable for o in options):
             if report.get("atlas", {}).get("count"):
                 warnings.append(
@@ -1408,6 +1434,27 @@ _COUNTRY_CITY_AIRPORTS: dict[str, tuple[str, ...]] = {
     "taiwan": ("TPE", "TSA"),
     "hong kong": ("HKG",),
     "china": ("PVG", "PEK", "CAN"),
+    # Chinese cities the static table used to miss — the "Chengdu" gap that made
+    # Atlas return nothing. Anything still missing goes to _resolve_airports_llm.
+    "chengdu": ("CTU", "TFU"),
+    "shanghai": ("PVG", "SHA"),
+    "beijing": ("PEK", "PKX"),
+    "guangzhou": ("CAN",),
+    "shenzhen": ("SZX",),
+    "chongqing": ("CKG",),
+    "xian": ("XIY",),
+    "xi'an": ("XIY",),
+    "hangzhou": ("HGH",),
+    "kunming": ("KMG",),
+    "chiang mai": ("CNX",),
+    "phuket": ("HKT",),
+    "hanoi": ("HAN",),
+    "da nang": ("DAD",),
+    "danang": ("DAD",),
+    "ho chi minh": ("SGN",),
+    "kuala lumpur": ("KUL",),
+    "penang": ("PEN",),
+    "kota kinabalu": ("BKI",),
     "philippines": ("MNL", "CEB"),
     "australia": ("SYD", "MEL", "BNE"),
     "uae": ("DXB", "AUH"),
@@ -1443,6 +1490,55 @@ def _dest_airports(value: str | None) -> tuple[str, ...]:
     if code and re.fullmatch(r"[A-Z]{3}", code):
         return (code,)
     return ()
+
+
+_AIRPORT_RESOLVER_SYSTEM = (
+    "You map a place name to airport IATA codes. Respond ONLY as JSON: "
+    '{"iata": ["CODE", ...], "nearest": false}. '
+    "List the international airport(s) that actually serve the place, most useful "
+    "first (max 3, uppercase 3-letter IATA). If the place has NO airport of its "
+    "own, return the NEAREST major airport(s) instead and set nearest=true. Never "
+    "invent codes; if you are unsure, return an empty list."
+)
+
+
+async def _resolve_airports_llm(destination: str | None) -> tuple[tuple[str, ...], bool]:
+    """Resolve a place to IATA codes with the LLM when the static table misses.
+
+    This is what makes the agent *smart* about less-obvious places (e.g. Chengdu
+    → CTU/TFU) and about places with no airport of their own (returns the nearest
+    and flags it). Cached per place, so it costs at most one LLM call per city.
+    Returns (codes, used_nearest).
+    """
+    if not destination:
+        return ((), False)
+
+    async def resolve() -> dict[str, Any]:
+        try:
+            resp = await complete(
+                [
+                    {"role": "system", "content": _AIRPORT_RESOLVER_SYSTEM},
+                    {"role": "user", "content": f"Place: {destination.strip()}"},
+                ],
+                response_format={"type": "json_object"},
+                agent="flight",
+            )
+            data = json.loads(resp)
+        except Exception:  # noqa: BLE001 — resolution is best-effort
+            return {"iata": [], "nearest": False}
+        codes = [
+            c.strip().upper()
+            for c in (data.get("iata") or [])
+            if isinstance(c, str) and re.fullmatch(r"[A-Za-z]{3}", c.strip())
+        ]
+        return {"iata": list(dict.fromkeys(codes))[:3], "nearest": bool(data.get("nearest"))}
+
+    key = f"airport-resolve:{destination.strip().lower()}"
+    try:
+        data = await cached(key, resolve, ttl=settings.cache_ttl_long)
+    except Exception:  # noqa: BLE001
+        data = {"iata": [], "nearest": False}
+    return (tuple(data.get("iata") or ()), bool(data.get("nearest")))
 
 
 def _airport_code(value: str | None) -> str | None:
