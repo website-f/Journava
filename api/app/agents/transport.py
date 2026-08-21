@@ -1,4 +1,9 @@
-"""Transport Agent — ground transport, inter-city routes, local transit."""
+"""Transport Agent — ground transport, inter-city routes, local transit.
+
+Research-backed: crawls Camofox for how people actually get around the
+destination (and how they pay — cash / card / contactless / which app), grounds
+the LLM in what it read, and cites its sources.
+"""
 
 from __future__ import annotations
 
@@ -9,17 +14,25 @@ from typing import Any
 from app.agents.base import BaseAgent
 from app.agents.schemas import AgentResult, TravelerProfile, TripRequest
 from app.core import llm
+from app.tools import discover
 
 logger = logging.getLogger(__name__)
 
-SYSTEM = """You are Journava's Transport agent. Recommend ground transport options.
+SYSTEM = """You are Journava's Transport agent. Recommend how to get around the \
+destination, grounded in the RESEARCH provided (don't rely on memory alone).
 Respond in JSON:
-{"airport_transfer": [{"mode": "taxi|train|bus", "cost_usd": 0, "duration_min": 30}],
- "inter_city": [{"mode": "train|bus|domestic_flight", "route": "city A to city B"}],
- "local_transit": {"primary": "metro|bus|tram", "day_pass_usd": 5, "apps": ["Grab", "Uber"]},
- "tips": "practical transport tip"}"""
+{"airport_transfer": [{"mode": "taxi|train|bus|rideshare", "cost_usd": 0, "duration_min": 30, "how_to_pay": "cash|card|contactless|app"}],
+ "inter_city": [{"mode": "train|bus|domestic_flight", "route": "city A to city B", "how_to_pay": "card|app"}],
+ "local_transit": {"primary": "metro|bus|tram|rideshare", "day_pass_usd": 5, "payment": "how locals pay — transit card / contactless / cash / which app", "apps": ["Grab", "Uber"]},
+ "tips": "practical transport tip"}
+Always fill "how_to_pay"/"payment" concretely (e.g. 'Alipay/WeChat QR', 'contactless Visa', 'Tianfutong transit card', 'cash only') — the traveller needs to know what to bring."""
 
-USER = "Destination: {destination}\nTrip days: {days}\nRecommend ground transport."
+USER = (
+    "Destination: {destination}\n"
+    "Trip days: {days}\n\n"
+    "RESEARCH (live web crawl — use it, cite nothing you didn't see):\n{research}\n\n"
+    "Recommend ground transport and, importantly, how to pay for each."
+)
 
 
 class TransportAgent(BaseAgent):
@@ -41,11 +54,27 @@ class TransportAgent(BaseAgent):
             else 7
         )
 
+        self.emit("working", f"Researching how to get around {destination}")
+        research = await discover.crawl_sources(
+            [
+                f"how to get around {destination} public transport guide",
+                f"{destination} how to pay for transport metro card contactless cash app",
+                f"{destination} airport to city centre transfer options cost",
+            ]
+        )
+
         try:
             resp = await llm.complete(
                 [
                     {"role": "system", "content": SYSTEM},
-                    {"role": "user", "content": USER.format(destination=destination, days=days)},
+                    {
+                        "role": "user",
+                        "content": USER.format(
+                            destination=destination,
+                            days=days,
+                            research=research["text"] or "(no live results — use best knowledge)",
+                        ),
+                    },
                 ],
                 response_format={"type": "json_object"},
                 agent="transport",
@@ -53,13 +82,19 @@ class TransportAgent(BaseAgent):
             data = json.loads(resp)
         except Exception:  # noqa: BLE001
             data = {
-                "airport_transfer": [{"mode": "taxi", "cost_usd": 30, "duration_min": 45}],
-                "local_transit": {"primary": "taxi/rideshare", "apps": ["Grab"]},
+                "airport_transfer": [
+                    {"mode": "taxi", "cost_usd": 30, "duration_min": 45, "how_to_pay": "card or app"}
+                ],
+                "local_transit": {"primary": "taxi/rideshare", "payment": "app", "apps": ["Grab"]},
                 "tips": "Use rideshare apps for convenience.",
             }
+
+        sources = discover.source_links(research["sources"])
+        if sources:
+            self.emit("active", f"Transport: grounded in {len(sources)} source(s)")
 
         return AgentResult(
             agent=self.slug,
             summary=f"Transport options for {destination}",
-            data={"destination": destination, **data},
+            data={"destination": destination, **data, "sources": sources},
         )

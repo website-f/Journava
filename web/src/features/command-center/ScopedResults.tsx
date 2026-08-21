@@ -20,6 +20,7 @@ import { api } from "@/lib/api";
 import { FlightResults } from "@/features/flights/FlightResults";
 import { PlaceCard } from "./PlaceCard";
 import { PlacesSection } from "./PlacesSection";
+import { VideoCarousel } from "@/components/ui/VideoCarousel";
 import type { AgentPlanResult, PlanOption, PlanResults, Scope, VideoReview } from "@/lib/types";
 
 /** Pull the top video reviews the research agent attached, by category. */
@@ -815,9 +816,16 @@ function SocialPanel({ result }: { result?: AgentPlanResult }) {
 /** Generic renderer for the advisory agents, whose payloads are free-form. */
 function DataPanel({ result, title }: { result?: AgentPlanResult; title: string }) {
   if (!result) return null;
-  const entries = Object.entries(result.data ?? {}).filter(
+  const data = result.data ?? {};
+  const sources = Array.isArray(data.sources)
+    ? (data.sources as Array<{ title?: string; url: string }>)
+    : [];
+  const videos = Array.isArray(data.videos) ? (data.videos as VideoReview[]) : [];
+  const entries = Object.entries(data).filter(
     ([key, value]) =>
       key !== "destination" &&
+      key !== "sources" &&
+      key !== "videos" &&
       value !== null &&
       value !== "" &&
       !(Array.isArray(value) && value.length === 0),
@@ -826,18 +834,42 @@ function DataPanel({ result, title }: { result?: AgentPlanResult; title: string 
   return (
     <section>
       <h3 className="mb-2 text-lg font-semibold">{title}</h3>
-      <div className="surface-card space-y-2 p-4">
+      <div className="surface-card space-y-3 p-4">
         <p className="text-sm text-[var(--muted)]">{result.summary}</p>
-        <dl className="grid gap-2 sm:grid-cols-2">
-          {entries.map(([key, value]) => (
-            <div key={key} className="min-w-0">
-              <dt className="text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
-                {key.replace(/_/g, " ")}
-              </dt>
-              <dd className="break-words text-xs">{renderValue(value)}</dd>
-            </div>
-          ))}
-        </dl>
+        {entries.length > 0 && (
+          <dl className="grid gap-2 sm:grid-cols-2">
+            {entries.map(([key, value]) => (
+              <div key={key} className="min-w-0">
+                <dt className="text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
+                  {key.replace(/_/g, " ")}
+                </dt>
+                <dd className="break-words text-xs">{renderValue(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {videos.length > 0 && <VideoCarousel videos={videos} />}
+        {sources.length > 0 && (
+          <div className="min-w-0 space-y-1">
+            <p className="text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
+              Sources
+            </p>
+            <ul className="space-y-1">
+              {sources.map((source, index) => (
+                <li key={index} className="min-w-0">
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block min-w-0 truncate text-xs text-[var(--brand-500)] hover:underline"
+                  >
+                    {source.title || source.url}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {result.warnings.map((warning, index) => (
           <p key={index} className="text-xs text-[var(--warning)]">
             {warning}
