@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { ExternalLink, Eye, Plug, Plus, Trash2, X, Zap } from "@/components/ui/icons";
 import { Button, EmptyState, Skeleton } from "@/components/ui";
+import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/cn";
 import { api, ApiError } from "@/lib/api";
 
@@ -139,25 +140,12 @@ export function Integrations() {
               </div>
 
               {/* Per-bot notification toggle */}
-              <button
-                type="button"
-                role="switch"
-                aria-checked={bot.enabled}
-                aria-label="Receive notifications from this bot"
+              <Switch
+                checked={bot.enabled}
+                onCheckedChange={() => void toggle(bot)}
                 disabled={busyId === bot.id}
-                onClick={() => void toggle(bot)}
-                className={cn(
-                  "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
-                  bot.enabled ? "bg-[var(--brand-500)]" : "bg-[var(--border)]",
-                )}
-              >
-                <span
-                  className={cn(
-                    "inline-block h-5 w-5 rounded-full bg-white shadow transition-transform",
-                    bot.enabled ? "translate-x-[1.375rem]" : "translate-x-0.5",
-                  )}
-                />
-              </button>
+                aria-label="Receive notifications from this bot"
+              />
 
               <div className="flex w-full justify-end gap-1 sm:w-auto">
                 <Button variant="ghost" size="icon" aria-label="Test" loading={busyId === bot.id} onClick={() => void test(bot)}>
