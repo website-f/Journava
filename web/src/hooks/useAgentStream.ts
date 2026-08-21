@@ -40,12 +40,18 @@ function emit(next: Partial<StreamState>) {
 function connect() {
   if (handle) return;
   // EventSource can't send an Authorization header, so the access token rides in
-  // the query string (the auth middleware accepts it for /events only).
-  const token = getAccessToken();
-  const url = token
-    ? `${API_BASE}/events?token=${encodeURIComponent(token)}`
-    : `${API_BASE}/events`;
-  handle = openAgentStream(url, {
+  // the query string (the auth middleware accepts it for /events only). Build the
+  // URL lazily — passed as a getter — so every reconnect re-reads the CURRENT
+  // token. If the token rotated (a 401 elsewhere refreshed it), the reconnect
+  // picks up the fresh one instead of looping forever on the stale token, which
+  // used to require a full page refresh to recover.
+  const buildUrl = () => {
+    const token = getAccessToken();
+    return token
+      ? `${API_BASE}/events?token=${encodeURIComponent(token)}`
+      : `${API_BASE}/events`;
+  };
+  handle = openAgentStream(buildUrl, {
     onOpen: () => emit({ connected: true }),
     onError: () => emit({ connected: false }),
     onEvent: (event) => {

@@ -28,9 +28,14 @@ export type StreamHandle = { close: () => void };
 
 /**
  * Subscribe to the agent stream. Returns a handle — always close it on unmount.
+ *
+ * `getUrl` is called on every (re)connect, not once — so a token baked into the
+ * URL is re-read each time. Without this, a reconnect after the access token
+ * rotates would keep retrying forever with the stale token, and the live stream
+ * only recovered on a full page refresh.
  */
 export function openAgentStream(
-  path: string,
+  getUrl: () => string,
   { onEvent, onOpen, onError }: StreamHandlers,
 ): StreamHandle {
   let source: EventSource | null = null;
@@ -40,7 +45,7 @@ export function openAgentStream(
 
   const connect = () => {
     if (closed) return;
-    source = new EventSource(path);
+    source = new EventSource(getUrl());
 
     source.onopen = () => {
       retry = 0;
