@@ -139,6 +139,7 @@ export function MyTrip() {
         <TripExtraPanels results={results as PlanResults} />
       </div>
       <FlightWatchCard />
+      <ItineraryGraphCard />
       <DisruptionSection recovery={recovery} setRecovery={setRecovery} setRecoveryLoading={setRecoveryLoading} recoveryLoading={recoveryLoading} />
     </div>
   );
@@ -309,6 +310,103 @@ function FlightWatchCard() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Itinerary as a dependency graph — cascade a delay + settle the fare diff
+// --------------------------------------------------------------------------- //
+
+type ReplanNode = { id: string; kind: string; day: number; title: string; starts_at?: string; conflict?: string | null };
+type ReplanResult = {
+  error?: string;
+  graph: { nodes: ReplanNode[] };
+  impacted: ReplanNode[];
+  rebook: { summary: string; additional_cost: string };
+  settlement: { direction: string; fare_delta: number | null; currency: string; mode?: string };
+};
+
+function LegDot({ kind }: { kind: string }) {
+  const label: Record<string, string> = { flight: "✈", hotel: "🏨", activity: "◆", meal: "🍽", transport: "🚌" };
+  return <span className="w-5 shrink-0 text-center text-xs">{label[kind] ?? "◆"}</span>;
+}
+
+function ItineraryGraphCard() {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<ReplanResult | null>(null);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      const r = await api.post<ReplanResult>("/itinerary/replan", { event_type: "flight_delayed", delay_minutes: 200, persist: false });
+      if (r.error) toast.info(r.error);
+      else {
+        setResult(r);
+        toast.success(`Re-planned — ${r.impacted.length} leg(s) fixed`);
+      }
+    } catch {
+      toast.error("Couldn't re-plan the itinerary.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section className="mt-8">
+      <div className="surface-card p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-[var(--brand-500)]" />
+          <h3 className="text-base font-semibold">Itinerary dependency graph</h3>
+        </div>
+        <p className="mb-4 text-sm text-[var(--muted)]">
+          Your legs depend on each other. If a flight slips, Journava cascades the shift, re-plans every
+          broken leg, and settles the fare difference automatically.
+        </p>
+        <Button variant="secondary" onClick={run} loading={loading} disabled={loading}>
+          <Zap className="h-4 w-4" /> Simulate a 200-min delay &amp; auto-replan
+        </Button>
+
+        {result && (
+          <div className="mt-5 space-y-4">
+            <div className="rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">
+              <strong>Cascade:</strong> {result.rebook.summary}
+              {result.settlement.fare_delta != null && (
+                <>
+                  {" "}· fare{" "}
+                  {result.settlement.direction === "refund"
+                    ? "refund"
+                    : result.settlement.direction === "upcharge"
+                      ? "top-up"
+                      : "unchanged"}{" "}
+                  {result.settlement.currency} {Math.abs(result.settlement.fare_delta).toLocaleString()}
+                  {result.settlement.mode ? ` (${result.settlement.mode})` : ""}
+                </>
+              )}
+            </div>
+            <div className="space-y-1">
+              {result.graph.nodes.map((n) => {
+                const broken = result.impacted.some((i) => i.id === n.id);
+                return (
+                  <div
+                    key={n.id}
+                    className={cn(
+                      "flex items-center gap-2 rounded-[var(--r-md)] px-3 py-1.5 text-sm",
+                      broken ? "bg-[color-mix(in_srgb,var(--warning)_12%,transparent)]" : "bg-[var(--bg)]",
+                    )}
+                  >
+                    <LegDot kind={n.kind} />
+                    <span className="w-8 shrink-0 text-xs text-[var(--muted)]">D{n.day}</span>
+                    <span className="w-14 shrink-0 text-xs tabular-nums text-[var(--muted)]">{n.starts_at ?? "—"}</span>
+                    <span className="min-w-0 flex-1 truncate">{n.title}</span>
+                    {n.conflict && <Badge variant="warning">{n.conflict.replace(/_/g, " ")}</Badge>}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

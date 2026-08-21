@@ -57,8 +57,11 @@ function RouteFallback() {
 
 export function App() {
   const location = useLocation();
-  const { status, isAgency, isPlatformAdmin } = useAuth();
-  const isB2B = isAgency || isPlatformAdmin;
+  const { status, isAgency } = useAuth();
+  // Only real agency/corporate orgs land on the B2B console. Platform admins
+  // keep the consumer PWA (they test traveller flows) but can still open
+  // /console manually — ConsoleApp allows them through for support.
+  const isB2B = isAgency;
 
   // Auth wall (spec §1): restoring a session, then either the app or login.
   if (status === "loading") {
