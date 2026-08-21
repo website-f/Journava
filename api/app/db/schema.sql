@@ -433,3 +433,22 @@ CREATE TABLE IF NOT EXISTS escrow_events (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS escrow_events_hold_idx ON escrow_events (hold_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- Hotel inventory firewall (notable-advance tier). A supplier sells the same
+-- physical rooms on several channels (our marketplace + OTAs). We hold the
+-- source of truth (supplier_listings.capacity) and track each channel's
+-- allocation + sales here, so the firewall can reconcile drift and — critically
+-- — atomically guard a booking so two channels can't sell the last room.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS channel_inventory (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    listing_id  UUID NOT NULL REFERENCES supplier_listings(id) ON DELETE CASCADE,
+    org_id      UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    channel     TEXT NOT NULL,                 -- journava | booking.com | agoda | expedia ...
+    allocated   INTEGER NOT NULL DEFAULT 0,
+    sold        INTEGER NOT NULL DEFAULT 0,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (listing_id, channel)
+);
+CREATE INDEX IF NOT EXISTS channel_inventory_listing_idx ON channel_inventory (listing_id);
