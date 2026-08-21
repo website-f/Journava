@@ -157,6 +157,9 @@ class FlightAgent(BaseAgent):
                 # destination_airports is metadata (surfaced via warnings), not a
                 # fare source — keep it out of the source badges.
                 "sources": {k: v for k, v in source_report.items() if k != "destination_airports"},
+                # Bypass-OTA value: cheapest bookable-direct fare vs cheapest OTA
+                # fare the crawler found. Drives the "book direct, save X" banner.
+                "commission_saved": _commission_saved(options),
                 "bookable_count": sum(1 for o in options if o.bookable),
                 "recalled_from_memory": bool(recalled),
             },
@@ -1480,6 +1483,47 @@ _COUNTRY_CITY_AIRPORTS: dict[str, tuple[str, ...]] = {
     "saudi arabia": ("JED", "RUH"),
     "qatar": ("DOH",),
 }
+
+
+#: Typical OTA/GDS commission an agency avoids by booking direct (Atlas/NDC).
+_OTA_COMMISSION_RATE = 0.10
+
+
+def _commission_saved(options: list[Option]) -> dict[str, Any] | None:
+    """OTA commission avoided by booking direct — the bypass-OTA value.
+
+    OTAs bake a ~10% commission into a fare; booking direct (Atlas/NDC) keeps it.
+    Reported on the cheapest fare found so agencies/consumers see the value of
+    going direct. If a direct fare also undercuts the cheapest crawled OTA fare,
+    that extra saving is added on top.
+    """
+
+    def _price(option: Option) -> float | None:
+        try:
+            return float(option.price_amount) if option.price_amount is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    prices = [p for o in options if (p := _price(o)) and p > 0]
+    if not prices:
+        return None
+    cheapest = min(prices)
+    currency = next((o.price_currency for o in options if o.price_currency), "MYR")
+
+    commission = cheapest * _OTA_COMMISSION_RATE
+    # Bonus: a direct fare that also beats the cheapest crawled OTA fare.
+    direct = [p for o in options if (o.bookable or o.source == "atlas") and (p := _price(o)) and p > 0]
+    ota = [p for o in options if o.source == "camofox" and (p := _price(o)) and p > 0]
+    price_edge = (min(ota) - min(direct)) if direct and ota and min(ota) > min(direct) else 0.0
+
+    return {
+        "amount": round(commission + price_edge, 2),
+        "commission": round(commission, 2),
+        "rate_pct": int(_OTA_COMMISSION_RATE * 100),
+        "price_edge": round(price_edge, 2),
+        "on_fare": round(cheapest, 2),
+        "currency": currency,
+    }
 
 
 def _dest_airports(value: str | None) -> tuple[str, ...]:

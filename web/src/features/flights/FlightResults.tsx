@@ -97,6 +97,9 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
     destination?: string;
     depart?: string;
   };
+  const commissionSaved = (result.data?.commission_saved ?? null) as
+    | { amount: number; rate_pct: number; on_fare: number; currency: string }
+    | null;
 
   /** offer id → which ranking bucket(s) it won. */
   const badgesFor = useMemo(() => {
@@ -172,6 +175,19 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
       </header>
 
       <p className="text-sm text-[var(--muted)]">{result.summary}</p>
+
+      {/* Bypass-OTA hook: the ~10% OTA commission avoided by booking direct. */}
+      {commissionSaved && commissionSaved.amount > 0 && (
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-[var(--r-md)] border border-[var(--success)]/40 bg-[color-mix(in_srgb,var(--success)_10%,transparent)] px-3 py-2 text-sm">
+          <span className="font-semibold text-[var(--success)]">
+            Book direct — save ~
+            <Money amount={commissionSaved.amount} currency={commissionSaved.currency} />
+          </span>
+          <span className="text-[var(--muted)]">
+            per ticket vs a ~{commissionSaved.rate_pct}% OTA commission. No middleman markup.
+          </span>
+        </div>
+      )}
 
       {/* What each source contributed — the reconciliation, made visible. */}
       <div className="flex flex-wrap gap-1.5">
