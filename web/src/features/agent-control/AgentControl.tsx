@@ -236,7 +236,7 @@ export function AgentControl() {
       <ControlHeader connected={connected} />
 
       <Tabs defaultValue={isMobile ? "roster" : "topology"}>
-        <TabsList className="flex-wrap">
+        <TabsList>
           <TabsTrigger value="topology">
             <GitCompareArrows className="h-4 w-4" /> Topology
           </TabsTrigger>

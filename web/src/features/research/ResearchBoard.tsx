@@ -32,7 +32,7 @@ export function ResearchBoard() {
   return (
     <div className="mx-auto w-full max-w-6xl">
       <Tabs defaultValue="knowledge">
-        <TabsList className="flex-wrap">
+        <TabsList>
           <TabsTrigger value="knowledge">
             <BadgeCheck className="h-4 w-4" /> Knowledge library
           </TabsTrigger>
@@ -103,7 +103,7 @@ function TripResearch() {
       <ResearchHeader />
 
       <Tabs defaultValue="flights">
-        <TabsList className="flex-wrap">
+        <TabsList>
           <TabsTrigger value="flights">
             Flights <Badge variant="brand">{flights.length}</Badge>
           </TabsTrigger>

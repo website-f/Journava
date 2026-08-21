@@ -15,7 +15,10 @@ export function TabsList({
   return (
     <TabsPrimitive.List
       className={cn(
-        "inline-flex items-center gap-1 rounded-[var(--r-md)] bg-[var(--bg)] p-1",
+        // Single row that scrolls horizontally on overflow (never wraps/stacks),
+        // with the scrollbar hidden — the native-app tab-strip pattern. Triggers
+        // are shrink-0 so they keep their size and the row scrolls instead.
+        "flex max-w-full items-center gap-1 overflow-x-auto no-scrollbar rounded-[var(--r-md)] bg-[var(--bg)] p-1",
         "border border-[var(--border)]",
         className,
       )}
@@ -31,7 +34,7 @@ export function TabsTrigger({
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-[var(--r-sm)] px-3 py-1.5",
+        "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--r-sm)] px-3 py-1.5",
         "text-sm font-medium text-[var(--muted)] select-none",
         "transition-[color,background] duration-[var(--dur)] ease-[var(--ease)]",
         "hover:text-[var(--text)]",
