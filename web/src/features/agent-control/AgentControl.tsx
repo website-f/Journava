@@ -10,7 +10,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { toast } from "sonner";
-import { Brain, Bot, Activity, GitCompareArrows } from "@/components/ui/icons";
+import { Brain, Activity, GitCompareArrows } from "@/components/ui/icons";
 
 import { cn } from "@/lib/cn";
 import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from "@/components/ui";
@@ -212,27 +212,6 @@ export function AgentControl() {
     );
   }, [statusMap, setNodes, setEdges]);
 
-  const roster = (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {AGENTS.map((agent) => {
-        const latest = statusMap[agent.slug];
-        const status: AgentStatus = latest?.status ?? "idle";
-        return (
-          <div key={agent.slug} className="surface-card p-3 flex items-center gap-3">
-            <span
-              className="h-2.5 w-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: STATUS_COLORS[status] }}
-            />
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{agent.name}</p>
-              <p className="text-xs text-[var(--muted)] truncate">{latest?.message ?? agent.role}</p>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-
   return (
     <div className="mx-auto w-full max-w-6xl">
       <ControlHeader connected={connected} />
@@ -244,9 +223,6 @@ export function AgentControl() {
           </TabsTrigger>
           <TabsTrigger value="topology">
             <GitCompareArrows className="h-4 w-4" /> Topology
-          </TabsTrigger>
-          <TabsTrigger value="roster">
-            <Bot className="h-4 w-4" /> Roster
           </TabsTrigger>
           <TabsTrigger value="live">
             <Activity className="h-4 w-4" /> Live
@@ -278,8 +254,6 @@ export function AgentControl() {
             </ReactFlow>
           </div>
         </TabsContent>
-
-        <TabsContent value="roster">{roster}</TabsContent>
 
         <TabsContent value="live">
           <EventStream events={events} />

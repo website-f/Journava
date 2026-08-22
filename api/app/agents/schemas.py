@@ -100,10 +100,21 @@ class TripRequest(BaseModel):
     destination: str | None = None
     start_date: date | None = None
     end_date: date | None = None
+    #: Trip length in days, parsed from the goal ("3 days") even when no dates
+    #: were given — the itinerary spans exactly this, not the 7-day default.
+    duration_days: int | None = None
     travellers: int = 1
     budget_amount: Decimal | None = None
     budget_currency: str = "MYR"
     pace: Literal["relaxed", "balanced", "packed"] | None = None
+
+    @property
+    def effective_days(self) -> int:
+        """How many days the itinerary should span. Explicit dates win; else the
+        parsed duration ("3 days"); else a sensible 7-day default."""
+        if self.start_date and self.end_date:
+            return max(1, (self.end_date - self.start_date).days + 1)
+        return self.duration_days or 7
 
 
 #: Where an option came from. Surfaced as a badge so the traveller can tell a

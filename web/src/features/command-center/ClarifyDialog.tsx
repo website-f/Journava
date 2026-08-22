@@ -2,7 +2,7 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion } from "framer-motion";
 import { ArrowRight, Plane, Sparkles, X } from "@/components/ui/icons";
-import { Button } from "@/components/ui";
+import { Button, DateRangePicker, type DateRange } from "@/components/ui";
 import { cn } from "@/lib/cn";
 
 /**
@@ -29,13 +29,17 @@ export function ClarifyDialog({
   // "" = let the agent suggest (the default); a chip or the text box sets it.
   const [city, setCity] = useState("");
   const [dateIdx, setDateIdx] = useState<number | null>(null);
+  // Exact dates picked on the calendar — win over a quick-suggestion chip.
+  const [range, setRange] = useState<DateRange>({});
   const country = state.country_only?.country;
   const recommended = state.country_only?.recommended || state.country_only?.cities?.[0];
   const dates = state.date_suggestions ?? [];
   const ready = !state.needs_origin || origin.trim().length > 0;
 
   const submit = () => {
-    const picked = dateIdx != null ? dates[dateIdx] : undefined;
+    const chip = dateIdx != null ? dates[dateIdx] : undefined;
+    const startDate = range.start ?? chip?.start_date;
+    const endDate = range.end ?? chip?.end_date;
     onSubmit({
       origin: origin.trim() || undefined,
       // "You suggest" (blank) resolves to the agent's recommended city, so the
@@ -43,8 +47,8 @@ export function ClarifyDialog({
       // bare country.
       city: city.trim() || (state.country_only ? recommended : undefined),
       country: state.country_only ? country : undefined,
-      start_date: picked?.start_date,
-      end_date: picked?.end_date,
+      start_date: startDate,
+      end_date: endDate,
     });
   };
 
@@ -159,10 +163,13 @@ export function ClarifyDialog({
                       <button
                         key={i}
                         type="button"
-                        onClick={() => setDateIdx(dateIdx === i ? null : i)}
+                        onClick={() => {
+                          setDateIdx(dateIdx === i ? null : i);
+                          setRange({}); // a quick pick clears any exact-date choice
+                        }}
                         className={cn(
                           "rounded-[var(--r-pill)] border px-3 py-1.5 text-xs font-medium transition-colors",
-                          dateIdx === i
+                          dateIdx === i && !range.start
                             ? "border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_18%,transparent)] text-[var(--brand-600)]"
                             : "border-[var(--border)] hover:border-[var(--brand-400)]",
                         )}
@@ -171,6 +178,15 @@ export function ClarifyDialog({
                       </button>
                     ))}
                   </div>
+                  <p className="mb-1.5 mt-2 text-[0.65rem] text-[var(--muted)]">or pick exact dates</p>
+                  <DateRangePicker
+                    value={range}
+                    onChange={(r) => {
+                      setRange(r);
+                      if (r.start) setDateIdx(null); // exact dates win over a chip
+                    }}
+                    placeholder="Choose on the calendar"
+                  />
                 </div>
               )}
             </div>

@@ -28,6 +28,97 @@ import { PlacesSection } from "./PlacesSection";
 import { VideoCarousel } from "@/components/ui/VideoCarousel";
 import type { AgentPlanResult, PlanOption, PlanResults, Scope, VideoReview } from "@/lib/types";
 
+/** Friendly labels for the section-jump nav — keeps the chips short. */
+const PANEL_LABELS: Record<string, string> = {
+  summary: "Overview",
+  flights: "Flights",
+  hotels: "Stays",
+  dining: "Food",
+  activities: "Places",
+  itinerary: "Itinerary",
+  budget: "Budget",
+  weather: "Weather",
+  risk: "Safety",
+  transport: "Transport",
+  visa: "Visa",
+  insurance: "Insurance",
+  crowd: "Crowds",
+  social: "Social",
+  practical: "Practical",
+  shopping: "Shopping",
+  payment: "Money",
+  sustainability: "Eco",
+  analytics: "Analytics",
+  concierge: "Concierge",
+};
+
+/**
+ * Sticky jump-bar for the results. A full trip stacks a dozen sections; this
+ * lets the traveller hop straight to Visa (or back to Flights) instead of
+ * scrolling past everything. Only sections that actually rendered content get a
+ * chip, and the active one highlights as you scroll (IntersectionObserver).
+ */
+function SectionNav({
+  containerRef,
+  deps,
+}: {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  deps: unknown;
+}) {
+  const [items, setItems] = useState<{ id: string; label: string }[]>([]);
+  const [active, setActive] = useState<string | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const els = Array.from(container.querySelectorAll<HTMLElement>("[data-section]")).filter(
+      (el) => (el.textContent ?? "").trim().length > 0,
+    );
+    setItems(els.map((el) => ({ id: el.id, label: el.dataset.label || el.dataset.section || "" })));
+    if (els.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const top = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setActive(top.target.id);
+      },
+      { rootMargin: "-12% 0px -78% 0px", threshold: 0 },
+    );
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [containerRef, deps]);
+
+  if (items.length <= 1) return null;
+
+  return (
+    <nav
+      className="sticky top-0 z-40 -mx-1 mb-5 flex gap-1.5 overflow-x-auto px-1 py-2 backdrop-blur"
+      style={{ backgroundColor: "color-mix(in srgb, var(--bg) 88%, transparent)" }}
+      aria-label="Jump to section"
+    >
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() =>
+            document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+          }
+          className={cn(
+            "shrink-0 rounded-[var(--r-pill)] border px-3 py-1 text-xs font-medium transition-colors",
+            active === item.id
+              ? "border-[var(--brand-500)] bg-[var(--brand-500)] text-white"
+              : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--brand-400)] hover:text-[var(--text)]",
+          )}
+        >
+          {item.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 /** Pull the top video reviews the research agent attached, by category. */
 function videoReviews(results: PlanResults, key: "attractions" | "food"): VideoReview[] {
   const data = results.research?.data as
@@ -63,6 +154,7 @@ export function ScopedResults({
   const panels = (results._scope?.panels?.length ? results._scope.panels : scope.panels) ?? [];
   const agents = results._scope?.agents ?? scope.agents;
   const destination = (results.chief?.data as { destination?: string } | undefined)?.destination;
+  const panelsRef = useRef<HTMLDivElement>(null);
 
   // Default the display currency to the plan's native currency (once), so prices
   // aren't converted until the traveller picks a different one from the switcher.
@@ -95,13 +187,23 @@ export function ScopedResults({
         <Badge>{agents.length} agents ran</Badge>
       </div>
 
+      <SectionNav containerRef={panelsRef} deps={results} />
+
       {onReplanCity && destination && (
         <AltCityStrip destination={destination} onPick={onReplanCity} />
       )}
 
-      <div className="space-y-8">
+      <div ref={panelsRef} className="space-y-8">
         {panels.map((panel) => (
-          <Panel key={panel} name={panel} results={results} onOpenTrip={onOpenTrip} />
+          <div
+            key={panel}
+            id={`sec-${panel}`}
+            data-section={panel}
+            data-label={PANEL_LABELS[panel] ?? panel}
+            className="scroll-mt-16"
+          >
+            <Panel name={panel} results={results} onOpenTrip={onOpenTrip} />
+          </div>
         ))}
       </div>
 

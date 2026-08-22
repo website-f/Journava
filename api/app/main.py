@@ -1107,8 +1107,12 @@ async def plan_clarify(request: ClarifyRequest) -> dict[str, object]:
                 }
             break
 
-    # Suggest dates when the plan wants them and the goal names none.
-    has_date = bool(re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)) or any(mo in text for mo in _MONTHS)
+    # Suggest dates when the plan wants them and the goal names none. Detect an
+    # existing date via the parser (handles explicit dates + relative phrases
+    # like "next month") plus a word-boundary month check — a substring match
+    # wrongly saw "dec" in "decide" and skipped the question.
+    month_re = re.compile(r"\b(?:" + "|".join(_MONTHS) + r")\b")
+    has_date = bool(parsed.get("start_date")) or bool(month_re.search(text))
     date_suggestions = _date_suggestions(request.goal) if (needs_dates or needs_flights) and not has_date else []
 
     return {

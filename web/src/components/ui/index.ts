@@ -15,6 +15,9 @@ export { AgentPulse } from "./AgentPulse";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 export { Badge } from "./Badge";
 export { OptionCard } from "./OptionCard";
+export { Calendar } from "./Calendar";
+export type { DateRange } from "./Calendar";
+export { DateRangePicker } from "./DateRangePicker";
 // TripMap is deliberately NOT re-exported here: it imports MapLibre (~1MB), and
 // a barrel export pulls that into every bundle that touches this file. Import it
 // lazily where it is used — see features/trip/MyTrip.tsx.

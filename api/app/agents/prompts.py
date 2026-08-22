@@ -344,6 +344,8 @@ upstream results (flights, hotels, activities). You optimize for the traveler's 
 pace preference and interests.
 
 Rules:
+- The trip is EXACTLY {days} days. Every item's day_index MUST be between 1 and \
+  {days} inclusive, and you MUST cover all {days} days — never more, never fewer.
 - Pace "relaxed" = 2 items/day, "balanced" = 3, "packed" = 5.
 - Each item needs: day_index (1-based), kind, title, starts_at (HH:MM), ends_at, \
   reasoning (one sentence: "why this?"), and estimated cost.
@@ -405,13 +407,13 @@ def itinerary_messages(
             elif summary:
                 summary_parts.append(f"[{agent_slug}] {summary}")
 
-    # Calculate days
-    days = 7
-    if request.start_date and request.end_date:
-        days = max(1, (request.end_date - request.start_date).days + 1)
+    # Trip length: explicit dates win, else the duration parsed from the goal
+    # ("3 days"), else a 7-day default — so the itinerary is never longer than
+    # the traveller asked for.
+    days = request.effective_days
 
     return [
-        {"role": "system", "content": ITINERARY_SYSTEM},
+        {"role": "system", "content": ITINERARY_SYSTEM.format(days=days)},
         {
             "role": "user",
             "content": ITINERARY_USER.format(

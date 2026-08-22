@@ -72,8 +72,13 @@ class ItineraryAgent(BaseAgent):
             self.emit("waiting", f"LLM unavailable: {type(exc).__name__}")
             raw_items = self._mock_items(request, pace)
 
+        # Hard guarantee: never return more days than the trip is long, even if
+        # the LLM ignores the instruction ("3 days" must not yield a 7-day plan).
+        max_day = request.effective_days
         items: list[ItineraryItem] = []
         for item in raw_items:
+            if int(item.get("day_index", 1) or 1) > max_day:
+                continue
             try:
                 items.append(
                     ItineraryItem(
@@ -97,9 +102,7 @@ class ItineraryAgent(BaseAgent):
     @staticmethod
     def _mock_items(request: TripRequest, pace: str) -> list[dict[str, Any]]:
         """Structured mock itinerary when LLM is unavailable."""
-        days = 7
-        if request.start_date and request.end_date:
-            days = max(1, (request.end_date - request.start_date).days + 1)
+        days = request.effective_days
 
         destination = request.destination or "the destination"
         items_per_day = ITEMS_PER_DAY.get(pace, 3)

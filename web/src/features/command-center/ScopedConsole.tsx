@@ -1,6 +1,6 @@
 import { ArrowLeft, Mic, Paperclip, Image as ImageIcon, Sparkles, Video } from "@/components/ui/icons";
 import { toast } from "sonner";
-import { Badge, Button, NumberField, Select } from "@/components/ui";
+import { Badge, Button, DateRangePicker, NumberField, Select } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { usePlanStore, type PlanInputs } from "@/stores/planStore";
 import type { Scope } from "@/lib/types";
@@ -108,25 +108,13 @@ export function ScopedConsole({
       {/* Only the fields this scope uses */}
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {wants("dates") && (
-          <>
-            <Field label="Departing">
-              <input
-                type="date"
-                value={inputs.start_date}
-                onChange={(event) => setInputs({ start_date: event.target.value })}
-                className="input-field"
-              />
-            </Field>
-            <Field label="Returning" hint="Leave empty for one-way">
-              <input
-                type="date"
-                value={inputs.end_date}
-                min={inputs.start_date || undefined}
-                onChange={(event) => setInputs({ end_date: event.target.value })}
-                className="input-field"
-              />
-            </Field>
-          </>
+          <Field label="Dates" hint="Pick a range — leave the return open for one-way" className="sm:col-span-2">
+            <DateRangePicker
+              value={{ start: inputs.start_date || undefined, end: inputs.end_date || undefined }}
+              onChange={(r) => setInputs({ start_date: r.start ?? "", end_date: r.end ?? "" })}
+              placeholder="When are you travelling?"
+            />
+          </Field>
         )}
 
         {wants("travellers") && (

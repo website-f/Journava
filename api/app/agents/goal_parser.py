@@ -266,6 +266,13 @@ def parse_goal(goal: str, *, today: date | None = None) -> dict[str, Any]:
     if end:
         parsed["end_date"] = end.isoformat()
 
+    # The trip length is meaningful even when no travel dates are given ("3 days
+    # in Osaka"), so capture it independently — the itinerary must span exactly
+    # this many days, not the 7-day default.
+    span = _duration_days(lowered)
+    if span:
+        parsed["duration_days"] = span
+
     travellers = _travellers(lowered)
     if travellers:
         parsed["travellers"] = travellers
@@ -499,15 +506,35 @@ def _dates(text: str, reference: date) -> tuple[date | None, date | None]:
             break
 
     end: date | None = None
-    duration = _DURATION.search(text)
-    if duration and start:
-        count = int(duration.group("count"))
-        unit = duration.group("unit")
-        days = count * 7 if unit.startswith("week") else count
-        # "7-day trip" spans 7 days → 6 nights; "7 nights" → 7.
-        end = start + timedelta(days=days if unit.startswith("night") else max(0, days - 1))
+    span = _duration_days(text)
+    if span and start:
+        # `span` is the number of days on the ground; the last day is span-1
+        # after the first.
+        end = start + timedelta(days=max(0, span - 1))
 
     return start, end
+
+
+def _duration_days(text: str) -> int | None:
+    """How many days the trip lasts, from "3 days" / "3 nights" / "2 weeks".
+
+    Independent of travel dates so the itinerary can be the right length even
+    when the traveller never named a date. Matches the start→end span `_dates`
+    computes: "3 days" → 3, "3 nights" → 4 (arrive, 3 nights, depart), "2
+    weeks" → 14. Capped so a typo can't ask for a 99-day itinerary.
+    """
+    match = _DURATION.search(text)
+    if not match:
+        return None
+    count = int(match.group("count"))
+    unit = match.group("unit")
+    if unit.startswith("week"):
+        span = count * 7
+    elif unit.startswith("night"):
+        span = count + 1
+    else:
+        span = count
+    return max(1, min(span, 30))
 
 
 # --------------------------------------------------------------------------- #

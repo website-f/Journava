@@ -81,6 +81,10 @@ class ChiefAgent(BaseAgent):
             enriched["start_date"] = merged["start_date"]
         if merged.get("end_date") and not request.end_date:
             enriched["end_date"] = merged["end_date"]
+        # Trip length parsed from the goal ("3 days"), so the itinerary spans the
+        # right number of days even when no travel dates were given.
+        if merged.get("duration_days") and not request.duration_days:
+            enriched["duration_days"] = merged["duration_days"]
         if merged.get("travellers") and request.travellers == 1:
             enriched["travellers"] = merged["travellers"]
         if merged.get("budget_amount") and not request.budget_amount:
