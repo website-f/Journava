@@ -85,34 +85,32 @@ class ResearchAgent(BaseAgent):
         crawled_sources: dict[str, str] = dict(api_sources)
 
         if await camofox.available():
-            self.emit("working", f"Camofox: crawling Google for {destination}...")
-            google_result = await camofox.search(
-                f"{destination} travel guide {'halal' if profile.halal_required else ''} {interests_str}",
-                macro="@google_search",
+            self.emit("working", f"Camofox: researching {destination} across the web...")
+            halal = "halal" if profile.halal_required else ""
+            # All four crawls hit different engines/hosts, so run them at once
+            # rather than one-after-another (this was the Tier-1 long pole).
+            # Web search uses the default (DuckDuckGo) macro — the @google_search
+            # path is consent/robots-walled and returned nothing while still
+            # costing a round-trip.
+            web_q, wiki_q, yt_q, reddit_q = (
+                (f"{destination} travel guide {halal} {interests_str}", None, 3000, "web"),
+                (destination, "@wikipedia_search", 3000, "wikipedia"),
+                (f"{destination} travel vlog {'halal food' if profile.halal_required else ''}", "@youtube_search", 2000, "youtube"),
+                (f"{destination} travel tips", "@reddit_search", 2000, "reddit"),
             )
-            if google_result:
-                crawled_sources["google"] = google_result[:3000]
+            queries = [web_q, wiki_q, yt_q, reddit_q]
 
-            self.emit("working", f"Camofox: searching Wikipedia for {destination}...")
-            wiki_result = await camofox.search(destination, macro="@wikipedia_search")
-            if wiki_result:
-                crawled_sources["wikipedia"] = wiki_result[:3000]
+            async def _crawl(query: str, macro: str | None, cap: int) -> str | None:
+                res = await (camofox.search(query, macro=macro) if macro else camofox.search(query))
+                return res[:cap] if res else None
 
-            self.emit("working", f"Camofox: searching YouTube for {destination} travel...")
-            youtube_result = await camofox.search(
-                f"{destination} travel vlog {'halal food' if profile.halal_required else ''}",
-                macro="@youtube_search",
+            results = await asyncio.gather(
+                *(_crawl(q, macro, cap) for (q, macro, cap, _key) in queries),
+                return_exceptions=True,
             )
-            if youtube_result:
-                crawled_sources["youtube"] = youtube_result[:2000]
-
-            self.emit("working", f"Camofox: searching Reddit for {destination} tips...")
-            reddit_result = await camofox.search(
-                f"{destination} travel tips",
-                macro="@reddit_search",
-            )
-            if reddit_result:
-                crawled_sources["reddit"] = reddit_result[:2000]
+            for (_q, _macro, _cap, key), res in zip(queries, results):
+                if isinstance(res, str) and res:
+                    crawled_sources[key] = res
 
             n_sources = len(crawled_sources)
             self.emit("active", f"Camofox: gathered {n_sources} real sources")

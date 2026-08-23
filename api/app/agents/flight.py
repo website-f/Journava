@@ -450,7 +450,7 @@ class FlightAgent(BaseAgent):
             return_date=_parse_iso_date(return_date) if return_date else None,
             adults=max(1, adults),
             currency=currency,
-            limit=6,
+            limit=4,
         )
         if not targets:
             return await self._camofox_links(origin, destination, depart)
@@ -464,7 +464,7 @@ class FlightAgent(BaseAgent):
 
         # A price token is the signal that a results page has actually rendered.
         pages = await camofox.read_many(
-            targets, scrolls=4, ready=r"RM\s?\d|MYR|ringgit|\$\s?\d|USD"
+            targets, scrolls=2, ready=r"RM\s?\d|MYR|ringgit|\$\s?\d|USD"
         )
 
         fares: list[dict[str, Any]] = []

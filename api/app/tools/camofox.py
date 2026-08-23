@@ -88,7 +88,11 @@ DEFAULT_SEARCH_MACRO = "@duckduckgo_search"
 _DDG_REDIRECT = re.compile(r"[?&]uddg=([^&]+)")
 
 #: Never more than this many pages open at once (§8: throttle and respect).
-_MAX_CONCURRENT_PAGES = 3
+# A full plan fires ~30 crawls, almost all to DIFFERENT hosts, so the constraint
+# is our own concurrency, not per-host politeness. Three slots serialized those
+# 30 crawls into ~10 waves (minutes); 8 keeps the browser server comfortable
+# while cutting the crawl-bound phases roughly linearly.
+_MAX_CONCURRENT_PAGES = 8
 _page_slots = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
 
 #: Human think-time between actions, in seconds (§8 item 3). Widened so pacing
@@ -340,9 +344,9 @@ async def browse(
     url: str,
     *,
     ready: str | None = None,
-    attempts: int = 6,
-    delay: float = 1.5,
-    scrolls: int = 3,
+    attempts: int = 4,
+    delay: float = 1.0,
+    scrolls: int = 2,
     respect_robots: bool = True,
     collect_links: bool = False,
 ) -> str | None:
@@ -369,9 +373,9 @@ async def read_page(
     url: str,
     *,
     ready: str | None = None,
-    attempts: int = 6,
-    delay: float = 1.5,
-    scrolls: int = 3,
+    attempts: int = 4,
+    delay: float = 1.0,
+    scrolls: int = 2,
     respect_robots: bool = True,
     collect_links: bool = True,
 ) -> dict[str, Any] | None:
@@ -461,8 +465,8 @@ async def read_many(
             result = await read_page(
                 url,
                 ready=target.get("ready", ready),
-                attempts=target.get("attempts", 8),
-                delay=target.get("delay", 1.5),
+                attempts=target.get("attempts", 4),
+                delay=target.get("delay", 1.0),
                 scrolls=target.get("scrolls", scrolls),
             )
         except Exception as exc:  # noqa: BLE001 — one bad page must not stop the sweep
@@ -579,12 +583,21 @@ async def _wait_and_snapshot(
     """
     ready_re = re.compile(ready, re.IGNORECASE) if ready else None
     snapshot = ""
+    stable = 0
     for _ in range(attempts):
         await asyncio.sleep(delay)
         current = await _snapshot(client, base, tab_id) or ""
         if len(current) > len(snapshot):
             snapshot = current
+            stable = 0
+        else:
+            stable += 1
         if len(snapshot) >= min_len and (ready_re is None or ready_re.search(snapshot)):
+            break
+        # The page has rendered and stopped growing, but the `ready` token never
+        # appeared (wrong currency, no results, a challenge). More polling won't
+        # conjure it — bail early instead of burning the whole attempts budget.
+        if ready_re is not None and stable >= 2 and len(snapshot) >= min_len:
             break
     return snapshot or None
 

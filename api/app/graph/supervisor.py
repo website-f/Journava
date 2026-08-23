@@ -357,7 +357,12 @@ async def _critic_node(state: GraphState) -> dict[str, Any]:
         }
     }
 
-    if passed or not weakest:
+    # Re-running a crawl-heavy agent is either a cache-served no-op or a full
+    # re-crawl — both cost wall-clock without reliably changing the ranking, and
+    # they block all of Tier 2 while they run. Keep Reflexion for the cheap
+    # LLM-only agents, where a critique-guided second pass genuinely helps.
+    _NO_RERUN = {"flight", "research", "hotel"}
+    if passed or not weakest or weakest in _NO_RERUN:
         return update
 
     sse.publish("chief", "working", f"Critic: re-running {weakest} — {critique}")
