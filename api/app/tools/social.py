@@ -32,7 +32,7 @@ from app.core import llm
 from app.core.cache import cached
 from app.core.settings import settings
 from app.core.text import scrub_surrogates
-from app.tools import camofox
+from app.tools import camofox, youtube
 
 #: Public, keyless oEmbed endpoints — they return the post's title/caption +
 #: author even when the page itself is bot-walled. This is the reliable way to
@@ -47,24 +47,29 @@ _OEMBED = {
 #: trip. For these we trust the caption (oEmbed / Open Graph), never the crawl.
 _SOCIAL_PLATFORMS = {"tiktok", "instagram", "x", "facebook"}
 
-#: A real browser UA so share-link redirects resolve and link-preview meta tags
-#: are served (many sites gate these behind a non-bot UA).
+#: A real browser UA so share-link redirects resolve cleanly.
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
+#: The link-preview crawler UA. Facebook and Instagram show a login wall to a
+#: normal browser but serve full Open Graph tags (title + caption) to this UA —
+#: it's how WhatsApp/Slack/iMessage unfurl a pasted link. Our one way in to a
+#: walled FB/IG post without an authenticated session or the Graph API.
+_CRAWLER_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+
 logger = logging.getLogger("journava")
 
 
-def _client(timeout: float = 15.0) -> httpx.AsyncClient:
+def _client(timeout: float = 15.0, ua: str | None = None) -> httpx.AsyncClient:
     """An HTTP client for caption fetches. Routes through the configured proxy
     when set — a rotating/residential IP is the only real fix for an IP-based
     rate-limit on a keyless endpoint like TikTok's oEmbed."""
     kwargs: dict[str, Any] = {
         "timeout": timeout,
         "follow_redirects": True,
-        "headers": {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"},
+        "headers": {"User-Agent": ua or _UA, "Accept-Language": "en-US,en;q=0.9"},
     }
     if settings.camofox_proxy:
         kwargs["proxy"] = settings.camofox_proxy
@@ -90,6 +95,14 @@ Respond ONLY as JSON:
 If the content isn't about a travel destination, set destination to "" and goal to ""."""
 
 _IMAGE_SYSTEM = "You identify travel content in an image for a trip planner."
+
+
+_YT_ID_RE = re.compile(r"(?:v=|/shorts/|youtu\.be/|/embed/|/live/)([A-Za-z0-9_-]{11})")
+
+
+def _youtube_id(url: str) -> str | None:
+    m = _YT_ID_RE.search(url)
+    return m.group(1) if m else None
 
 
 def _platform(url: str) -> str:
@@ -160,11 +173,14 @@ def _parse_meta(html_text: str) -> dict[str, str]:
 
 
 async def _og_meta(url: str) -> str:
-    """The post's caption from Open Graph / Twitter-card meta tags, which sites
-    serve for link previews even when the app itself is JS-walled (reliable for
-    Instagram / X / blogs; TikTok serves an empty shell here, hence oEmbed)."""
+    """The post's caption from Open Graph / Twitter-card meta tags.
+
+    Fetched as the link-preview crawler, so Facebook and Instagram serve their
+    OG tags (title + caption) instead of a login wall — the same unfurl every
+    chat app does. Reliable for FB / IG / X / blogs; TikTok serves an empty
+    shell even here, which is why TikTok goes through oEmbed."""
     try:
-        async with _client() as client:
+        async with _client(ua=_CRAWLER_UA) as client:
             resp = await client.get(url)
         if resp.status_code != 200 or not resp.text:
             return ""
@@ -210,13 +226,30 @@ async def _gather_from_url(url: str) -> tuple[str, str]:
         if caption:
             parts.append(f"[{platform} caption] {caption}")
 
-        # 2) Open Graph / Twitter-card caption (Instagram / X / blogs).
-        og = await _og_meta(resolved)
+        # 2) Open Graph / Twitter-card caption (Instagram / Facebook / X / blogs).
+        #    Try the original URL first — a browser-UA resolve can land on a
+        #    login page for FB/IG, whereas the crawler-UA OG fetch gets the post.
+        og = await _og_meta(url) or await _og_meta(resolved)
         if og and og not in caption:
             parts.append(f"[post] {og}")
 
-        # 3) YouTube: the transcript is the actual video content — keep it.
+        # 3) YouTube: the Data API description is the richest source (a vlog's
+        #    description usually lists the whole itinerary + timestamps); the
+        #    transcript is the spoken content. Both when available.
         if platform == "youtube":
+            vid = _youtube_id(resolved) or _youtube_id(url)
+            if vid:
+                try:
+                    det = await youtube.video_details(vid)
+                    if det:
+                        tags = " ".join(f"#{t}" for t in det.get("tags", [])[:12])
+                        parts.append(
+                            f"[youtube] {det.get('title', '')} — {det.get('channel', '')}\n"
+                            f"{det.get('description', '')[:4000]}"
+                            + (f"\n{tags}" if tags else "")
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.info("youtube details failed: %s", exc)
             try:
                 tr = await camofox.youtube_transcript(resolved)
                 if tr and tr.get("transcript"):

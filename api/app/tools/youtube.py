@@ -82,6 +82,44 @@ async def search_videos(
     return None
 
 
+async def video_details(video_id: str) -> dict[str, Any] | None:
+    """Full metadata for one video — title, DESCRIPTION, tags, channel.
+
+    This is the richest signal for a pasted YouTube link: the description usually
+    holds the whole itinerary (timestamped chapters, place names, links), far
+    more than the oEmbed title. Cached 24 h. Returns ``None`` with no key/quota.
+    """
+    api_key = await vault.secret_for("youtube")
+    if not api_key or not video_id:
+        return None
+
+    async def fetch() -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.get(
+                VIDEOS_URL,
+                params={"part": "snippet", "id": video_id, "key": api_key},
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            if not items:
+                return None
+            sn = items[0]["snippet"]
+            return {
+                "video_id": video_id,
+                "title": sn.get("title", ""),
+                "description": sn.get("description", ""),
+                "channel": sn.get("channelTitle", ""),
+                "tags": sn.get("tags", [])[:20],
+                "published_at": sn.get("publishedAt", ""),
+            }
+
+    try:
+        return await cached(f"youtube:details:{video_id}", fetch, ttl=settings.cache_ttl_long)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("YouTube video_details failed for %s: %s", video_id, exc)
+    return None
+
+
 async def video_stats(video_ids: list[str]) -> list[dict[str, Any]] | None:
     """Retrieve view/like counts for a list of video IDs.
 
