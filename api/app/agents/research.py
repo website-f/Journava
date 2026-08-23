@@ -513,17 +513,18 @@ class ResearchAgent(BaseAgent):
         snippet, and always a **link** — the item's own URL when present, or a
         Google Maps search as a guaranteed "View" target so every card is clickable.
         """
-        options: list[Option] = []
         default_source = "camofox" if sourced else "llm"
+        attractions: list[Option] = []
+        dining: list[Option] = []
 
-        for item in data.get("attractions", []):
+        for index, item in enumerate(data.get("attractions", [])):
             title = item.get("title", "Attraction")
             url = item.get("url") or item.get("link")
             link = url or _maps_link(title, destination)
             src = "camofox" if (sourced and url) else default_source
-            options.append(
+            attractions.append(
                 Option(
-                    id=f"RSH-A{len(options) + 1:03d}",
+                    id=f"RSH-A{index + 1:03d}",
                     kind="activity",
                     title=title,
                     price_amount=Decimal(str(item["estimated_cost"]))
@@ -545,14 +546,14 @@ class ResearchAgent(BaseAgent):
                 )
             )
 
-        for item in data.get("dining", []):
+        for index, item in enumerate(data.get("dining", [])):
             title = item.get("title", "Restaurant")
             url = item.get("url") or item.get("link")
             link = url or _maps_link(title, destination)
             src = "camofox" if (sourced and url) else default_source
-            options.append(
+            dining.append(
                 Option(
-                    id=f"RSH-D{len(options) + 1:03d}",
+                    id=f"RSH-D{index + 1:03d}",
                     kind="restaurant",
                     title=title,
                     price_amount=Decimal(str(item["estimated_cost"]))
@@ -579,7 +580,24 @@ class ResearchAgent(BaseAgent):
                 )
             )
 
-        return options
+        # Surface the strongest picks first instead of raw LLM order: higher
+        # rating, corroborated by a real source link, has a review snippet, and
+        # (for dining) stronger halal evidence.
+        _HALAL_RANK = {"certified": 3, "verified": 3, "likely": 2, "unverified": 1}
+
+        def _place_score(o: Option) -> float:
+            raw = o.raw or {}
+            rating = float(raw.get("rating") or 0)
+            real_url = bool(o.source_url and "google.com/maps" not in (o.source_url or ""))
+            has_review = bool(raw.get("review"))
+            halal = _HALAL_RANK.get(str(o.halal_confidence or "").lower(), 0)
+            # Higher is better → negate for an ascending sort (stable: ties keep
+            # the LLM's own order).
+            return -(rating * 2.0 + (1.0 if real_url else 0.0) + (0.5 if has_review else 0.0) + halal * 0.5)
+
+        attractions.sort(key=_place_score)
+        dining.sort(key=_place_score)
+        return attractions + dining
 
     # ---------------------------------------------------------------------- #
     # Video reviews — YouTube (most-viewed) + TikTok (best-effort)

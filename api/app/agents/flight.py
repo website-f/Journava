@@ -133,6 +133,9 @@ class FlightAgent(BaseAgent):
         # --- Verification pass (spec §5 reconciliation pattern) ---
         options = await self._verify(options)
 
+        # --- Collapse the same flight seen on several sources into one card ---
+        options = self._dedupe_cross_source(options)
+
         # --- Time-of-day window from the request ("night", "morning", …) ---
         options = self._filter_time_window(options, request)
 
@@ -144,6 +147,11 @@ class FlightAgent(BaseAgent):
         policy_eval = self._apply_policy(options)
 
         ranking = self._rank(options)
+
+        # Smart output over sheer volume: a busy route can surface 100+ real
+        # fares. Keep the best ~18 by the composite ranking (options is already
+        # sorted), but never drop a fare that won one of the ranking buckets.
+        options = self._cap_options(options, ranking, limit=18)
 
         self._remember_route(origin, destination, options, source_report)
 
@@ -1032,6 +1040,100 @@ class FlightAgent(BaseAgent):
         return False
 
     @staticmethod
+    def _cap_options(
+        options: list[Option], ranking: dict[str, str | None], limit: int = 18
+    ) -> list[Option]:
+        """Trim a long fare list to the best `limit`, preserving ranking order and
+        always keeping the bucket winners (cheapest / value / time / baggage)."""
+        if len(options) <= limit:
+            return options
+        winners = {v for v in ranking.values() if v}
+        kept = options[:limit]
+        kept_ids = {o.id for o in kept}
+        # Append any bucket winner that fell outside the top slice.
+        for o in options[limit:]:
+            if o.id in winners and o.id not in kept_ids:
+                kept.append(o)
+                kept_ids.add(o.id)
+        return kept
+
+    @staticmethod
+    def _dedupe_cross_source(options: list[Option]) -> list[Option]:
+        """Collapse the same physical flight surfaced by several sources.
+
+        Atlas, Amadeus and a couple of crawled fare sites all return the same
+        06:30 AK5104 — three-plus cards for one flight (a raw merge produced
+        100+). Same carrier + departure time + stop count is almost certainly the
+        same flight: keep the bookable (Atlas) card, fill a missing price from a
+        dupe, and record the others' advertised prices under raw['also_on'] so
+        "book direct — OTAs want RM X" is a measured claim, not a guess.
+        """
+
+        def _carrier(o: Option) -> str:
+            raw = o.raw or {}
+            for field in ("airline", "carrier"):
+                if raw.get(field):
+                    return str(raw[field]).strip().lower()
+            codes = raw.get("flight_numbers") or raw.get("carriers")
+            if isinstance(codes, list) and codes:
+                return str(codes[0]).strip().lower()[:2]  # e.g. "AK6114" -> "ak"
+            title = (o.title or "").strip()
+            return title.split()[0].lower() if title else ""
+
+        def _dep_hhmm(o: Option) -> str:
+            digits = re.sub(r"\D", "", str((o.raw or {}).get("departure_time") or ""))
+            return digits[-4:] if len(digits) >= 4 else ""  # "202610100740" -> "0740"
+
+        def key(o: Option) -> tuple[str, str, int] | None:
+            carrier, dep = _carrier(o), _dep_hhmm(o)
+            stops = int((o.raw or {}).get("stops") or 0)
+            # Only merge when we can identify BOTH carrier and departure minute —
+            # otherwise leave distinct flights alone (a busy route has many real
+            # frequencies; over-merging would hide them).
+            return (carrier, dep, stops) if carrier and dep else None
+
+        def rank_in_group(o: Option) -> tuple[int, int, float]:
+            price = float(o.price_amount) if o.price_amount is not None else 1e9
+            return (0 if o.bookable else 1, 0 if o.verified else 1, price)
+
+        groups: dict[tuple[str, str, int], list[Option]] = {}
+        order: list[tuple[str, str, int]] = []
+        passthrough: list[Option] = []
+        for o in options:
+            k = key(o)
+            if k is None:
+                passthrough.append(o)
+                continue
+            if k not in groups:
+                groups[k] = []
+                order.append(k)
+            groups[k].append(o)
+
+        deduped: list[Option] = []
+        for k in order:
+            grp = sorted(groups[k], key=rank_in_group)
+            best = grp[0]
+            also: list[dict[str, Any]] = []
+            for other in grp[1:]:
+                if other.price_amount is not None:
+                    also.append(
+                        {
+                            "source": other.source,
+                            "price": float(other.price_amount),
+                            "currency": other.price_currency,
+                            "url": other.booking_url,
+                        }
+                    )
+                    if best.price_amount is None:
+                        best.price_amount = other.price_amount
+                        best.price_currency = other.price_currency
+            if also:
+                # Cheapest advertised alternative first — that's the OTA to beat.
+                best.raw["also_on"] = sorted(also, key=lambda a: a["price"])
+            deduped.append(best)
+        return deduped + passthrough
+
+    @staticmethod
     def _apply_preferences(
         options: list[Option],
         profile: TravelerProfile,
@@ -1039,24 +1141,44 @@ class FlightAgent(BaseAgent):
     ) -> list[Option]:
         """Soft ranking only — never removes an option (§7.5).
 
-        Preferences reorder the list and explain themselves in `reasoning`. The
-        inventory the traveller sees is still the global one.
+        A weighted composite (price-dominant, but duration, stops and
+        bookability all count), rather than the old penalty-tier tuple where any
+        preference miss cliff-dropped a fare below every "clean" one regardless
+        of price. Now a much cheaper fare with one extra stop can still win.
         """
+        priced = [float(o.price_amount) for o in options if o.price_amount is not None]
+        durs = [
+            float(o.raw.get("duration_hours"))
+            for o in options
+            if o.raw.get("duration_hours")
+        ]
+        stops_all = [int(o.raw.get("stops") or 0) for o in options]
+        p_lo, p_hi = (min(priced), max(priced)) if priced else (0.0, 1.0)
+        d_lo, d_hi = (min(durs), max(durs)) if durs else (0.0, 1.0)
+        s_hi = max(stops_all) if stops_all else 0
 
-        def score(option: Option) -> tuple[float, float]:
-            penalty = 0.0
+        def norm(v: float, lo: float, hi: float) -> float:
+            return 0.0 if hi <= lo else max(0.0, min(1.0, (v - lo) / (hi - lo)))
+
+        def score(option: Option) -> float:
+            price = float(option.price_amount) if option.price_amount is not None else p_hi
+            dur = float(option.raw.get("duration_hours") or d_hi or 0.0)
             stops = int(option.raw.get("stops") or 0)
-            if profile.max_connections is not None and stops > profile.max_connections:
-                penalty += 2.0
-            if profile.avoid_red_eye and _is_red_eye(option.raw.get("departure_time")):
-                penalty += 1.5
-            # A bookable, verified fare outranks an advertised one at equal price.
+            s = (
+                0.45 * norm(price, p_lo, p_hi)
+                + 0.22 * norm(dur, d_lo, d_hi)
+                + 0.15 * (stops / s_hi if s_hi else 0.0)
+            )
             if not option.bookable:
-                penalty += 0.5
+                s += 0.10  # advertised, not confirmed
             if option.source == "camofox":
-                penalty += 0.25
-            price = float(option.price_amount) if option.price_amount is not None else 1e9
-            return (penalty, price)
+                s += 0.03
+            # Soft nudges, not the old hard cliffs.
+            if profile.max_connections is not None and stops > profile.max_connections:
+                s += 0.20
+            if profile.avoid_red_eye and _is_red_eye(option.raw.get("departure_time")):
+                s += 0.12
+            return s
 
         annotated = sorted(options, key=score)
         for option in annotated:
@@ -1088,13 +1210,13 @@ class FlightAgent(BaseAgent):
 
         cheapest = priced[0][0]
         with_baggage = next((o for o, _ in priced if o.raw.get("baggage_included")), cheapest)
-        # Best value prefers a bookable direct fare over a cheaper unbookable one.
-        bookable_direct = [o for o, _ in priced if o.bookable and int(o.raw.get("stops") or 0) == 0]
-        bookable_any = [o for o, _ in priced if o.bookable]
-        best_value = (
-            bookable_direct[0]
-            if bookable_direct
-            else (bookable_any[0] if bookable_any else cheapest)
+        # Best value = the top of the composite ranking that's actually bookable
+        # (`options` arrives sorted by _apply_preferences: price + duration +
+        # stops + bookability), not merely "cheapest bookable direct". Falls back
+        # to the best-scoring option, then cheapest.
+        best_value = next(
+            (o for o in options if o.bookable and o.price_amount is not None),
+            options[0] if options else cheapest,
         )
         best_time = min(
             (o for o, _ in priced),

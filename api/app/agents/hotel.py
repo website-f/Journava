@@ -63,7 +63,10 @@ class HotelAgent(BaseAgent):
         direct = await self._supplier_options(destination)
         options = direct + options
 
-        # Build ranking buckets (spec §5 reconciliation pattern)
+        # Rank the list itself by real value (price vs stars/amenities/transit),
+        # honouring the halal soft-boost and accessibility hard-preference the
+        # scope declared — previously declared but never implemented.
+        options, warnings = self._apply_ranking(options, profile)
         ranking = self._rank(options)
 
         direct_note = f" · {len(direct)} direct from partners" if direct else ""
@@ -72,8 +75,58 @@ class HotelAgent(BaseAgent):
             summary=f"{len(options)} hotel options found in {destination}{direct_note}",
             options=options,
             applied_preferences=applied,
+            warnings=warnings,
             data={"ranking": ranking, "direct_count": len(direct)},
         )
+
+    @staticmethod
+    def _apply_ranking(
+        options: list[Option], profile: TravelerProfile
+    ) -> tuple[list[Option], list[str]]:
+        """Sort by value = cheaper price + more stars/amenities/transit, with a
+        halal boost and accessibility ordering. Never removes an option."""
+        priced = [float(o.price_amount) for o in options if o.price_amount is not None]
+        p_lo, p_hi = (min(priced), max(priced)) if priced else (0.0, 1.0)
+        warnings: list[str] = []
+
+        def norm(v: float) -> float:
+            return 0.0 if p_hi <= p_lo else max(0.0, min(1.0, (v - p_lo) / (p_hi - p_lo)))
+
+        def is_halal(o: Option) -> bool:
+            raw = o.raw or {}
+            ams = " ".join(str(a).lower() for a in (raw.get("amenities") or []))
+            return bool(raw.get("halal_friendly")) or "halal" in ams
+
+        def is_accessible(o: Option) -> bool:
+            return bool((o.raw or {}).get("accessibility"))
+
+        def score(o: Option) -> float:
+            raw = o.raw or {}
+            price = float(o.price_amount) if o.price_amount is not None else p_hi
+            stars = float(raw.get("stars") or 0)
+            amenities = raw.get("amenities") or []
+            quality = stars / 5.0 + min(len(amenities), 6) * 0.04
+            if raw.get("near_transit"):
+                quality += 0.10
+            if o.bookable:
+                quality += 0.06
+            if profile.halal_required and is_halal(o):
+                quality += 0.20
+            s = norm(price) - 0.6 * quality  # lower = better value
+            if profile.accessibility and not is_accessible(o):
+                s += 5.0  # accessibility is a hard preference — push non-accessible down
+            return s
+
+        ranked = sorted(options, key=score)
+        if profile.accessibility:
+            accessible = [o for o in ranked if is_accessible(o)]
+            if not accessible:
+                warnings.append(
+                    "No listings confirmed step-free — showing all; verify accessibility with the property."
+                )
+            elif len(accessible) < len(ranked):
+                warnings.append("Accessible rooms ranked first; some listings below may not be step-free.")
+        return ranked, warnings
 
     async def _supplier_options(self, destination: str) -> list[Option]:
         """Bookable direct listings from partner suppliers for this destination."""
@@ -186,22 +239,21 @@ class HotelAgent(BaseAgent):
                 "highest_rated": None,
             }
 
-        priced.sort(key=lambda x: x[1])
-        cheapest = priced[0][0].id
+        cheapest = min(priced, key=lambda x: x[1])[0].id
 
-        # Best location (near transit)
+        # Best location: near transit/central, else the top-value option.
         near_transit = next(
-            (o for o, _ in priced if o.raw.get("near_transit")),
-            priced[0][0],
+            (o for o in options if (o.raw or {}).get("near_transit")),
+            options[0],
         )
 
-        # Best value (mid-range with good amenities)
-        mid_range = [x for x in priced if x[1] > priced[0][1]]
-        best_value = mid_range[0][0].id if mid_range else priced[0][0].id
+        # Best value = the top of the value ranking (`options` arrives sorted by
+        # _apply_ranking: price vs stars/amenities/transit/halal), not merely the
+        # second-cheapest hotel.
+        best_value = options[0].id
 
-        # Highest rated (most stars)
-        by_stars = sorted(priced, key=lambda x: x[0].raw.get("stars", 0), reverse=True)
-        highest_rated = by_stars[0][0].id
+        # Highest rated (most stars).
+        highest_rated = max(options, key=lambda o: float((o.raw or {}).get("stars") or 0)).id
 
         return {
             "cheapest": cheapest,
