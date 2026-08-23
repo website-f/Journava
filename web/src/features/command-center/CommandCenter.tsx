@@ -25,6 +25,18 @@ import { ClarifyDialog, type ClarifyState } from "./ClarifyDialog";
 
 type Phase = "pick" | "ask" | "answer";
 
+/** A pasted social link → we read the post and plan from it (see runPlan). */
+const SOCIAL_URL_RE =
+  /https?:\/\/\S*(tiktok\.com|instagram\.com|instagr\.am|youtube\.com|youtu\.be|twitter\.com|x\.com|facebook\.com|fb\.watch)\S*/i;
+
+interface SocialSeed {
+  goal?: string;
+  destination?: string;
+  origin_hint?: string | null;
+  vibe?: string;
+  source_kind?: string;
+}
+
 export function CommandCenter() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -76,6 +88,14 @@ export function CommandCenter() {
   // clarification dialog; otherwise dispatch straight away.
   const runPlan = async () => {
     if (!scope) return;
+
+    // A pasted social link (TikTok / IG / YouTube / X / FB): read the post and
+    // plan straight from what the creator showed — no need to retype anything.
+    if (SOCIAL_URL_RE.test(inputs.goal)) {
+      await planFromLink();
+      return;
+    }
+
     try {
       const check = await api.post<{ needs_clarification: boolean } & ClarifyState>(
         "/plan/clarify",
@@ -93,6 +113,49 @@ export function CommandCenter() {
       // Clarification is a nicety — if the check fails, just run the plan.
     }
     await dispatchPlan();
+  };
+
+  // Read a pasted social link into a trip seed, then plan from the seed's goal
+  // (not the raw URL) so results land in the normal results view.
+  const planFromLink = async () => {
+    if (!scope) return;
+    const toastId = toast.loading("Reading your link…");
+    let seed: SocialSeed | null = null;
+    try {
+      const res = await api.post<{ seed: SocialSeed | null; error?: string }>("/plan/social-seed", {
+        goal: inputs.goal.trim(),
+      });
+      seed = res.seed;
+      if (!seed || res.error) {
+        toast.error(res.error || "Couldn't read that link — paste the caption instead.", { id: toastId });
+        return;
+      }
+    } catch {
+      toast.error("Couldn't reach the link reader — try again.", { id: toastId });
+      return;
+    }
+
+    toast.success(
+      `Read your ${seed.source_kind ?? "post"} — planning ${seed.destination || "your trip"}${seed.vibe ? ` · ${seed.vibe}` : ""}`,
+      { id: toastId },
+    );
+
+    const payload: Record<string, unknown> = {
+      goal: seed.goal || `Plan a trip to ${seed.destination}`,
+      scope: scope.slug,
+      travellers: inputs.travellers,
+      budget_currency: inputs.budget_currency,
+    };
+    if (seed.destination) payload.destination = seed.destination;
+    if (seed.origin_hint) payload.origin = seed.origin_hint;
+    if (inputs.budget_amount != null) payload.budget_amount = inputs.budget_amount;
+    if (scope.inputs.includes("pace")) payload.pace = inputs.pace;
+
+    await runPlanJob(payload);
+
+    const { error: runError, lastDurationMs } = usePlanStore.getState();
+    if (runError) toast.error(runError);
+    else if (lastDurationMs != null) toast.success(`${scope.label} done in ${(lastDurationMs / 1000).toFixed(1)}s`);
   };
 
   const dispatchPlan = async (extra?: {

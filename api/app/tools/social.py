@@ -18,8 +18,11 @@ plan pipeline consumes unchanged.
 
 from __future__ import annotations
 
+import asyncio
+import html as _html
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -27,6 +30,7 @@ import httpx
 
 from app.core import llm
 from app.core.settings import settings
+from app.core.text import scrub_surrogates
 from app.tools import camofox
 
 #: Public, keyless oEmbed endpoints — they return the post's title/caption +
@@ -37,11 +41,29 @@ _OEMBED = {
     "youtube": "https://www.youtube.com/oembed?format=json&url=",
 }
 
+#: Platforms whose video/post page is JS-walled: a raw crawl returns only site
+#: chrome + unrelated recommended posts, which makes the model plan the WRONG
+#: trip. For these we trust the caption (oEmbed / Open Graph), never the crawl.
+_SOCIAL_PLATFORMS = {"tiktok", "instagram", "x", "facebook"}
+
+#: A real browser UA so share-link redirects resolve and link-preview meta tags
+#: are served (many sites gate these behind a non-bot UA).
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
 logger = logging.getLogger("journava")
 
 _SEED_SYSTEM = """You turn social-media travel content into a structured trip \
 seed. Read the post text / transcript / image description below and infer where \
 the creator went and what they did. Name real places when you can.
+
+The CAPTION and #hashtags are the primary signal for the destination — trust \
+them. IGNORE anything that looks like site navigation, menus, "For You", \
+"Following", cookie banners, or unrelated recommended videos: those are the app's \
+own chrome, not this post. If the real post is about place A, do not let a \
+recommended clip about place B change your answer.
 
 Respond ONLY as JSON:
 {"destination": "primary city or country", "cities": ["..."],
@@ -71,53 +93,132 @@ def _platform(url: str) -> str:
 
 
 async def _oembed(url: str, platform: str) -> str:
-    """Fetch the post's caption/title via the platform's public oEmbed API."""
+    """Fetch the post's caption/title via the platform's public oEmbed API.
+
+    The caption is the ground truth for a walled post, so it's worth a couple of
+    retries — TikTok's oEmbed occasionally 429s/blips and clears on a short wait.
+    """
     endpoint = _OEMBED.get(platform)
     if not endpoint:
         return ""
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers={"User-Agent": _UA}) as client:
+                resp = await client.get(endpoint + quote(url, safe=""))
+            if resp.status_code == 200:
+                data = resp.json()
+                bits = [str(data.get(k, "")) for k in ("title", "author_name", "description") if data.get(k)]
+                if bits:
+                    return " · ".join(bits)
+            elif resp.status_code not in (400, 404):  # transient (429/5xx) → retry
+                await asyncio.sleep(0.6 * (attempt + 1))
+                continue
+            break  # 200-but-empty or a hard 400/404 won't improve on retry
+        except Exception as exc:  # noqa: BLE001
+            logger.info("oembed attempt %d failed (%s): %s", attempt + 1, platform, exc)
+            await asyncio.sleep(0.5)
+    return ""
+
+
+async def _resolve_url(url: str) -> str:
+    """Follow redirects so a share link (vm.tiktok.com/…, tiktok.com/t/…,
+    instagr.am/…) becomes the canonical URL that oEmbed and meta scraping accept.
+    Returns the final URL and the page HTML if we happened to fetch it."""
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(endpoint + quote(url, safe=""))
-        if resp.status_code == 200:
-            data = resp.json()
-            bits = [str(data.get(k, "")) for k in ("title", "author_name", "description") if data.get(k)]
-            return " · ".join(bits)
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers={"User-Agent": _UA}) as client:
+            resp = await client.get(url)
+            return str(resp.url)
     except Exception as exc:  # noqa: BLE001
-        logger.info("oembed failed (%s): %s", platform, exc)
+        logger.info("url resolve failed: %s", exc)
+        return url
+
+
+def _parse_meta(html_text: str) -> dict[str, str]:
+    """Pull `<meta property/name … content …>` pairs regardless of attr order."""
+    metas: dict[str, str] = {}
+    for tag in re.findall(r"<meta\b[^>]*>", html_text, re.I):
+        key = re.search(r"(?:property|name)\s*=\s*[\"']([^\"']+)[\"']", tag, re.I)
+        val = re.search(r"content\s*=\s*[\"']([^\"']*)[\"']", tag, re.I | re.S)
+        if key and val:
+            metas[key.group(1).lower()] = _html.unescape(val.group(1))
+    return metas
+
+
+async def _og_meta(url: str) -> str:
+    """The post's caption from Open Graph / Twitter-card meta tags, which sites
+    serve for link previews even when the app itself is JS-walled (reliable for
+    Instagram / X / blogs; TikTok serves an empty shell here, hence oEmbed)."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers={"User-Agent": _UA}) as client:
+            resp = await client.get(url)
+        if resp.status_code != 200 or not resp.text:
+            return ""
+        metas = _parse_meta(resp.text)
+        bits = [
+            metas.get(k, "")
+            for k in ("og:title", "og:description", "twitter:title", "twitter:description", "description")
+            if metas.get(k)
+        ]
+        # De-duplicate while preserving order (og:title often == twitter:title).
+        seen: set[str] = set()
+        uniq = [b for b in bits if not (b in seen or seen.add(b))]
+        return " · ".join(uniq)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("og meta fetch failed: %s", exc)
     return ""
 
 
 async def _gather_from_url(url: str) -> tuple[str, str]:
-    """Best-effort content for a social URL. Returns (text, platform)."""
+    """Best-effort content for a URL. Returns (text, platform).
+
+    The order matters: the caption (oEmbed / Open Graph) is the ground truth for
+    a walled social post. We deliberately do NOT crawl a social video page —
+    that returns the app's navigation and unrelated recommended clips, which made
+    the planner hallucinate a different destination. A raw crawl is used only for
+    open web pages (blogs), whose body text really is the article.
+    """
     platform = _platform(url)
+    resolved = await _resolve_url(url) if platform in _SOCIAL_PLATFORMS else url
+    if _platform(resolved) != "web":
+        platform = _platform(resolved)  # a share link resolved to its real host
     parts: list[str] = []
 
-    # oEmbed first — it's the reliable caption source for TikTok / YouTube.
-    oembed = await _oembed(url, platform)
-    if oembed:
-        parts.append(f"[{platform} caption] {oembed}")
+    # 1) Caption via oEmbed (TikTok/YouTube), on the resolved then the raw URL.
+    caption = await _oembed(resolved, platform) or await _oembed(url, _platform(url))
+    if caption:
+        parts.append(f"[{platform} caption] {caption}")
 
+    # 2) Open Graph / Twitter-card caption (Instagram / X / blogs).
+    og = await _og_meta(resolved)
+    if og and og not in caption:
+        parts.append(f"[post] {og}")
+
+    # 3) YouTube: the transcript is the actual video content — keep it.
     if platform == "youtube":
         try:
-            tr = await camofox.youtube_transcript(url)
+            tr = await camofox.youtube_transcript(resolved)
             if tr and tr.get("transcript"):
                 parts.append(str(tr["transcript"])[:6000])
         except Exception as exc:  # noqa: BLE001
             logger.info("youtube transcript failed: %s", exc)
 
-    try:
-        snap = await camofox.browse(url, attempts=3, respect_robots=True)
-        if snap:
-            parts.append(snap[:6000])
-    except Exception as exc:  # noqa: BLE001
-        logger.info("social crawl failed: %s", exc)
-
-    # IG/TikTok/X pages are usually walled → the DDG snippet carries the caption.
-    if sum(len(p) for p in parts) < 400:
+    # 4) Open web (blog/article): the page body is the content — crawl it.
+    #    Never for the walled social platforms (see docstring).
+    if platform not in _SOCIAL_PLATFORMS and platform != "youtube":
         try:
-            snap2 = await camofox.search(f"{url}")
+            snap = await camofox.browse(resolved, attempts=3, respect_robots=True)
+            if snap:
+                parts.append(snap[:6000])
+        except Exception as exc:  # noqa: BLE001
+            logger.info("web crawl failed: %s", exc)
+
+    # 5) Last resort — if we still got essentially nothing, a search on the URL
+    #    sometimes surfaces the caption in the snippet.
+    if sum(len(p) for p in parts) < 60:
+        try:
+            snap2 = await camofox.search(url)
             if snap2:
-                parts.append(snap2[:4000])
+                parts.append(snap2[:3000])
         except Exception as exc:  # noqa: BLE001
             logger.info("social search fallback failed: %s", exc)
 
@@ -213,4 +314,6 @@ async def extract_trip_seed(
     seed["source_kind"] = source_kind
     seed["source_url"] = source_url
     seed["gathered_chars"] = len(content)
-    return seed
+    # oEmbed captions bypass the Camofox scrub, so a mangled character can leave a
+    # lone surrogate in the goal — strip it or the plan job 500s on JSON encode.
+    return scrub_surrogates(seed)

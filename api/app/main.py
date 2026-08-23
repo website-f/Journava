@@ -1154,6 +1154,40 @@ async def nearby_cities(destination: str = "") -> dict[str, object]:
         return {"country": None, "cities": []}
 
 
+_SOCIAL_URL_RE = re.compile(
+    r"https?://\S*(?:tiktok\.com|instagram\.com|instagr\.am|youtube\.com|youtu\.be|"
+    r"twitter\.com|x\.com|facebook\.com|fb\.watch|vm\.tiktok\.com|vt\.tiktok\.com)\S*",
+    re.I,
+)
+
+
+class SocialSeedRequest(BaseModel):
+    goal: str = ""
+    url: str | None = None
+
+
+@app.post(f"{settings.api_prefix}/plan/social-seed", tags=["planning"])
+async def plan_social_seed(body: SocialSeedRequest) -> dict[str, object]:
+    """Read a social-media link (TikTok / IG / YT / X / FB) and return a trip
+    seed — a real goal + destination — so the Command Center can plan straight
+    from a pasted link. Seed only; the caller launches the plan through the
+    normal job flow so results land in the usual results view."""
+    url = body.url
+    if not url:
+        match = _SOCIAL_URL_RE.search(body.goal or "")
+        url = match.group(0) if match else None
+    if not url:
+        return {"seed": None, "error": "No social link found."}
+    from app.tools import social
+
+    # Pass the whole prompt as text too, so extra words the traveller added
+    # ("3 days, halal food") enrich the seed alongside the post's caption.
+    seed = await social.extract_trip_seed(url=url, text=body.goal or None)
+    if seed.get("error"):
+        return {"seed": None, "error": seed["error"]}
+    return {"seed": seed, "error": None}
+
+
 # --------------------------------------------------------------------------- #
 # Flight booking flow (Atlas)
 # --------------------------------------------------------------------------- #
