@@ -392,20 +392,46 @@ def itinerary_messages(
     pace = request.pace or profile.pace
     items_per_day = {"relaxed": 2, "balanced": 3, "packed": 5}.get(pace, 3)
 
-    # Summarise upstream for context injection
+    def _compact(o: dict[str, Any]) -> dict[str, Any]:
+        """Just what the scheduler needs from a place — not the whole payload."""
+        return {
+            "title": o.get("title"),
+            "kind": o.get("kind"),
+            "why": (o.get("reasoning") or "")[:120],
+            "price": o.get("price_amount"),
+            "halal": o.get("halal_confidence"),
+        }
+
+    # Summarise upstream for context injection.
     summary_parts: list[str] = []
     for agent_slug, result in upstream_results.items():
         if agent_slug in ("chief", "budget", "itinerary", "memory"):
             continue
-        if isinstance(result, dict):
-            options = result.get("options", [])
-            summary = result.get("summary", "")
-            if options:
-                summary_parts.append(
-                    f"[{agent_slug}] {len(options)} options: {json.dumps(options[:3], default=str)}"
-                )
-            elif summary:
-                summary_parts.append(f"[{agent_slug}] {summary}")
+        if not isinstance(result, dict):
+            continue
+        options = result.get("options", [])
+        summary = result.get("summary", "")
+        if agent_slug == "research" and options:
+            # The day plan is BUILT from these — pass the full ranked shortlist
+            # (best first, compacted), not just 3, so it schedules real places
+            # instead of inventing the rest of a multi-day trip.
+            shortlist = [_compact(o) for o in options[:14]]
+            summary_parts.append(
+                f"[research] {len(options)} ranked places (schedule from these): "
+                f"{json.dumps(shortlist, default=str)}"
+            )
+        elif agent_slug == "crowd":
+            # Crowd level + best-times drive the off-peak scheduling instruction.
+            data = result.get("data") or {}
+            summary_parts.append(
+                f"[crowd] {summary} | {json.dumps(data, default=str)[:800]}"
+            )
+        elif options:
+            summary_parts.append(
+                f"[{agent_slug}] {len(options)} options: {json.dumps(options[:3], default=str)}"
+            )
+        elif summary:
+            summary_parts.append(f"[{agent_slug}] {summary}")
 
     # Trip length: explicit dates win, else the duration parsed from the goal
     # ("3 days"), else a 7-day default — so the itinerary is never longer than
