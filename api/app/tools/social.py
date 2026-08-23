@@ -29,6 +29,7 @@ from urllib.parse import quote
 import httpx
 
 from app.core import llm
+from app.core.cache import cached
 from app.core.settings import settings
 from app.core.text import scrub_surrogates
 from app.tools import camofox
@@ -54,6 +55,20 @@ _UA = (
 )
 
 logger = logging.getLogger("journava")
+
+
+def _client(timeout: float = 15.0) -> httpx.AsyncClient:
+    """An HTTP client for caption fetches. Routes through the configured proxy
+    when set — a rotating/residential IP is the only real fix for an IP-based
+    rate-limit on a keyless endpoint like TikTok's oEmbed."""
+    kwargs: dict[str, Any] = {
+        "timeout": timeout,
+        "follow_redirects": True,
+        "headers": {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"},
+    }
+    if settings.camofox_proxy:
+        kwargs["proxy"] = settings.camofox_proxy
+    return httpx.AsyncClient(**kwargs)
 
 _SEED_SYSTEM = """You turn social-media travel content into a structured trip \
 seed. Read the post text / transcript / image description below and infer where \
@@ -103,7 +118,7 @@ async def _oembed(url: str, platform: str) -> str:
         return ""
     for attempt in range(3):
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers={"User-Agent": _UA}) as client:
+            async with _client() as client:
                 resp = await client.get(endpoint + quote(url, safe=""))
             if resp.status_code == 200:
                 data = resp.json()
@@ -125,7 +140,7 @@ async def _resolve_url(url: str) -> str:
     instagr.am/…) becomes the canonical URL that oEmbed and meta scraping accept.
     Returns the final URL and the page HTML if we happened to fetch it."""
     try:
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers={"User-Agent": _UA}) as client:
+        async with _client(timeout=12.0) as client:
             resp = await client.get(url)
             return str(resp.url)
     except Exception as exc:  # noqa: BLE001
@@ -149,7 +164,7 @@ async def _og_meta(url: str) -> str:
     serve for link previews even when the app itself is JS-walled (reliable for
     Instagram / X / blogs; TikTok serves an empty shell here, hence oEmbed)."""
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers={"User-Agent": _UA}) as client:
+        async with _client() as client:
             resp = await client.get(url)
         if resp.status_code != 200 or not resp.text:
             return ""
@@ -176,53 +191,70 @@ async def _gather_from_url(url: str) -> tuple[str, str]:
     that returns the app's navigation and unrelated recommended clips, which made
     the planner hallucinate a different destination. A raw crawl is used only for
     open web pages (blogs), whose body text really is the article.
+
+    The whole gather is cached per URL for 12h: the same link never re-hits the
+    upstream API, which is what actually stops the rate-limit (repeat submissions,
+    the assistant + the plan box, and re-plans all share one fetch). Failures
+    return None so a transient blip is never cached.
     """
-    platform = _platform(url)
-    resolved = await _resolve_url(url) if platform in _SOCIAL_PLATFORMS else url
-    if _platform(resolved) != "web":
-        platform = _platform(resolved)  # a share link resolved to its real host
-    parts: list[str] = []
 
-    # 1) Caption via oEmbed (TikTok/YouTube), on the resolved then the raw URL.
-    caption = await _oembed(resolved, platform) or await _oembed(url, _platform(url))
-    if caption:
-        parts.append(f"[{platform} caption] {caption}")
+    async def _do() -> dict[str, str] | None:
+        platform = _platform(url)
+        resolved = await _resolve_url(url) if platform in _SOCIAL_PLATFORMS else url
+        if _platform(resolved) != "web":
+            platform = _platform(resolved)  # a share link resolved to its real host
+        parts: list[str] = []
 
-    # 2) Open Graph / Twitter-card caption (Instagram / X / blogs).
-    og = await _og_meta(resolved)
-    if og and og not in caption:
-        parts.append(f"[post] {og}")
+        # 1) Caption via oEmbed (TikTok/YouTube), on the resolved then raw URL.
+        caption = await _oembed(resolved, platform) or await _oembed(url, _platform(url))
+        if caption:
+            parts.append(f"[{platform} caption] {caption}")
 
-    # 3) YouTube: the transcript is the actual video content — keep it.
-    if platform == "youtube":
-        try:
-            tr = await camofox.youtube_transcript(resolved)
-            if tr and tr.get("transcript"):
-                parts.append(str(tr["transcript"])[:6000])
-        except Exception as exc:  # noqa: BLE001
-            logger.info("youtube transcript failed: %s", exc)
+        # 2) Open Graph / Twitter-card caption (Instagram / X / blogs).
+        og = await _og_meta(resolved)
+        if og and og not in caption:
+            parts.append(f"[post] {og}")
 
-    # 4) Open web (blog/article): the page body is the content — crawl it.
-    #    Never for the walled social platforms (see docstring).
-    if platform not in _SOCIAL_PLATFORMS and platform != "youtube":
-        try:
-            snap = await camofox.browse(resolved, attempts=3, respect_robots=True)
-            if snap:
-                parts.append(snap[:6000])
-        except Exception as exc:  # noqa: BLE001
-            logger.info("web crawl failed: %s", exc)
+        # 3) YouTube: the transcript is the actual video content — keep it.
+        if platform == "youtube":
+            try:
+                tr = await camofox.youtube_transcript(resolved)
+                if tr and tr.get("transcript"):
+                    parts.append(str(tr["transcript"])[:6000])
+            except Exception as exc:  # noqa: BLE001
+                logger.info("youtube transcript failed: %s", exc)
 
-    # 5) Last resort — if we still got essentially nothing, a search on the URL
-    #    sometimes surfaces the caption in the snippet.
-    if sum(len(p) for p in parts) < 60:
-        try:
-            snap2 = await camofox.search(url)
-            if snap2:
-                parts.append(snap2[:3000])
-        except Exception as exc:  # noqa: BLE001
-            logger.info("social search fallback failed: %s", exc)
+        # 4) Open web (blog/article): the page body is the content — crawl it.
+        #    Never for the walled social platforms (see docstring).
+        if platform not in _SOCIAL_PLATFORMS and platform != "youtube":
+            try:
+                snap = await camofox.browse(resolved, attempts=3, respect_robots=True)
+                if snap:
+                    parts.append(snap[:6000])
+            except Exception as exc:  # noqa: BLE001
+                logger.info("web crawl failed: %s", exc)
 
-    return "\n\n".join(parts), platform
+        # 5) Last resort — a search on the URL sometimes surfaces the caption.
+        if sum(len(p) for p in parts) < 60:
+            try:
+                snap2 = await camofox.search(url)
+                if snap2:
+                    parts.append(snap2[:3000])
+            except Exception as exc:  # noqa: BLE001
+                logger.info("social search fallback failed: %s", exc)
+
+        text = "\n\n".join(parts).strip()
+        # Return None on a failed/empty gather so `cached` doesn't store a miss.
+        return {"text": text, "platform": platform} if len(text) >= 40 else None
+
+    try:
+        data = await cached(f"social:gather:{url}", _do, ttl=12 * 3600)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("social gather failed: %s", exc)
+        data = None
+    if not data:
+        return "", _platform(url)
+    return data["text"], data["platform"]
 
 
 async def _describe_image(image_data_url: str) -> str:
