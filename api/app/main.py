@@ -7,7 +7,7 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1130,6 +1130,37 @@ async def email_test(channel_id: str) -> dict[str, object]:
     sender, password, recipient = creds
     ok, detail = await email_tool.send_one(sender, password, recipient, "Journava test", _EMAIL_TEST_HTML)
     return {"ok": ok, "message": detail}
+
+
+# --- Offline trip pass — a downloadable PDF that works with no signal -------- #
+
+
+class TripExport(BaseModel):
+    results: dict[str, Any]
+    title: str | None = None
+
+
+@app.post(f"{settings.api_prefix}/trip/export/pdf", tags=["trip"])
+async def trip_export_pdf(body: TripExport) -> StreamingResponse:
+    """Render the open trip to a self-contained PDF the traveller can save and
+    open offline (no signal needed on the ground)."""
+    import io
+
+    from app.tools.trip_pdf import build_trip_pdf
+
+    dest = ((body.results.get("chief") or {}).get("data") or {}).get("destination")
+    title = (body.title or (f"{dest} trip" if dest else "Your Trip"))[:120]
+    try:
+        pdf = build_trip_pdf(body.results, title=title)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trip PDF export failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not build the trip PDF.")
+    safe = "".join(c for c in title if c.isalnum() or c in " -_").strip().replace(" ", "-") or "trip"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.pdf"'},
+    )
 
 
 # --------------------------------------------------------------------------- #

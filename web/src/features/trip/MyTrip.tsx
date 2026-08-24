@@ -1,7 +1,7 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2, Check, Plus, Compass, Utensils, Copy } from "@/components/ui/icons";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2, Check, Plus, Compass, Utensils, Copy, Download } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
 import { Money } from "@/components/ui/Money";
@@ -11,8 +11,10 @@ import { cn } from "@/lib/cn";
 const TripMap = lazy(() =>
   import("@/components/ui/TripMap").then((m) => ({ default: m.TripMap })),
 );
-import { api } from "@/lib/api";
+import { api, API_BASE } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth";
 import { PriceWatchCard } from "./PriceWatchCard";
+import { useChecklist } from "@/hooks/useChecklist";
 import { usePlanStore } from "@/stores/planStore";
 import type { AgentPlanResult, CostDetail, DisruptionRecovery, ItineraryItem, PlanResults } from "@/stores/planStore";
 import { useAgentStream } from "@/hooks/useAgentStream";
@@ -1141,6 +1143,7 @@ function TripHeader({
 }) {
   const countdown = results ? countdownLabel(tripStartDate(results)) : null;
   const [sharing, setSharing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const share = async () => {
     setSharing(true);
@@ -1153,6 +1156,37 @@ function TripHeader({
       toast.error("Couldn't create a share link.");
     } finally {
       setSharing(false);
+    }
+  };
+
+  // Offline pass — download a self-contained PDF that opens with no signal.
+  const downloadOffline = async () => {
+    setDownloading(true);
+    try {
+      const token = getAccessToken();
+      const res = await fetch(`${API_BASE}/trip/export/pdf`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ results }),
+      });
+      if (!res.ok) throw new Error("export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "journava-trip.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Trip saved for offline — open the PDF anytime, no signal needed.");
+    } catch {
+      toast.error("Couldn't prepare the offline pass.");
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -1175,6 +1209,12 @@ function TripHeader({
           <Button variant="secondary" size="sm" loading={sharing} onClick={() => void share()}>
             <Copy className="h-4 w-4" />
             Share
+          </Button>
+        )}
+        {results && (
+          <Button variant="secondary" size="sm" loading={downloading} onClick={() => void downloadOffline()}>
+            <Download className="h-4 w-4" />
+            Offline
           </Button>
         )}
         {onDelete && (
@@ -1435,6 +1475,11 @@ function ItinerarySection({
   const [items, setItems] = useState<ItineraryItem[]>(results.itinerary?.items ?? []);
   const [refining, setRefining] = useState(false);
 
+  // Stable per-trip key for the offline checklist.
+  const chief = (results.chief?.data as { destination?: string; start_date?: string } | undefined) ?? {};
+  const tripKey = `${chief.destination ?? "trip"}:${chief.start_date ?? ""}`;
+  const { toggle, isDone } = useChecklist(tripKey);
+
   if (items.length === 0) return null;
 
   const days = new Map<number, ItineraryItem[]>();
@@ -1443,6 +1488,10 @@ function ItinerarySection({
     list.push(item);
     days.set(item.day_index, list);
   }
+
+  const itemKey = (item: ItineraryItem) => `${item.day_index}:${item.title}`;
+  const doneCount = items.filter((i) => isDone(itemKey(i))).length;
+  const pct = items.length ? Math.round((doneCount / items.length) * 100) : 0;
 
   const persist = async (next: ItineraryItem[]) => {
     setItems(next);
@@ -1514,8 +1563,22 @@ function ItinerarySection({
         </Button>
       </div>
       <p className="mb-3 text-xs text-[var(--muted)]">
-        Use the arrows (or drag on desktop) to reorder within a day — changes save automatically.
+        Tick items off as you go — saved on your device, works offline. Reorder
+        within a day with the arrows (or drag on desktop).
       </p>
+
+      {/* Trip progress — the checklist you refer to on the ground. */}
+      <div className="mb-4 flex items-center gap-3">
+        <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--border)]">
+          <div
+            className="h-full rounded-full bg-[var(--success)] transition-[width] duration-500"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <span className="shrink-0 text-xs font-medium text-[var(--muted)] tabular-nums">
+          {doneCount}/{items.length} done
+        </span>
+      </div>
 
       <div className="space-y-4">
         {[...days.entries()]
@@ -1527,6 +1590,9 @@ function ItinerarySection({
               dayItems={dayItems}
               onReorder={(from, to) => reorderDay(dayIndex, from, to)}
               onRemove={(title) => void removeItem(title)}
+              itemKey={itemKey}
+              isDone={isDone}
+              onToggle={toggle}
             />
           ))}
       </div>
@@ -1539,18 +1605,33 @@ function DayItinerary({
   dayItems,
   onReorder,
   onRemove,
+  itemKey,
+  isDone,
+  onToggle,
 }: {
   dayIndex: number;
   dayItems: ItineraryItem[];
   onReorder: (from: number, to: number) => void;
   onRemove: (title: string) => void;
+  itemKey: (item: ItineraryItem) => string;
+  isDone: (key: string) => boolean;
+  onToggle: (key: string) => void;
 }) {
   const [drag, setDrag] = useState<number | null>(null);
+  const dayDone = dayItems.filter((i) => isDone(itemKey(i))).length;
   return (
     <div>
-      <h4 className="mb-2 text-sm font-semibold text-[var(--brand-500)]">Day {dayIndex}</h4>
+      <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--brand-500)]">
+        Day {dayIndex}
+        <span className="text-[0.7rem] font-normal text-[var(--muted)] tabular-nums">
+          {dayDone}/{dayItems.length}
+        </span>
+      </h4>
       <ol className="space-y-1.5">
-        {dayItems.map((item, idx) => (
+        {dayItems.map((item, idx) => {
+          const key = itemKey(item);
+          const done = isDone(key);
+          return (
           <li
             key={idx}
             draggable
@@ -1562,13 +1643,28 @@ function DayItinerary({
               setDrag(null);
             }}
             className={cn(
-              "surface-card flex items-start gap-2 p-3",
+              "surface-card flex items-start gap-2 p-3 transition-opacity",
               drag === idx && "opacity-50",
+              done && "opacity-60",
             )}
           >
+            {/* Tick it off — the offline checklist */}
+            <button
+              type="button"
+              aria-label={done ? "Mark not done" : "Mark done"}
+              onClick={() => onToggle(key)}
+              className={cn(
+                "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[var(--r-sm)] border transition-colors",
+                done
+                  ? "border-[var(--success)] bg-[var(--success)] text-white"
+                  : "border-[var(--border)] text-transparent hover:border-[var(--success)]",
+              )}
+            >
+              <Check className="h-3.5 w-3.5" />
+            </button>
             <GripHorizontal className="mt-0.5 hidden h-4 w-4 shrink-0 cursor-grab text-[var(--muted)] active:cursor-grabbing sm:block" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{item.title}</p>
+              <p className={cn("text-sm font-medium", done && "line-through text-[var(--muted)]")}>{item.title}</p>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
                 <Badge>{item.kind}</Badge>
                 {item.starts_at && (
@@ -1618,7 +1714,8 @@ function DayItinerary({
               )}
             </div>
           </li>
-        ))}
+          );
+        })}
       </ol>
     </div>
   );
