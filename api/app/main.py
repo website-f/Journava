@@ -1049,17 +1049,35 @@ _CLARIFY_COUNTRIES: dict[str, dict[str, object]] = {
     "south korea": {"label": "South Korea", "cities": ["Seoul", "Busan", "Jeju"]},
     "korea": {"label": "South Korea", "cities": ["Seoul", "Busan", "Jeju"]},
     "vietnam": {"label": "Vietnam", "cities": ["Ho Chi Minh City", "Hanoi", "Da Nang"]},
-    "china": {"label": "China", "cities": ["Shanghai", "Beijing", "Guangzhou"]},
+    "china": {"label": "China", "cities": ["Shanghai", "Beijing", "Guangzhou", "Chengdu"]},
     "taiwan": {"label": "Taiwan", "cities": ["Taipei", "Kaohsiung"]},
     "philippines": {"label": "Philippines", "cities": ["Manila", "Cebu"]},
     "australia": {"label": "Australia", "cities": ["Sydney", "Melbourne", "Brisbane"]},
     "india": {"label": "India", "cities": ["Delhi", "Mumbai", "Bangalore"]},
-    "united kingdom": {"label": "UK", "cities": ["London", "Manchester"]},
-    "france": {"label": "France", "cities": ["Paris", "Nice"]},
+    "united kingdom": {"label": "UK", "cities": ["London", "Manchester", "Edinburgh"]},
+    "france": {"label": "France", "cities": ["Paris", "Nice", "Lyon"]},
     "italy": {"label": "Italy", "cities": ["Rome", "Milan", "Venice"]},
     "turkey": {"label": "Turkey", "cities": ["Istanbul", "Antalya"]},
     "uae": {"label": "UAE", "cities": ["Dubai", "Abu Dhabi"]},
     "brazil": {"label": "Brazil", "cities": ["Rio de Janeiro", "São Paulo", "Brasília"]},
+    "switzerland": {"label": "Switzerland", "cities": ["Zurich", "Geneva", "Interlaken", "Lucerne"]},
+    "germany": {"label": "Germany", "cities": ["Berlin", "Munich", "Frankfurt"]},
+    "spain": {"label": "Spain", "cities": ["Barcelona", "Madrid", "Seville"]},
+    "netherlands": {"label": "Netherlands", "cities": ["Amsterdam", "Rotterdam"]},
+    "portugal": {"label": "Portugal", "cities": ["Lisbon", "Porto"]},
+    "greece": {"label": "Greece", "cities": ["Athens", "Santorini", "Mykonos"]},
+    "austria": {"label": "Austria", "cities": ["Vienna", "Salzburg"]},
+    "saudi arabia": {"label": "Saudi Arabia", "cities": ["Riyadh", "Jeddah", "Makkah"]},
+    "qatar": {"label": "Qatar", "cities": ["Doha"]},
+    "egypt": {"label": "Egypt", "cities": ["Cairo", "Hurghada"]},
+    "morocco": {"label": "Morocco", "cities": ["Marrakech", "Casablanca", "Fes"]},
+    "cambodia": {"label": "Cambodia", "cities": ["Siem Reap", "Phnom Penh"]},
+    "sri lanka": {"label": "Sri Lanka", "cities": ["Colombo", "Kandy"]},
+    "nepal": {"label": "Nepal", "cities": ["Kathmandu", "Pokhara"]},
+    "new zealand": {"label": "New Zealand", "cities": ["Auckland", "Queenstown", "Wellington"]},
+    "united states": {"label": "USA", "cities": ["New York", "Los Angeles", "San Francisco"]},
+    "usa": {"label": "USA", "cities": ["New York", "Los Angeles", "San Francisco"]},
+    "canada": {"label": "Canada", "cities": ["Toronto", "Vancouver", "Montreal"]},
 }
 
 
@@ -1096,6 +1114,42 @@ def _date_suggestions(goal: str) -> list[dict[str, str]]:
     return [{"label": lbl, "start_date": s, "end_date": e} for lbl, s, e in picks]
 
 
+async def _country_only_llm(goal: str) -> dict[str, object] | None:
+    """Fallback for a country we don't have hard-coded (Switzerland, Kenya, …):
+    ask the model whether the destination is a whole COUNTRY and, if so, its top
+    cities — so ANY "3 days in <country>" goal gets a city prompt and the flight
+    search targets a real airport instead of a country."""
+    from app.core import llm
+
+    try:
+        raw = await llm.complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Decide if a trip goal's DESTINATION is an entire country or region rather than a "
+                        'specific city. If country-only, return {"country_only": true, "country": "Name", '
+                        '"cities": [up to 5 major traveller cities]}. If it names a city, a non-place, or no '
+                        'clear destination, return {"country_only": false}. JSON only.'
+                    ),
+                },
+                {"role": "user", "content": goal[:400]},
+            ],
+            response_format={"type": "json_object"},
+            agent="chief",
+        )
+        import json as _json
+
+        data = _json.loads(raw)
+        if data.get("country_only") and isinstance(data.get("cities"), list):
+            cities = [str(c) for c in data["cities"] if c][:6]
+            if cities:
+                return {"country": str(data.get("country") or "there"), "cities": cities, "recommended": cities[0]}
+    except Exception as exc:  # noqa: BLE001 — clarify is best-effort
+        logger.info("country-only LLM fallback failed: %s", exc)
+    return None
+
+
 @app.post(f"{settings.api_prefix}/plan/clarify", tags=["planning"])
 async def plan_clarify(request: ClarifyRequest) -> dict[str, object]:
     """Check a prompt before running: does it need an origin, a city for a
@@ -1127,6 +1181,13 @@ async def plan_clarify(request: ClarifyRequest) -> dict[str, object]:
                     "recommended": cities[0],  # the agent's default pick if "You suggest"
                 }
             break
+
+    # Generic fallback for a country not in the table (Switzerland, Kenya, …):
+    # only when nothing else pinned a destination, so a bare "3 days Switzerland"
+    # still gets a city prompt (and Atlas a real airport) instead of searching a
+    # whole country and returning no inventory. Asked together with origin/dates.
+    if country_only is None and not resolved_city and needs_flights:
+        country_only = await _country_only_llm(request.goal)
 
     # Suggest dates when the plan wants them and the goal names none. Detect an
     # existing date via the parser (handles explicit dates + relative phrases

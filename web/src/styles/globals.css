@@ -195,7 +195,7 @@ body {
    clarify popup's origin/city/date fields were outside `#root` and still
    zoomed. `!important` beats `.input-field` and Tailwind's `text-sm`/`text-xs`;
    desktop (fine pointer) keeps its compact sizing. */
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 820px) {
   input,
   textarea,
   select,
