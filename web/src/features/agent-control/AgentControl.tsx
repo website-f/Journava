@@ -332,6 +332,7 @@ function MissionControl({ events, statusMap, connected }: {
 
   return (
     <div className="space-y-4">
+      <HealthStrip />
       <div className="surface-card flex flex-wrap items-center gap-x-6 gap-y-3 p-4">
         <div className="flex items-center gap-2">
           <span className={cn("h-2.5 w-2.5 rounded-full", connected ? "bg-[var(--success)] animate-pulse" : "bg-[var(--muted)]")} />
@@ -370,6 +371,41 @@ function MissionControl({ events, statusMap, connected }: {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+type Health = {
+  agents: { agent: string; calls: number; errors: number; tokens: number; avg_ms: number; p95_ms: number }[];
+  cache: { hits: number; misses: number; hit_rate: number | null };
+  totals: { llm_calls_24h: number; errors_24h: number; error_rate: number; tokens_24h: number; slowest_agent: string | null };
+};
+
+/** Golden-signal health strip — real ops metrics (LLM calls, error rate, cache
+ *  hit-rate, tokens, slowest agent) over the last 24h, refreshed every 15s. */
+function HealthStrip() {
+  const [h, setH] = useState<Health | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => api.get<Health>("/monitor/health").then((d) => live && setH(d)).catch(() => {});
+    load();
+    const t = window.setInterval(load, 15000);
+    return () => { live = false; window.clearInterval(t); };
+  }, []);
+  if (!h || !h.totals?.llm_calls_24h) return null;
+  const t = h.totals;
+  const errPct = Math.round((t.error_rate || 0) * 100);
+  const hit = h.cache?.hit_rate != null ? `${Math.round(h.cache.hit_rate * 100)}%` : "—";
+  return (
+    <div className="surface-card flex flex-wrap items-center gap-x-6 gap-y-3 p-4">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--muted)]">
+        System health · 24h
+      </span>
+      <Hud label="LLM calls" value={String(t.llm_calls_24h)} />
+      <Hud label="Error rate" value={`${errPct}%`} />
+      <Hud label="Cache hit" value={hit} />
+      <Hud label="Tokens" value={t.tokens_24h.toLocaleString()} />
+      {t.slowest_agent && <Hud label="Slowest agent" value={t.slowest_agent} />}
     </div>
   );
 }

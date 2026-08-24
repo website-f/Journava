@@ -26,6 +26,31 @@ logger = logging.getLogger("journava")
 router = APIRouter(prefix=f"{settings.api_prefix}/monitor", tags=["monitor"])
 
 
+@router.get("/health")
+async def health() -> dict[str, Any]:
+    """Golden-signal snapshot for ops + the Mission Control health strip:
+    per-agent calls/errors/latency (24h), cache hit-rate, and roll-up totals."""
+    from app.core import cache
+    from app.core.llm_providers import get_agent_stats
+
+    agents = await get_agent_stats()
+    calls = sum(int(a["calls"]) for a in agents)
+    errors = sum(int(a["errors"]) for a in agents)
+    tokens = sum(int(a["tokens"]) for a in agents)
+    slowest = max(agents, key=lambda a: (a.get("p95_ms") or 0), default=None)
+    return {
+        "agents": agents,
+        "cache": cache.cache_stats(),
+        "totals": {
+            "llm_calls_24h": calls,
+            "errors_24h": errors,
+            "error_rate": round(errors / calls, 3) if calls else 0,
+            "tokens_24h": tokens,
+            "slowest_agent": slowest["agent"] if slowest else None,
+        },
+    }
+
+
 class WatchRequest(BaseModel):
     #: Force a disruption for the demo ("money shot"); None = real detection.
     simulate: Literal["delayed", "cancelled", "on_time"] | None = None

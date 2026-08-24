@@ -72,6 +72,20 @@ def reset_backoff() -> None:
     _retry_after = 0.0
 
 
+#: Process-lifetime cache hit/miss counters — a golden signal (how much work we
+#: avoided) for the health snapshot.
+_counters: dict[str, int] = {"hits": 0, "misses": 0}
+
+
+def cache_stats() -> dict[str, Any]:
+    total = _counters["hits"] + _counters["misses"]
+    return {
+        "hits": _counters["hits"],
+        "misses": _counters["misses"],
+        "hit_rate": round(_counters["hits"] / total, 3) if total else None,
+    }
+
+
 async def cached(
     key: str,
     producer: Callable[[], Awaitable[Any]],
@@ -90,10 +104,12 @@ async def cached(
         try:
             hit = await client.get(namespaced)
             if hit is not None:
+                _counters["hits"] += 1
                 return json.loads(hit)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Cache read failed for %s: %s", namespaced, exc)
 
+    _counters["misses"] += 1
     value = await producer()
 
     if client is not None and value is not None:

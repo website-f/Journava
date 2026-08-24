@@ -558,6 +558,32 @@ async def record_usage(
         logger.debug("record_usage failed: %s", exc)
 
 
+async def get_agent_stats() -> list[dict[str, Any]]:
+    """Golden signals per AGENT over the last 24h — calls, error rate, p-latency,
+    tokens — so an operator can see which agent is slow or failing."""
+    pool = await db.get_pool()
+    if pool is None:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT COALESCE(agent, 'other')          AS agent,
+                          COUNT(*)                           AS calls,
+                          COUNT(*) FILTER (WHERE NOT success) AS errors,
+                          COALESCE(SUM(tokens_in + tokens_out), 0) AS tokens,
+                          ROUND(AVG(latency_ms))             AS avg_ms,
+                          ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)) AS p95_ms
+                   FROM llm_usage
+                   WHERE created_at > now() - interval '24 hours'
+                   GROUP BY COALESCE(agent, 'other')
+                   ORDER BY calls DESC"""
+            )
+        return [dict(row) for row in rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_agent_stats failed: %s", exc)
+        return []
+
+
 async def get_stats() -> list[dict[str, Any]]:
     """Per-model usage over the last 7 days, for the Engine dashboard."""
     pool = await db.get_pool()
