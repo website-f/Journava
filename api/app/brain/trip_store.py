@@ -420,6 +420,95 @@ async def build_itinerary(picks: list[dict[str, Any]], days: int, *, arrival: st
     return trip
 
 
+async def optimize_to_budget(budget: float, currency: str | None = None) -> dict[str, Any] | None:
+    """Fit the active trip to a budget — an agent autonomously prices the trip
+    (cheapest flight × pax + cheapest stay × nights + scheduled activities) and,
+    if over, trims the priciest activities to the backup list until it fits.
+    Deterministic and reversible (trimmed items sit in backup, one tap to re-add).
+    """
+    trip = await load_trip_durable()
+    if trip is None:
+        return None
+    chief = (trip.get("chief") or {}).get("data") or {}
+    travellers = max(1, int(chief.get("travellers") or 1))
+    ccy = currency or chief.get("budget_currency") or "MYR"
+
+    itin = dict(trip.get("itinerary") or {})
+    items = list(itin.get("items") or [])
+    backup = list(itin.get("backup") or [])
+    days = max((int(i.get("day_index") or 1) for i in items), default=3)
+    nights = max(1, days - 1)
+
+    def _min_price(opts: list[dict[str, Any]]) -> float:
+        prices = [float(o["price_amount"]) for o in opts if o.get("price_amount") is not None]
+        return min(prices) if prices else 0.0
+
+    def _cost(i: dict[str, Any]) -> float:
+        try:
+            return float(i.get("cost_amount") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    flight_pp = _min_price((trip.get("flight") or {}).get("options") or [])
+    flight_cost = flight_pp * travellers
+    hotel_pn = _min_price((trip.get("hotel") or {}).get("options") or [])
+    hotel_cost = hotel_pn * nights
+    fixed = flight_cost + hotel_cost
+    act_cost = sum(_cost(i) for i in items)
+    before = fixed + act_cost
+
+    # Trim the most expensive activities first, into backup, until under budget.
+    changes: list[dict[str, Any]] = []
+    priced_acts = sorted(
+        (i for i in items if i.get("kind") in ("activity", "meal") and _cost(i) > 0),
+        key=_cost,
+        reverse=True,
+    )
+    running = act_cost
+    for item in priced_acts:
+        if fixed + running <= budget:
+            break
+        items = [x for x in items if x is not item]
+        det = item.get("details") or {}
+        backup.insert(0, {
+            "id": det.get("id"),
+            "title": item.get("title"),
+            "kind": "restaurant" if item.get("kind") == "meal" else "activity",
+            "price_amount": det.get("price_amount"),
+            "price_currency": det.get("price_currency"),
+            "booking_url": det.get("booking_url"),
+            "reasoning": item.get("reasoning"),
+        })
+        running -= _cost(item)
+        changes.append({"title": item.get("title"), "saved": round(_cost(item))})
+
+    after = fixed + running
+    itin["items"] = items
+    itin["backup"] = backup
+    trip["itinerary"] = itin
+    await save_trip_durable(trip)
+    return {
+        "trip": trip,
+        "currency": ccy,
+        "budget": round(budget),
+        "before": round(before),
+        "after": round(after),
+        "within_budget": after <= budget,
+        "breakdown": {
+            "flight": round(flight_cost),
+            "hotel": round(hotel_cost),
+            "activities": round(running),
+        },
+        "recommended": {
+            "flight_from_pp": round(flight_pp) if flight_pp else None,
+            "hotel_per_night": round(hotel_pn) if hotel_pn else None,
+            "nights": nights,
+            "travellers": travellers,
+        },
+        "trimmed": changes,
+    }
+
+
 async def move_place(title: str, action: str) -> dict[str, Any] | None:
     """Instantly (no LLM) move a place between the schedule and the backup list.
 

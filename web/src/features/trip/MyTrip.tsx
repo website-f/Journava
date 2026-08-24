@@ -134,6 +134,7 @@ export function MyTrip() {
       <BudgetCard results={results} />
       <WeatherCard results={results} />
       <CompleteItineraryCard results={results} setTrip={setTrip} />
+      <BudgetOptimizerCard results={results} setTrip={setTrip} />
       <ItinerarySection results={results} setTrip={setTrip} />
       <BackupRail results={results} setTrip={setTrip} />
       <TripStoryCard results={results} />
@@ -980,6 +981,119 @@ function TripStoryCard({ results }: { results: Record<string, AgentPlanResult> }
           <button onClick={() => void generate()} disabled={busy} className="text-xs text-[var(--muted)] hover:underline">
             Regenerate
           </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+type OptimizeResult = {
+  currency: string;
+  budget: number;
+  before: number;
+  after: number;
+  within_budget: boolean;
+  breakdown: { flight: number; hotel: number; activities: number };
+  recommended: { flight_from_pp: number | null; hotel_per_night: number | null; nights: number; travellers: number };
+  trimmed: { title: string; saved: number }[];
+  trip?: Record<string, AgentPlanResult>;
+};
+
+/**
+ * Budget auto-optimizer — "fit my trip to RM X". An agent prices the trip
+ * (cheapest flight x pax + cheapest stay x nights + scheduled activities) and,
+ * if over, trims the priciest activities to backup until it fits — reversibly.
+ */
+function BudgetOptimizerCard({
+  results,
+  setTrip,
+}: {
+  results: Record<string, AgentPlanResult>;
+  setTrip: (trip: Record<string, AgentPlanResult>) => void;
+}) {
+  const chief = (results.chief?.data ?? {}) as { destination?: string; budget_amount?: number; budget_currency?: string };
+  const [budget, setBudget] = useState<string>(chief.budget_amount ? String(chief.budget_amount) : "");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<OptimizeResult | null>(null);
+  if (!chief.destination) return null;
+  const ccy = chief.budget_currency || "MYR";
+
+  const run = async () => {
+    const amt = Number(budget);
+    if (!amt || amt <= 0) return toast.info("Enter a target budget first.");
+    setBusy(true);
+    try {
+      const r = await api.post<OptimizeResult>("/trip/optimize", { budget_amount: amt, currency: ccy });
+      setRes(r);
+      if (r.trip) setTrip(r.trip);
+      toast[r.within_budget ? "success" : "info"](
+        r.within_budget ? "Your trip fits the budget." : "Trimmed to get as close as possible.",
+      );
+    } catch {
+      toast.error("Couldn't optimize the trip.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="surface-card mb-6 p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <TrendingUp className="h-5 w-5 text-[var(--brand-500)]" />
+        <h3 className="text-base font-semibold">Fit to budget</h3>
+      </div>
+      <p className="mb-3 text-sm text-[var(--muted)]">
+        Set a target and your agents price the trip and trim to fit — trimmed picks go to backup.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1.5 rounded-[var(--r-md)] border border-[var(--border)] px-3 py-1.5">
+          <span className="text-xs text-[var(--muted)]">{ccy}</span>
+          <input
+            className="w-24 bg-transparent text-sm outline-none"
+            inputMode="numeric"
+            placeholder="6000"
+            value={budget}
+            onChange={(e) => setBudget(e.target.value.replace(/[^\d.]/g, ""))}
+            aria-label="Target budget"
+          />
+        </div>
+        <Button size="sm" loading={busy} onClick={() => void run()}>
+          <TrendingUp className="h-4 w-4" /> Fit my trip
+        </Button>
+      </div>
+
+      {res && (
+        <div className="mt-4 space-y-2">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-[var(--muted)]">
+              {ccy} {res.before.toLocaleString()} <span className="mx-1">→</span>
+              <strong className={res.within_budget ? "text-[var(--success)]" : "text-[var(--warning)]"}>
+                {ccy} {res.after.toLocaleString()}
+              </strong>
+            </span>
+            <span
+              className={cn(
+                "rounded-[var(--r-pill)] px-2 py-0.5 text-[0.6rem] font-semibold uppercase",
+                res.within_budget
+                  ? "bg-[color-mix(in_srgb,var(--success)_16%,transparent)] text-[var(--success)]"
+                  : "bg-[color-mix(in_srgb,var(--warning)_16%,transparent)] text-[var(--warning)]",
+              )}
+            >
+              {res.within_budget ? "within budget" : "closest possible"}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            {(["flight", "hotel", "activities"] as const).map((k) => (
+              <div key={k} className="rounded-[var(--r-sm)] bg-[var(--bg)] p-2">
+                <p className="text-[0.6rem] uppercase tracking-wide text-[var(--muted)]">{k}</p>
+                <p className="text-xs font-semibold">{ccy} {res.breakdown[k].toLocaleString()}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-[0.65rem] text-[var(--muted)]">
+            Based on cheapest flight ×{res.recommended.travellers} + stay ×{res.recommended.nights} nights + activities.
+            {res.trimmed.length > 0 && ` Trimmed ${res.trimmed.length} to backup: ${res.trimmed.map((t) => t.title).join(", ")}.`}
+          </p>
         </div>
       )}
     </section>

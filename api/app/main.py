@@ -414,6 +414,21 @@ async def build_itinerary(request: ItineraryBuild) -> dict[str, object]:
     return {"trip": updated}
 
 
+class BudgetOptimize(BaseModel):
+    budget_amount: float
+    currency: str | None = None
+
+
+@app.post(f"{settings.api_prefix}/trip/optimize", tags=["trip"])
+async def optimize_trip(request: BudgetOptimize) -> dict[str, object]:
+    """Fit the active trip to a budget — an agent prices it and trims the
+    priciest activities to backup until it fits, reversibly."""
+    updated = await trip_store.optimize_to_budget(request.budget_amount, request.currency)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No active trip to optimize")
+    return updated
+
+
 class ItineraryPick(BaseModel):
     title: str
     action: Literal["add", "remove"]
