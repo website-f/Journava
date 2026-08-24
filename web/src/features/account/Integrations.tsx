@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { ExternalLink, Eye, Plug, Plus, Trash2, X, Zap } from "@/components/ui/icons";
+import { ExternalLink, Eye, Mail, Plug, Plus, Trash2, X, Zap } from "@/components/ui/icons";
 import { Button, EmptyState, Skeleton } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/cn";
@@ -23,6 +23,7 @@ interface Bot {
 }
 
 export function Integrations() {
+  const [channel, setChannel] = useState<"telegram" | "email">("telegram");
   const [bots, setBots] = useState<Bot[] | null>(null);
   const [editing, setEditing] = useState<Bot | "new" | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -87,10 +88,11 @@ export function Integrations() {
             Integrate
           </h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Telegram bots that get pinged when a background plan finishes.
+            Get pinged on Telegram and by email when a plan is ready, a fare
+            drops, or your trip is near.
           </p>
         </div>
-        {bots && bots.length > 0 && (
+        {channel === "telegram" && bots && bots.length > 0 && (
           <Button size="sm" onClick={() => setEditing("new")}>
             <Plus className="h-4 w-4" />
             Add bot
@@ -98,7 +100,28 @@ export function Integrations() {
         )}
       </header>
 
-      {bots === null ? (
+      {/* Channel tabs */}
+      <div className="mb-5 inline-flex gap-1 rounded-[var(--r-pill)] border border-[var(--border)] p-1">
+        {(["telegram", "email"] as const).map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setChannel(c)}
+            className={cn(
+              "rounded-[var(--r-pill)] px-4 py-1.5 text-sm font-medium capitalize transition-colors",
+              channel === c
+                ? "bg-[var(--brand-500)] text-white"
+                : "text-[var(--muted)] hover:text-[var(--text)]",
+            )}
+          >
+            {c === "email" ? "Email (Gmail)" : "Telegram"}
+          </button>
+        ))}
+      </div>
+
+      {channel === "email" && <EmailChannels />}
+
+      {channel === "telegram" && (bots === null ? (
         <div className="space-y-3">
           {Array.from({ length: 2 }).map((_, i) => (
             <Skeleton key={i} className="h-20 w-full" />
@@ -161,9 +184,9 @@ export function Integrations() {
             </div>
           ))}
         </div>
-      )}
+      ))}
 
-      {editing && (
+      {channel === "telegram" && editing && (
         <BotDialog
           bot={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
@@ -302,5 +325,183 @@ function BotDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Email (Gmail SMTP) channels                                         */
+/* ------------------------------------------------------------------ */
+
+interface EmailChannel {
+  id: string;
+  label: string; // the Gmail address
+  chat_id: string; // the recipient
+  token_hint: string;
+  enabled: boolean;
+}
+
+function EmailChannels() {
+  const [channels, setChannels] = useState<EmailChannel[] | null>(null);
+  const [email, setEmail] = useState("");
+  const [appPassword, setAppPassword] = useState("");
+  const [recipient, setRecipient] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      setChannels(await api.get<EmailChannel[]>("/integrations/email"));
+    } catch {
+      setChannels([]);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const add = async () => {
+    if (!email.trim() || !appPassword.trim()) {
+      toast.error("Enter your Gmail address and a 16-character App Password.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.post<{ test: { ok: boolean; message: string } }>("/integrations/email", {
+        email: email.trim(),
+        app_password: appPassword.trim(),
+        recipient: recipient.trim() || undefined,
+      });
+      if (res.test?.ok) toast.success("Email connected — check your inbox for the confirmation.");
+      else toast.error(res.test?.message ?? "Saved, but the test email failed.");
+      setEmail("");
+      setAppPassword("");
+      setRecipient("");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't connect email.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (c: EmailChannel) => {
+    setBusyId(c.id);
+    try {
+      await api.patch(`/integrations/bots/${c.id}`, { enabled: !c.enabled });
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+  const test = async (c: EmailChannel) => {
+    setBusyId(c.id);
+    try {
+      const res = await api.post<{ ok: boolean; message: string }>(`/integrations/email/${c.id}/test`);
+      res.ok ? toast.success("Test email sent — check your inbox.") : toast.error(res.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+  const remove = async (c: EmailChannel) => {
+    setBusyId(c.id);
+    try {
+      await api.del(`/integrations/bots/${c.id}`);
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Connected channels */}
+      {channels === null ? (
+        <Skeleton className="h-20 w-full" />
+      ) : channels.length > 0 ? (
+        <div className="space-y-3">
+          {channels.map((c) => (
+            <div key={c.id} className="surface-card flex flex-wrap items-center gap-3 p-4">
+              <span
+                className={cn(
+                  "grid h-10 w-10 shrink-0 place-items-center rounded-full",
+                  c.enabled
+                    ? "bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-500)]"
+                    : "bg-[color-mix(in_srgb,var(--muted)_14%,transparent)] text-[var(--muted)]",
+                )}
+              >
+                <Mail className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">{c.label}</p>
+                <p className="truncate text-[0.65rem] text-[var(--muted)]">
+                  → {c.chat_id} · app password {c.token_hint}
+                </p>
+              </div>
+              <Switch checked={c.enabled} onCheckedChange={() => void toggle(c)} disabled={busyId === c.id} aria-label="Receive email notifications" />
+              <div className="flex w-full justify-end gap-1 sm:w-auto">
+                <Button variant="ghost" size="icon" aria-label="Send test" loading={busyId === c.id} onClick={() => void test(c)}>
+                  <Eye className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="icon" aria-label="Delete" onClick={() => void remove(c)}>
+                  <Trash2 className="h-4 w-4 text-[var(--danger)]" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState icon={<Mail className="h-10 w-10" />} title="No email connected" description="Add your Gmail below to get notified by email too." />
+      )}
+
+      {/* Add a channel */}
+      <div className="surface-card space-y-3 p-4">
+        <p className="text-sm font-semibold">Connect Gmail (SMTP)</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs text-[var(--muted)]">
+            Gmail address
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@gmail.com"
+              className="mt-1 w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            App Password (16 chars)
+            <input
+              type="password"
+              value={appPassword}
+              onChange={(e) => setAppPassword(e.target.value)}
+              placeholder="xxxx xxxx xxxx xxxx"
+              className="mt-1 w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)] sm:col-span-2">
+            Send to (optional — defaults to your Gmail)
+            <input
+              type="email"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="where to receive alerts"
+              className="mt-1 w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)]"
+            />
+          </label>
+        </div>
+        <p className="text-[0.65rem] text-[var(--muted)]">
+          Gmail needs 2-Step Verification on, then a 16-character{" "}
+          <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-[var(--brand-500)] underline">
+            App Password
+          </a>{" "}
+          — not your normal password. Stored encrypted; only a hint is ever shown.
+        </p>
+        <div className="flex justify-end">
+          <Button loading={busy} onClick={() => void add()}>
+            <Plus className="h-4 w-4" />
+            Connect &amp; test
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

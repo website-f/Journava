@@ -54,7 +54,7 @@ async def create_booking(body: BookRequest, request: Request) -> dict[str, Any]:
     """Book a room (any authenticated user). Firewall-guarded; records finance +
     notifies the manager. Returns the booking or a blocked result."""
     from app.finance import record as finance_record
-    from app.tools import telegram
+    from app.tools import notify
 
     pool = await db.get_pool()
     if pool is None:
@@ -120,7 +120,7 @@ async def create_booking(body: BookRequest, request: Request) -> dict[str, Any]:
         description=f"Booking · {listing['title']} · {nights} night(s)",
     )
     try:
-        await telegram.notify(
+        await notify.broadcast(
             f"🛎️ <b>New booking</b>\n{body.guest_name} booked <b>{listing['title']}</b> "
             f"({listing['property_name']}) via {body.channel} — {currency} {amount:,.2f} for {nights} night(s)."
         )
@@ -172,7 +172,7 @@ async def send_due_reminders(*, days_ahead: int = 2, org_id: str | None = None) 
     """Notify managers of upcoming check-ins not yet reminded. Marks reminded_at
     so each booking is only pinged once. Runs org-scoped (manual) or globally
     (the periodic task)."""
-    from app.tools import telegram
+    from app.tools import notify
 
     pool = await db.get_pool()
     if pool is None:
@@ -195,7 +195,7 @@ async def send_due_reminders(*, days_ahead: int = 2, org_id: str | None = None) 
             f"{b['property_name']} — {b['room_title']} ({b['nights']} night(s))."
         )
         try:
-            await telegram.notify(text)
+            await notify.broadcast(text)
             sent += 1
         except Exception as exc:  # noqa: BLE001
             logger.info("reminder notify failed: %s", exc)
@@ -253,7 +253,7 @@ async def send_trip_countdowns(*, days_ahead: int = 3) -> dict[str, Any]:
     re-scanned. Runs globally (the periodic task) with a demo-friendly manual
     trigger below.
     """
-    from app.tools import telegram
+    from app.tools import notify
 
     pool = await db.get_pool()
     if pool is None:
@@ -292,7 +292,7 @@ async def send_trip_countdowns(*, days_ahead: int = 3) -> dict[str, Any]:
                 text += f"\nFirst up: {highlight}."
             text += "\nOpen Journava to review your plan and bookings."
             try:
-                await telegram.notify(text)
+                await notify.broadcast(text)
                 sent += 1
                 done.append({"destination": dest, "start_date": start.isoformat(), "days_until": days_until})
             except Exception as exc:  # noqa: BLE001

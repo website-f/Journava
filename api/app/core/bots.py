@@ -48,7 +48,9 @@ async def list_bots() -> list[dict[str, Any]]:
     return [_public(rec) for rec in sorted(_memory.values(), key=lambda r: r.get("created_at") or 0)]
 
 
-async def create_bot(label: str, token: str, chat_id: str, *, enabled: bool = True) -> dict[str, Any] | None:
+async def create_bot(
+    label: str, token: str, chat_id: str, *, platform: str = "telegram", enabled: bool = True
+) -> dict[str, Any] | None:
     bot_id = uuid.uuid4()
     encrypted = vault.encrypt(token)
     hint = vault.mask(token)
@@ -59,15 +61,15 @@ async def create_bot(label: str, token: str, chat_id: str, *, enabled: bool = Tr
                 row = await conn.fetchrow(
                     f"""INSERT INTO notification_bots
                             (id, label, platform, token_encrypted, token_hint, chat_id, enabled)
-                        VALUES ($1, $2, 'telegram', $3, $4, $5, $6)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
                         RETURNING {_COLS}""",  # noqa: S608 — fixed columns
-                    bot_id, label, encrypted, hint, chat_id, enabled,
+                    bot_id, label, platform, encrypted, hint, chat_id, enabled,
                 )
             return _public(dict(row))
         except Exception as exc:  # noqa: BLE001
             logger.warning("bots.create_bot db failed, using memory: %s", exc)
     rec = {
-        "id": bot_id, "label": label, "platform": "telegram",
+        "id": bot_id, "label": label, "platform": platform,
         "token_encrypted": encrypted, "token_hint": hint, "chat_id": chat_id,
         "enabled": enabled, "created_at": datetime.now(UTC), "updated_at": datetime.now(UTC),
     }
@@ -157,6 +159,19 @@ async def credentials(bot_id: str) -> tuple[str, str] | None:
     return token, str(raw["chat_id"])
 
 
+async def email_credentials(channel_id: str) -> tuple[str, str, str] | None:
+    """Decrypted (sender_email, app_password, recipient) for one email channel."""
+    raw = await _get_raw(channel_id)
+    if raw is None:
+        return None
+    sender = str(raw.get("label") or "").strip()
+    password = vault.decrypt(raw["token_encrypted"]) if raw.get("token_encrypted") else None
+    if not sender or not password:
+        return None
+    recipient = str(raw.get("chat_id") or sender).strip()
+    return sender, password, recipient
+
+
 async def enabled_targets() -> list[tuple[str, str, str]]:
     """(token, chat_id, label) for every enabled bot — the notify fan-out."""
     targets: list[tuple[str, str, str]] = []
@@ -176,7 +191,39 @@ async def enabled_targets() -> list[tuple[str, str, str]]:
         rows = [r for r in _memory.values() if r.get("enabled")]
 
     for row in rows:
+        if (row.get("platform") or "telegram") != "telegram":
+            continue  # email/other channels are fanned out separately
         token = vault.decrypt(row["token_encrypted"]) if row.get("token_encrypted") else None
         if token and row.get("chat_id"):
             targets.append((token, str(row["chat_id"]), str(row.get("label") or "bot")))
     return targets
+
+
+async def email_targets() -> list[tuple[str, str, str]]:
+    """(sender_email, app_password, recipient_email) for every enabled email channel.
+
+    Stored in the same table with platform='email': label = the Gmail address
+    (also the SMTP username), token = the app password, chat_id = the recipient
+    (defaults to the sender)."""
+    out: list[tuple[str, str, str]] = []
+    pool = await db.get_pool()
+    if pool is not None:
+        try:
+            async with pool.acquire() as conn:
+                fetched = await conn.fetch(
+                    f"SELECT {_COLS} FROM notification_bots WHERE enabled = TRUE AND platform = 'email'"  # noqa: S608
+                )
+            rows = [dict(r) for r in fetched]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("bots.email_targets db miss: %s", exc)
+            rows = [r for r in _memory.values() if r.get("enabled") and r.get("platform") == "email"]
+    else:
+        rows = [r for r in _memory.values() if r.get("enabled") and r.get("platform") == "email"]
+
+    for row in rows:
+        sender = str(row.get("label") or "").strip()
+        password = vault.decrypt(row["token_encrypted"]) if row.get("token_encrypted") else None
+        recipient = str(row.get("chat_id") or sender).strip()
+        if sender and password and recipient:
+            out.append((sender, password, recipient))
+    return out

@@ -192,7 +192,7 @@ async def run_price_watches(*, user_id: str | None = None, simulate: bool = Fals
     ``user_id`` scopes an on-demand run to one traveller; the periodic task
     passes None to sweep everyone. Each triggered watch alerts once.
     """
-    from app.tools import telegram
+    from app.tools import notify
 
     pool = await db.get_pool()
     if pool is None:
@@ -252,7 +252,7 @@ async def run_price_watches(*, user_id: str | None = None, simulate: bool = Fals
         elif current.get("booking_url"):
             text += f"\nBook it: {current['booking_url']}"
         try:
-            await telegram.notify(text)
+            await notify.broadcast(text)
         except Exception as exc:  # noqa: BLE001
             logger.info("price-drop notify failed: %s", exc)
 

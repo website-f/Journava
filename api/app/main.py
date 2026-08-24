@@ -1077,6 +1077,60 @@ async def bots_test(bot_id: str) -> dict[str, object]:
     return {"ok": ok, "message": detail}
 
 
+# --- Email (Gmail SMTP) channels — same store, platform='email' ------------- #
+
+
+class EmailChannelIn(BaseModel):
+    email: str  # the Gmail address (also the SMTP username)
+    app_password: str  # a Google App Password, not the account password
+    recipient: str | None = None  # where to send; defaults to the sender
+    enabled: bool = True
+
+
+_EMAIL_TEST_HTML = "✅ <b>Journava email connected.</b><br>You'll now get trip reminders, price-drop alerts and daily plans here."
+
+
+@app.get(f"{settings.api_prefix}/integrations/email", tags=["integrations"])
+async def email_list() -> list[dict[str, object]]:
+    """Every connected email channel (app passwords masked)."""
+    from app.core import bots
+
+    return [b for b in await bots.list_bots() if b.get("platform") == "email"]
+
+
+@app.post(f"{settings.api_prefix}/integrations/email", tags=["integrations"])
+async def email_create(body: EmailChannelIn) -> dict[str, object]:
+    """Connect a Gmail SMTP channel, then send a confirmation email."""
+    from app.core import bots
+    from app.tools import email as email_tool
+
+    sender = body.email.strip()
+    recipient = (body.recipient or sender).strip()
+    created = await bots.create_bot(
+        sender, body.app_password.strip(), recipient, platform="email", enabled=body.enabled,
+    )
+    if created is None:
+        raise HTTPException(status_code=503, detail="Could not save the email channel.")
+    ok, detail = await email_tool.send_one(
+        sender, body.app_password.strip(), recipient, "Journava email connected", _EMAIL_TEST_HTML,
+    )
+    return {**created, "test": {"ok": ok, "message": detail}}
+
+
+@app.post(f"{settings.api_prefix}/integrations/email/{{channel_id}}/test", tags=["integrations"])
+async def email_test(channel_id: str) -> dict[str, object]:
+    """Send a test email through a saved channel."""
+    from app.core import bots
+    from app.tools import email as email_tool
+
+    creds = await bots.email_credentials(channel_id)  # (sender, app_password, recipient)
+    if creds is None:
+        raise HTTPException(status_code=400, detail="Channel not found or missing credentials.")
+    sender, password, recipient = creds
+    ok, detail = await email_tool.send_one(sender, password, recipient, "Journava test", _EMAIL_TEST_HTML)
+    return {"ok": ok, "message": detail}
+
+
 # --------------------------------------------------------------------------- #
 # Scopes - the Command Center presets
 # --------------------------------------------------------------------------- #

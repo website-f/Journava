@@ -19,7 +19,7 @@ from app.brain import trip_store
 from app.brain.trip_store import reconstruct_request
 from app.core.settings import settings
 from app.graph.disruption import handle_disruption
-from app.tools import flight_status, telegram
+from app.tools import flight_status, notify, telegram
 
 logger = logging.getLogger("journava")
 
@@ -178,7 +178,8 @@ async def watch_flight(body: WatchRequest, request: Request) -> dict[str, Any]:
             + f". {recovery['summary']}. "
             + (f"{within} alternative(s) within your {cur} budget." if b["amount"] else f"{b['total_alternatives']} alternatives found.")
         )
-        notified = await telegram.notify(line)
+        _res = await notify.broadcast(line)
+        notified = any(_res.values())
     except Exception as exc:  # noqa: BLE001 — notify is best-effort
         logger.info("disruption notify failed: %s", exc)
 
