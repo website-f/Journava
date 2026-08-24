@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion } from "framer-motion";
+import { Rail } from "@/components/layout/Page";
 import { Play, Video, X } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import type { VideoReview } from "@/lib/types";
@@ -32,14 +33,19 @@ export function VideoCarousel({ videos }: { videos: VideoReview[] }) {
 
   return (
     <>
-      <div className="no-scrollbar -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2">
+      {/*
+        `locked`: a video strip stays a carousel at every width. Turning it into a
+        grid would be wrong — the whole point is that there are more clips than
+        fit, and the partial card at the edge is what says "keep swiping".
+      */}
+      <Rail card="15rem" pad="0.25rem" locked aria-label="Video reviews">
         {videos.map((v) => (
           <button
             key={`${v.platform}-${v.id}`}
             onClick={() => setActive(v)}
             className={cn(
-              "group relative w-60 shrink-0 snap-start overflow-hidden rounded-[var(--r-lg)]",
-              "surface-card p-0 text-left transition-transform hover:-translate-y-0.5",
+              "pressable group relative overflow-hidden rounded-[var(--r-lg)]",
+              "surface-card p-0 text-left",
             )}
           >
             <div className="relative aspect-video w-full overflow-hidden bg-[var(--bg)]">
@@ -72,7 +78,7 @@ export function VideoCarousel({ videos }: { videos: VideoReview[] }) {
             </div>
           </button>
         ))}
-      </div>
+      </Rail>
 
       {active && <VideoModal video={active} onClose={() => setActive(null)} />}
     </>

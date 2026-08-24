@@ -29,7 +29,8 @@ import {
 } from "@/components/ui/icons";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Badge, Button, OptionCard, Skeleton } from "@/components/ui";
+import { Badge, Button, Collapsible, OptionCard, Skeleton } from "@/components/ui";
+import { Page, Rail, SectionHeader } from "@/components/layout/Page";
 import { AgentTheater } from "@/components/ui/AgentTheater";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { Money, CurrencySwitcher } from "@/components/ui/Money";
@@ -73,6 +74,10 @@ const SECTION_META: Record<string, { label: string; Icon: IconType }> = {
  * scrolling past everything. Each chip carries its section icon; only sections
  * that rendered content get one, and the active chip tracks the scroll
  * position (IntersectionObserver) and auto-scrolls itself into view.
+ *
+ * It pins BELOW the shell's top bar rather than at `top: 0` — with the document
+ * as the scroll container (see AppShell) `top: 0` parked the whole strip
+ * underneath the glass header, where it was invisible but still swallowed taps.
  */
 function SectionNav({
   containerRef,
@@ -106,17 +111,24 @@ function SectionNav({
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
         if (top) setActive(top.target.id);
       },
-      { rootMargin: "-12% 0px -78% 0px", threshold: 0 },
+      { rootMargin: "-18% 0px -74% 0px", threshold: 0 },
     );
     els.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [containerRef, deps]);
 
-  // Keep the active chip visible as the page scrolls through sections.
+  // Keep the active chip visible as the page scrolls through sections. Scrolling
+  // the strip itself, rather than `scrollIntoView`, because the latter also walks
+  // up and nudges the document — which fights the scroll that triggered this.
   useEffect(() => {
-    if (!active || !navRef.current) return;
-    const chip = navRef.current.querySelector<HTMLElement>(`[data-chip="${active}"]`);
-    chip?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    const nav = navRef.current;
+    if (!active || !nav) return;
+    const chip = nav.querySelector<HTMLElement>(`[data-chip="${active}"]`);
+    if (!chip) return;
+    nav.scrollTo({
+      left: Math.max(0, chip.offsetLeft - (nav.clientWidth - chip.offsetWidth) / 2),
+      behavior: "smooth",
+    });
   }, [active]);
 
   if (items.length <= 1) return null;
@@ -124,8 +136,17 @@ function SectionNav({
   return (
     <nav
       ref={navRef}
-      className="no-scrollbar sticky top-0 z-40 -mx-4 mb-5 flex gap-1.5 overflow-x-auto border-b border-[var(--border)] px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6"
-      style={{ backgroundColor: "color-mix(in srgb, var(--bg) 82%, transparent)" }}
+      className={cn(
+        "no-scrollbar sticky z-30 -mx-4 mb-7 flex gap-2 overflow-x-auto px-4 py-3 md:-mx-6 md:px-6",
+        "[overscroll-behavior-inline:contain] [scroll-padding-inline:1rem]",
+      )}
+      style={{
+        top: "calc(var(--safe-top) + var(--top-bar))",
+        backgroundColor: "color-mix(in srgb, var(--bg) 84%, transparent)",
+        backdropFilter: "blur(16px) saturate(170%)",
+        WebkitBackdropFilter: "blur(16px) saturate(170%)",
+        boxShadow: "inset 0 -1px 0 color-mix(in srgb, var(--text) 8%, transparent)",
+      }}
       aria-label="Jump to section"
     >
       {items.map((item) => {
@@ -141,13 +162,14 @@ function SectionNav({
               document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
             }
             className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-[var(--r-pill)] px-3 py-1.5 text-xs font-medium transition-all",
+              "pressable inline-flex shrink-0 items-center gap-1.5 rounded-[var(--r-pill)] px-3.5 py-2",
+              "text-[0.75rem] font-semibold whitespace-nowrap",
               isActive
-                ? "bg-[var(--brand-500)] text-white shadow-[0_2px_8px_color-mix(in_srgb,var(--brand-500)_45%,transparent)]"
+                ? "bg-[var(--brand-500)] text-white shadow-[0_3px_10px_color-mix(in_srgb,var(--brand-500)_40%,transparent)]"
                 : "bg-[var(--surface)] text-[var(--muted)] ring-1 ring-inset ring-[var(--border)] hover:text-[var(--text)] hover:ring-[var(--brand-400)]",
             )}
           >
-            {Icon && <Icon className="h-3.5 w-3.5" weight={isActive ? "fill" : "regular"} />}
+            {Icon && <Icon className="h-4 w-4" weight={isActive ? "fill" : "regular"} />}
             {item.label}
           </button>
         );
@@ -182,25 +204,26 @@ function StreamingMesh() {
   const { events } = useAgentStream();
   const [open, setOpen] = useState(true);
   return (
-    <div className="mb-4 rounded-[var(--r-md)] border border-[var(--brand-400)]/40 bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] px-4 py-2.5">
+    <div className="mb-5 overflow-hidden rounded-[var(--r-lg)] border border-[color-mix(in_srgb,var(--brand-400)_38%,transparent)] bg-[color-mix(in_srgb,var(--brand-400)_9%,transparent)]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2.5 text-left"
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
       >
         <span className="relative flex h-2.5 w-2.5 shrink-0">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-60" />
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--brand-500)]" />
         </span>
-        <p className="flex-1 text-xs text-[var(--muted)]">
-          Your agents are still working — sections appear here the moment each finishes.
+        <p className="min-w-0 flex-1 text-xs leading-snug text-[var(--muted)]">
+          Your agents are still working — sections appear the moment each finishes.
         </p>
-        <span className="text-[0.65rem] font-medium text-[var(--brand-500)]">
-          {open ? "Hide mesh" : "Watch mesh"}
+        <span className="shrink-0 text-[0.7rem] font-semibold text-[var(--brand-600)]">
+          {open ? "Hide" : "Watch"}
         </span>
       </button>
       {open && (
-        <div className="mt-2 border-t border-[var(--brand-400)]/20 pt-2">
+        <div className="border-t border-[color-mix(in_srgb,var(--brand-400)_22%,transparent)] px-4 py-3">
           <AgentTheater events={events} />
         </div>
       )}
@@ -256,9 +279,18 @@ export function ScopedResults({
     }
   }, [results, setDisplay]);
 
+  const critic = results.critic?.data as { score?: number; retried?: boolean } | undefined;
+  const scopeLabel = (results._scope as { label?: string } | undefined)?.label ?? scope.label;
+  const trip = useTripActions(results);
+  // The hero already leads with the destination and the chief's summary, so the
+  // separate "summary" panel repeated both. Drop it from the section list.
+  const bodyPanels = panels.filter((panel) => panel !== "summary");
+
   return (
-    <div className="mx-auto w-full max-w-5xl">
-      <div className="flex flex-wrap items-center gap-2 pt-2 pb-4">
+    <Page width="lg">
+      {/* Utility row. Kept OFF the hero so the currency <Select> renders on the
+          page background it was styled for, not on the dark teal panel. */}
+      <div className="mb-4 flex items-center gap-1">
         <Button variant="ghost" size="sm" onClick={onBack}>
           <ArrowLeft className="h-4 w-4" />
           All modes
@@ -268,9 +300,21 @@ export function ScopedResults({
           Ask again
         </Button>
         <div className="min-w-0 flex-1" />
-        <CurrencySwitcher className="h-8 w-[6.5rem] text-xs" />
-        <Badge>{agents.length} agents{streaming ? " running" : " ran"}</Badge>
+        <CurrencySwitcher className="h-9 w-[6.5rem] text-xs" />
       </div>
+
+      <ResultsHero
+        destination={destination}
+        summary={results.chief?.summary}
+        scopeLabel={scopeLabel}
+        agentCount={agents.length}
+        sectionCount={bodyPanels.length}
+        streaming={streaming}
+        criticScore={critic?.score}
+        criticRetried={critic?.retried}
+        trip={trip}
+        onOpenTrip={onOpenTrip}
+      />
 
       {streaming && <StreamingMesh />}
 
@@ -280,22 +324,190 @@ export function ScopedResults({
         <AltCityStrip destination={destination} onPick={onReplanCity} />
       )}
 
-      <div ref={panelsRef} className="space-y-8">
-        {panels.map((panel) => (
+      {/* space-y-12 (not 8): each section is a distinct topic, and the extra
+          whitespace is what lets a dozen of them read as separate cards on a
+          phone instead of one continuous wall. */}
+      <div ref={panelsRef} className="space-y-12">
+        {bodyPanels.map((panel) => (
           <div
             key={panel}
             id={`sec-${panel}`}
             data-section={panel}
             data-label={SECTION_META[panel]?.label ?? panel}
-            className="scroll-mt-20"
+            // Adds to html's scroll-padding-top, clearing both the shell's top
+            // bar and the sticky section strip pinned beneath it.
+            className="scroll-mt-12"
           >
-            <Panel name={panel} results={results} onOpenTrip={onOpenTrip} />
+            <Panel name={panel} results={results} />
           </div>
         ))}
       </div>
 
-      <AddToTripBar results={results} onOpenTrip={onOpenTrip} />
-    </div>
+      <AddToTripBar trip={trip} onOpenTrip={onOpenTrip} />
+    </Page>
+  );
+}
+
+/**
+ * Shared add-to-trip / save state, so the hero CTA and the end-of-page bar are
+ * the same action rather than two buttons that can disagree about whether the
+ * plan has already been added.
+ */
+function useTripActions(results: PlanResults) {
+  const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const add = async () => {
+    setBusy(true);
+    try {
+      await api.post("/trip/save", { results });
+      // Confirming also records it as a saved TRIP, so the Trips gallery shows
+      // only trips the traveller actually added — not every search.
+      const dest = (results.chief?.data as { destination?: string } | undefined)?.destination;
+      await api
+        .post("/saved", { kind: "trip", scope: "full_trip", destination: dest, results })
+        .catch(() => {});
+      setAdded(true);
+      toast.success("Added to your trip — open it any time from Trip.");
+    } catch {
+      toast.error("Could not add this to your trip.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    const dest = (results.chief?.data as { destination?: string } | undefined)?.destination;
+    const scope = results.itinerary?.items?.length
+      ? "full_trip"
+      : results.flight && !results.hotel
+        ? "flights_only"
+        : (results._scope as { label?: string } | undefined)?.label ?? "result";
+    setSaving(true);
+    try {
+      await api.post("/saved", { scope, destination: dest, results });
+      setSaved(true);
+      toast.success("Saved — find it under Research → Saved results.");
+    } catch {
+      toast.error("Couldn't save this result.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return { add, save, busy, added, saving, saved };
+}
+
+type TripActions = ReturnType<typeof useTripActions>;
+
+const HERO_BTN =
+  "pressable inline-flex h-11 items-center justify-center gap-2 rounded-[var(--r-pill)] px-5 text-sm font-semibold disabled:opacity-55 disabled:pointer-events-none";
+
+/**
+ * The results hero: a solid deep-teal panel with the destination set large.
+ *
+ * Solid fill, not a gradient wash — the palette is flat by design, and a
+ * gradient here would be the one place in the app that isn't. The single warm
+ * accent appears as a 3px rule along the top instead.
+ */
+function ResultsHero({
+  destination,
+  summary,
+  scopeLabel,
+  agentCount,
+  sectionCount,
+  streaming,
+  criticScore,
+  criticRetried,
+  trip,
+  onOpenTrip,
+}: {
+  destination?: string;
+  summary?: string;
+  scopeLabel?: string;
+  agentCount: number;
+  sectionCount: number;
+  streaming: boolean;
+  criticScore?: number;
+  criticRetried?: boolean;
+  trip: TripActions;
+  onOpenTrip: () => void;
+}) {
+  const stats: Array<[string, string]> = [
+    [String(agentCount), streaming ? "agents running" : "agents ran"],
+    [String(sectionCount), sectionCount === 1 ? "section" : "sections"],
+  ];
+  if (criticScore != null) {
+    stats.push([criticScore.toFixed(2), criticRetried ? "critic · re-ran" : "critic score"]);
+  }
+
+  return (
+    <section className="relative mb-6 overflow-hidden rounded-[var(--r-xl)] bg-[var(--brand-600)] text-white shadow-[var(--shadow-3)]">
+      <span aria-hidden className="absolute inset-x-0 top-0 h-[3px] bg-[var(--accent)]" />
+      <div className="p-5 pt-6 md:p-8">
+        {scopeLabel && (
+          <p className="text-[0.66rem] font-semibold uppercase tracking-[0.18em] text-white/55">
+            {scopeLabel}
+          </p>
+        )}
+        <h1 className="mt-2 font-[family-name:var(--font-display)] text-[2rem] font-bold leading-[1.05] tracking-[-0.03em] md:text-[2.6rem]">
+          {destination || "Your plan"}
+        </h1>
+        {summary && (
+          <p className="mt-3 max-w-[52ch] text-[0.9375rem] leading-relaxed text-white/75">
+            {summary}
+          </p>
+        )}
+
+        <dl className="mt-5 flex flex-wrap gap-2">
+          {stats.map(([value, label]) => (
+            <div
+              key={label}
+              className="rounded-[var(--r-pill)] bg-white/10 px-3 py-1.5 ring-1 ring-inset ring-white/15"
+            >
+              <dt className="sr-only">{label}</dt>
+              <dd className="text-[0.72rem] font-semibold">
+                <span className="tabular-nums">{value}</span>
+                <span className="ml-1.5 font-medium text-white/60">{label}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-6 flex flex-wrap gap-2">
+          {trip.added ? (
+            <button
+              type="button"
+              onClick={onOpenTrip}
+              className={cn(HERO_BTN, "bg-white text-[var(--brand-600)] shadow-[var(--shadow-1)]")}
+            >
+              Open My Trip
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void trip.add()}
+              disabled={trip.busy}
+              className={cn(HERO_BTN, "bg-white text-[var(--brand-600)] shadow-[var(--shadow-1)]")}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {trip.busy ? "Adding…" : "Add to my trip"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void trip.save()}
+            disabled={trip.saving || trip.saved}
+            className={cn(HERO_BTN, "bg-white/10 text-white ring-1 ring-inset ring-white/25")}
+          >
+            <Save className="h-4 w-4" />
+            {trip.saved ? "Saved" : trip.saving ? "Saving…" : "Save result"}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -362,75 +574,41 @@ function AltCityStrip({
   );
 }
 
-/** Bottom-of-results CTA: adopt this whole plan as the traveller's active trip. */
-function AddToTripBar({
-  results,
-  onOpenTrip,
-}: {
-  results: PlanResults;
-  onOpenTrip: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [added, setAdded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const add = async () => {
-    setBusy(true);
-    try {
-      await api.post("/trip/save", { results });
-      // Confirming also records it as a saved TRIP, so the Trips gallery shows
-      // only trips the traveller actually added — not every search.
-      const dest = (results.chief?.data as { destination?: string } | undefined)?.destination;
-      await api.post("/saved", { kind: "trip", scope: "full_trip", destination: dest, results }).catch(() => {});
-      setAdded(true);
-      toast.success("Added to your trip — open it any time from Trip.");
-    } catch {
-      toast.error("Could not add this to your trip.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveResult = async () => {
-    const dest = (results.chief?.data as { destination?: string } | undefined)?.destination;
-    const scope = results.itinerary?.items?.length
-      ? "full_trip"
-      : results.flight && !results.hotel
-        ? "flights_only"
-        : (results._scope as { label?: string } | undefined)?.label ?? "result";
-    setSaving(true);
-    try {
-      await api.post("/saved", { scope, destination: dest, results });
-      setSaved(true);
-      toast.success("Saved — find it under Research → Saved results.");
-    } catch {
-      toast.error("Couldn't save this result.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
+/**
+ * Bottom-of-results CTA: adopt this whole plan as the traveller's active trip.
+ *
+ * Shares `useTripActions` with the hero rather than holding its own copy of the
+ * add/save state — two independent copies meant scrolling past a plan you had
+ * already added still offered to add it again.
+ */
+function AddToTripBar({ trip, onOpenTrip }: { trip: TripActions; onOpenTrip: () => void }) {
   return (
-    <div className="mt-8 flex flex-col items-center gap-2 rounded-[var(--r-lg)] border border-[var(--brand-400)]/40 bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] p-5 text-center">
-      <p className="text-sm font-semibold">Happy with this plan?</p>
-      <p className="text-xs text-[var(--muted)]">
+    <div className="mt-10 flex flex-col items-center gap-2 rounded-[var(--r-xl)] border border-[color-mix(in_srgb,var(--brand-400)_38%,transparent)] bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] p-6 text-center">
+      <p className="font-[family-name:var(--font-display)] text-base font-semibold">
+        Happy with this plan?
+      </p>
+      <p className="max-w-[42ch] text-xs leading-relaxed text-[var(--muted)]">
         Add it to your trip — your agents keep monitoring flights, weather and safety after.
       </p>
-      <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-        {added ? (
+      <div className="mt-2 flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-center">
+        {trip.added ? (
           <Button variant="secondary" onClick={onOpenTrip}>
             Open My Trip
           </Button>
         ) : (
-          <Button loading={busy} onClick={() => void add()}>
+          <Button loading={trip.busy} onClick={() => void trip.add()}>
             <CheckCircle2 className="h-4 w-4" />
             Add to my trip
           </Button>
         )}
-        <Button variant="ghost" loading={saving} disabled={saved} onClick={() => void saveResult()}>
+        <Button
+          variant="ghost"
+          loading={trip.saving}
+          disabled={trip.saved}
+          onClick={() => void trip.save()}
+        >
           <Save className="h-4 w-4" />
-          {saved ? "Saved" : "Save result"}
+          {trip.saved ? "Saved" : "Save result"}
         </Button>
       </div>
     </div>
@@ -443,26 +621,16 @@ function AddToTripBar({
 export function TripExtraPanels({ results }: { results: PlanResults }) {
   const panels = ["flights", "hotels", "activities", "dining", "visa", "insurance"];
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       {panels.map((panel) => (
-        <Panel key={panel} name={panel} results={results} onOpenTrip={() => {}} />
+        <Panel key={panel} name={panel} results={results} />
       ))}
     </div>
   );
 }
 
-function Panel({
-  name,
-  results,
-  onOpenTrip,
-}: {
-  name: string;
-  results: PlanResults;
-  onOpenTrip: () => void;
-}) {
+function Panel({ name, results }: { name: string; results: PlanResults }) {
   switch (name) {
-    case "summary":
-      return <SummaryPanel results={results} onOpenTrip={onOpenTrip} />;
     case "intelligence":
       return <TravelIntelPanel results={results} />;
     case "flights":
@@ -501,73 +669,46 @@ function Panel({
     case "risk":
       return <RiskPanel results={results} />;
     case "transport":
-      return <DataPanel result={results.transport} title="Getting around" />;
+      return <DataPanel result={results.transport} title="Getting around" icon={Bus} collapsible />;
     case "visa":
       return <VisaPanel result={results.visa} />;
     case "insurance":
       return <InsurancePanel result={results.insurance} />;
     case "crowd":
-      return <DataPanel result={results.crowd} title="Crowds" />;
+      return <DataPanel result={results.crowd} title="Crowds" icon={Users} collapsible />;
     case "social":
       return <SocialPanel result={results.research} />;
     case "practical":
+      // Two agents, one section — they're both "things to know on the ground",
+      // and splitting them into separate jump-bar entries wasn't worth a chip.
       return (
-        <>
-          <DataPanel result={results.emergency} title="Emergency contacts" />
-          <DataPanel result={results.language} title="Language & etiquette" />
-        </>
+        <div className="space-y-3">
+          <DataPanel result={results.emergency} title="Emergency contacts" icon={ShieldAlert} collapsible />
+          <DataPanel result={results.language} title="Language & etiquette" icon={Info} collapsible />
+        </div>
       );
     case "shopping":
-      return <DataPanel result={results.shopping} title="Shopping" />;
+      return <DataPanel result={results.shopping} title="Shopping" icon={ShoppingCart} collapsible />;
     case "payment":
-      return <DataPanel result={results.payment} title="Money & payments" />;
+      return (
+        <DataPanel result={results.payment} title="Money & payments" icon={CreditCard} collapsible />
+      );
     case "sustainability":
-      return <DataPanel result={results.sustainability} title="Sustainability" />;
+      return <DataPanel result={results.sustainability} title="Sustainability" icon={Leaf} collapsible />;
     case "analytics":
-      return <DataPanel result={results.analytics} title="Trip analytics" />;
+      return <DataPanel result={results.analytics} title="Trip analytics" icon={Activity} collapsible />;
     case "concierge":
-      return <DataPanel result={results.concierge} title="Concierge & reservations" />;
+      return (
+        <DataPanel
+          result={results.concierge}
+          title="Concierge & reservations"
+          icon={Sparkles}
+          collapsible
+        />
+      );
     default:
       return null;
   }
-}
-
-function SummaryPanel({
-  results,
-  onOpenTrip,
-}: {
-  results: PlanResults;
-  onOpenTrip: () => void;
-}) {
-  const chief = results.chief;
-  if (!chief) return null;
-  const data = chief.data as { destination?: string };
-  const critic = results.critic?.data as { score?: number; retried?: boolean } | undefined;
-
-  return (
-    <section className="surface-card border-l-4 border-[var(--brand-500)] p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight">
-            {data.destination ?? "Your request"}
-          </h3>
-          <p className="mt-0.5 text-sm text-[var(--muted)]">{chief.summary}</p>
-        </div>
-        {results.itinerary && (
-          <Button variant="secondary" size="sm" onClick={onOpenTrip}>
-            Open My Trip
-          </Button>
-        )}
-      </div>
-
-      {critic?.score != null && (
-        <p className="mt-3 text-xs text-[var(--muted)]">
-          Critic scored this {critic.score.toFixed(2)}
-          {critic.retried ? " and re-ran the weakest agent." : "."}
-        </p>
-      )}
-    </section>
-  );
 }
 
 interface TravelIntel {
@@ -627,13 +768,16 @@ function TravelIntelPanel({ results }: { results: PlanResults }) {
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <TrendingUp className="h-5 w-5 text-[var(--brand-500)]" />
-        Travel intelligence
-        <span className="rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-[var(--accent)]">
-          Predictive
-        </span>
-      </h3>
+      <SectionHeader
+        icon={<TrendingUp className="h-[1.15rem] w-[1.15rem]" />}
+        title="Travel intelligence"
+        hint="Forward-looking read on fares, demand and timing."
+        action={
+          <span className="rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] px-2 py-1 text-[0.6rem] font-semibold uppercase tracking-[0.1em] text-[var(--accent)]">
+            Predictive
+          </span>
+        }
+      />
 
       {state === "loading" ? (
         <div className="surface-card p-4">
@@ -694,21 +838,22 @@ function OptionsPanel({
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <Icon className="h-5 w-5 text-[var(--brand-500)]" />
-        {title}
-        <Badge variant="brand">{options.length}</Badge>
-      </h3>
-      {result?.summary && (
-        <p className="mb-3 text-sm text-[var(--muted)]">{result.summary}</p>
-      )}
-      <div className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6">
+      <SectionHeader
+        icon={<Icon className="h-[1.15rem] w-[1.15rem]" />}
+        title={title}
+        count={options.length}
+        hint={result?.summary}
+      />
+      {/*
+        A rail on phones, a real grid from md up. `<Rail>` owns the gutter maths
+        (scroll-padding-inline matched to the negative margin) so a snapped card
+        lands flush with the heading above it instead of a gutter to its left.
+      */}
+      <Rail card="16.5rem" cols={2} colsLg={3} aria-label={title}>
         {options.map((option) => (
-          <div key={option.id} className="w-[16rem] shrink-0 snap-start">
-            <PlaceCard option={option} />
-          </div>
+          <PlaceCard key={option.id} option={option} />
         ))}
-      </div>
+      </Rail>
       {(result?.warnings ?? []).length > 0 && (
         <ul className="mt-3 space-y-1">
           {result!.warnings.map((warning, index) => (
@@ -733,39 +878,59 @@ function ItineraryPanel({ result }: { result?: AgentPlanResult }) {
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        Itinerary <Badge variant="brand">{items.length} items</Badge>
-      </h3>
-      <div className="space-y-4">
+      <SectionHeader
+        icon={<Calendar className="h-[1.15rem] w-[1.15rem]" />}
+        title="Itinerary"
+        count={items.length}
+        hint={result?.summary}
+      />
+      <div className="space-y-5">
         {[...days.entries()]
           .sort(([a], [b]) => a - b)
           .map(([day, dayItems]) => (
-            <div key={day}>
-              <h4 className="mb-2 text-sm font-semibold text-[var(--brand-500)]">
-                Day {day}
-              </h4>
-              <ol className="ml-2 space-y-1.5 border-l-2 border-[var(--border)] pl-4">
+            <div key={day} className="surface-card overflow-hidden">
+              <div className="flex items-center gap-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--brand-400)_7%,transparent)] px-4 py-2.5">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-[var(--brand-500)] text-[0.65rem] font-bold text-white tabular-nums">
+                  {day}
+                </span>
+                <h4 className="text-[0.8125rem] font-semibold">Day {day}</h4>
+                <span className="ml-auto text-[0.7rem] text-[var(--muted)] tabular-nums">
+                  {dayItems.length} {dayItems.length === 1 ? "stop" : "stops"}
+                </span>
+              </div>
+              <ol className="space-y-4 px-4 py-4">
                 {dayItems.map((item, index) => (
-                  <li key={index} className="relative">
-                    <span className="absolute -left-[1.25rem] top-1.5 h-2 w-2 rounded-full bg-[var(--brand-400)]" />
-                    <p className="text-sm font-medium">{item.title}</p>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+                  <li key={index} className="relative pl-5">
+                    {/* The connector stops short on the last row so the timeline
+                        ends at the final stop instead of trailing into padding. */}
+                    {index < dayItems.length - 1 && (
+                      <span
+                        aria-hidden
+                        className="absolute left-[0.1875rem] top-3 bottom-[-1rem] w-px bg-[var(--border)]"
+                      />
+                    )}
+                    <span
+                      aria-hidden
+                      className="absolute left-0 top-1.5 h-[0.4375rem] w-[0.4375rem] rounded-full bg-[var(--brand-400)] ring-2 ring-[var(--surface)]"
+                    />
+                    <p className="text-[0.875rem] font-medium leading-snug">{item.title}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
                       <Badge>{item.kind}</Badge>
                       {item.starts_at && (
-                        <span>
+                        <span className="tabular-nums">
                           {item.starts_at}
                           {item.ends_at ? ` – ${item.ends_at}` : ""}
                         </span>
                       )}
                       {item.cost_amount != null && (
-                        <span className="font-medium text-[var(--brand-500)]">
+                        <span className="font-semibold text-[var(--brand-600)]">
                           {item.cost_currency ?? "MYR"}{" "}
                           {Number(item.cost_amount).toLocaleString()}
                         </span>
                       )}
                     </div>
                     {item.reasoning && (
-                      <p className="mt-0.5 text-xs italic text-[var(--muted)]">
+                      <p className="mt-1 text-xs italic leading-relaxed text-[var(--muted)]">
                         {item.reasoning}
                       </p>
                     )}
@@ -796,19 +961,30 @@ function BudgetPanel({ result }: { result?: AgentPlanResult }) {
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <TrendingUp className="h-5 w-5 text-[var(--brand-500)]" />
-        Budget
-        <Badge variant={data.over_budget ? "danger" : "success"}>
-          {data.over_budget ? "Over budget" : "On track"}
-        </Badge>
-      </h3>
-      <div className="surface-card space-y-3 p-4">
-        <p className="text-sm text-[var(--muted)]">{result.summary}</p>
+      <SectionHeader
+        icon={<Wallet className="h-[1.15rem] w-[1.15rem]" />}
+        title="Budget"
+        action={
+          <Badge variant={data.over_budget ? "danger" : "success"}>
+            {data.over_budget ? "Over budget" : "On track"}
+          </Badge>
+        }
+      />
+      <div className="surface-card space-y-4 p-4">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <p className="font-[family-name:var(--font-display)] text-[1.5rem] font-bold leading-none tracking-[-0.02em]">
+            <Money amount={spent} currency={currency} />
+          </p>
+          {total > 0 && (
+            <p className="text-xs text-[var(--muted)] tabular-nums">
+              of <Money amount={total} currency={currency} /> · {pct}%
+            </p>
+          )}
+        </div>
         {total > 0 && (
-          <div className="h-2 overflow-hidden rounded-full bg-[var(--border)]">
+          <div className="h-2.5 overflow-hidden rounded-full bg-[var(--border)]">
             <div
-              className="h-full rounded-full transition-all duration-500"
+              className="h-full rounded-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease)]"
               style={{
                 width: `${pct}%`,
                 backgroundColor: data.over_budget ? "var(--danger)" : "var(--brand-500)",
@@ -816,12 +992,18 @@ function BudgetPanel({ result }: { result?: AgentPlanResult }) {
             />
           </div>
         )}
+        <p className="text-sm leading-relaxed text-[var(--muted)]">{result.summary}</p>
         {data.breakdown && (
-          <div className="grid grid-cols-2 gap-2 border-t border-[var(--border)] pt-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 border-t border-[var(--border)] pt-3 sm:grid-cols-4">
             {(["flights", "hotels_total", "activities", "nights"] as const).map((key) => (
-              <div key={key} className="text-center">
-                <p className="text-xs text-[var(--muted)]">{key.replace(/_/g, " ")}</p>
-                <p className="text-sm font-semibold">
+              <div
+                key={key}
+                className="rounded-[var(--r-sm)] bg-[color-mix(in_srgb,var(--brand-400)_6%,transparent)] p-2.5 text-center"
+              >
+                <p className="text-[0.6rem] uppercase tracking-[0.08em] text-[var(--muted)]">
+                  {key.replace(/_/g, " ")}
+                </p>
+                <p className="mt-1 text-[0.8125rem] font-semibold tabular-nums">
                   {key === "nights" ? (
                     (data.breakdown?.[key] ?? "—")
                   ) : (
@@ -854,32 +1036,34 @@ function WeatherPanel({ result }: { result?: AgentPlanResult }) {
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <Cloud className="h-5 w-5 text-[var(--brand-500)]" />
-        Weather
-        <Badge variant={variant}>{level} risk</Badge>
-      </h3>
+      <SectionHeader
+        icon={<Cloud className="h-[1.15rem] w-[1.15rem]" />}
+        title="Weather"
+        action={<Badge variant={variant}>{level} risk</Badge>}
+      />
       <div className="surface-card p-4">
-        <p className="mb-3 text-sm text-[var(--muted)]">{result.summary}</p>
+        <p className="mb-4 text-sm leading-relaxed text-[var(--muted)]">{result.summary}</p>
         {data.forecast && data.forecast.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
+          // A rail on phones (7 days never fit three-up without squashing the
+          // temperatures), a plain row from md.
+          <Rail card="4.5rem" cols={7} colsLg={7} aria-label="Daily forecast">
             {data.forecast.slice(0, 7).map((day) => (
               <div
                 key={day.date}
-                className="rounded-[var(--r-sm)] bg-[color-mix(in_srgb,var(--brand-400)_6%,transparent)] p-2 text-center"
+                className="rounded-[var(--r-sm)] bg-[color-mix(in_srgb,var(--brand-400)_7%,transparent)] p-2.5 text-center"
                 title={day.description}
               >
-                <p className="text-[0.6rem] text-[var(--muted)]">{day.date.slice(5)}</p>
-                <p className="text-xs font-semibold">{day.high_c}°</p>
-                <p className="text-[0.6rem] text-[var(--muted)]">{day.low_c}°</p>
+                <p className="text-[0.6rem] text-[var(--muted)] tabular-nums">{day.date.slice(5)}</p>
+                <p className="mt-1 text-[0.9375rem] font-semibold tabular-nums">{day.high_c}°</p>
+                <p className="text-[0.65rem] text-[var(--muted)] tabular-nums">{day.low_c}°</p>
                 {day.precipitation_pct >= 60 && (
-                  <p className="text-[0.55rem] text-[var(--warning)]">
+                  <p className="mt-0.5 text-[0.6rem] font-semibold text-[var(--warning)] tabular-nums">
                     {day.precipitation_pct}%
                   </p>
                 )}
               </div>
             ))}
-          </div>
+          </Rail>
         )}
       </div>
     </section>
@@ -939,11 +1123,11 @@ function RiskPanel({ results }: { results: PlanResults }) {
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <ShieldAlert className="h-5 w-5 text-[var(--brand-500)]" />
-        Travel safety & alerts
-        {data.travel_window && <Badge>{data.travel_window}</Badge>}
-      </h3>
+      <SectionHeader
+        icon={<ShieldAlert className="h-[1.15rem] w-[1.15rem]" />}
+        title="Travel safety & alerts"
+        action={data.travel_window ? <Badge>{data.travel_window}</Badge> : undefined}
+      />
 
       {/* Go / no-go verdict banner */}
       <div className={cn("flex items-center gap-3 rounded-[var(--r-md)] border p-3", toneCls[meta.tone])}>
@@ -1114,10 +1298,7 @@ function VisaPanel({ result }: { result?: AgentPlanResult }) {
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <FileCheck2 className="h-5 w-5 text-[var(--brand-500)]" />
-        Visa & entry
-      </h3>
+      <SectionHeader icon={<FileCheck2 className="h-[1.15rem] w-[1.15rem]" />} title="Visa & entry" />
       <div className={cn("flex items-center gap-3 rounded-[var(--r-md)] border p-3", toneCls[tone])}>
         {required === false ? (
           <CheckCircle2 className="h-6 w-6 shrink-0" />
@@ -1174,10 +1355,10 @@ function InsurancePanel({ result }: { result?: AgentPlanResult }) {
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <ShieldCheck className="h-5 w-5 text-[var(--brand-500)]" />
-        Travel insurance
-      </h3>
+      <SectionHeader
+        icon={<ShieldCheck className="h-[1.15rem] w-[1.15rem]" />}
+        title="Travel insurance"
+      />
       <div className="surface-card space-y-2 p-4">
         <p className="text-sm text-[var(--muted)]">{result.summary}</p>
         {(d.recommended_coverage ?? []).length > 0 && (
@@ -1223,54 +1404,84 @@ function SocialPanel({ result }: { result?: AgentPlanResult }) {
   if (!signal && contradictions.length === 0) return null;
 
   return (
-    <section className="surface-card p-4">
-      <h3 className="mb-2 text-sm font-semibold">Social Signal</h3>
-      {signal?.score != null ? (
-        <>
-          <div className="flex items-center gap-3">
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--border)]">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-[var(--brand-500)] to-[var(--accent)]"
-                style={{ width: `${Math.round(signal.score * 100)}%` }}
-              />
+    <section>
+      <SectionHeader
+        icon={<ThumbsUp className="h-[1.15rem] w-[1.15rem]" />}
+        title="Social signal"
+        hint="What real travellers say, and where sources disagree."
+        action={
+          signal?.confidence ? (
+            <Badge>{signal.confidence} confidence</Badge>
+          ) : undefined
+        }
+      />
+      <div className="surface-card p-4">
+        {signal?.score != null ? (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[var(--border)]">
+                <div
+                  className="h-full rounded-full bg-[var(--brand-500)] transition-[width] duration-[var(--dur-slow)]"
+                  style={{ width: `${Math.round(signal.score * 100)}%` }}
+                />
+              </div>
+              <span className="font-[family-name:var(--font-display)] text-base font-bold tabular-nums">
+                {Math.round(signal.score * 100)}
+              </span>
             </div>
-            <span className="text-sm font-semibold tabular-nums">
-              {Math.round(signal.score * 100)}
-            </span>
-          </div>
-          <p className="mt-1.5 text-[0.65rem] italic text-[var(--muted)]">{signal.label}</p>
-        </>
-      ) : (
-        <p className="text-xs text-[var(--muted)]">
-          Not enough public signal to score this yet.
-        </p>
-      )}
+            <p className="mt-2 text-xs italic leading-relaxed text-[var(--muted)]">{signal.label}</p>
+          </>
+        ) : (
+          <p className="text-xs text-[var(--muted)]">
+            Not enough public signal to score this yet.
+          </p>
+        )}
 
-      {contradictions.length > 0 && (
-        <div className="mt-3 border-t border-[var(--border)] pt-3">
-          <p className="mb-1.5 text-xs font-medium">Sources disagree</p>
-          <ul className="space-y-1.5">
-            {contradictions.map((entry, index) => (
-              <li key={index} className="text-[0.65rem] leading-relaxed">
-                <span className="font-medium">{entry.topic}: </span>
-                <span className="text-[var(--muted)]">{entry.claim}</span>
-                {entry.counter_claim && (
-                  <>
-                    <span className="font-medium text-[var(--warning)]"> — but </span>
-                    <span className="text-[var(--muted)]">{entry.counter_claim}</span>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+        {contradictions.length > 0 && (
+          <div className="mt-4 border-t border-[var(--border)] pt-3">
+            <p className="mb-2 text-[0.65rem] uppercase tracking-[0.1em] text-[var(--muted)]">
+              Sources disagree
+            </p>
+            <ul className="space-y-2">
+              {contradictions.map((entry, index) => (
+                <li key={index} className="text-xs leading-relaxed">
+                  <span className="font-semibold">{entry.topic}: </span>
+                  <span className="text-[var(--muted)]">{entry.claim}</span>
+                  {entry.counter_claim && (
+                    <>
+                      <span className="font-semibold text-[var(--warning)]"> — but </span>
+                      <span className="text-[var(--muted)]">{entry.counter_claim}</span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
-/** Generic renderer for the advisory agents, whose payloads are free-form. */
-function DataPanel({ result, title }: { result?: AgentPlanResult; title: string }) {
+/**
+ * Generic renderer for the advisory agents, whose payloads are free-form.
+ *
+ * `collapsible` is how a full trip stays readable: the primary sections (flights,
+ * stays, itinerary, budget, safety) stay open, while the dozen advisory ones
+ * arrive as closed rows showing their summary line, so the page is a scannable
+ * list rather than a mile of prose the traveller has to scroll past.
+ */
+function DataPanel({
+  result,
+  title,
+  icon: Icon,
+  collapsible = false,
+}: {
+  result?: AgentPlanResult;
+  title: string;
+  icon?: IconType;
+  collapsible?: boolean;
+}) {
   if (!result) return null;
   const data = result.data ?? {};
   const sources = Array.isArray(data.sources)
@@ -1292,62 +1503,61 @@ function DataPanel({ result, title }: { result?: AgentPlanResult; title: string 
   const simple = entries.filter(([, v]) => !isComplex(v));
   const complex = entries.filter(([, v]) => isComplex(v));
 
+  const body = (
+    <div className="space-y-3">
+      <p className="text-sm leading-relaxed text-[var(--muted)]">{result.summary}</p>
+
+      {simple.length > 0 && (
+        <dl className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+          {simple.map(([key, value]) => (
+            <div key={key} className="min-w-0">
+              <dt className="text-[0.65rem] uppercase tracking-[0.1em] text-[var(--muted)]">
+                {key.replace(/_/g, " ")}
+              </dt>
+              <dd className="mt-0.5 break-words text-[0.8125rem]">{String(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {complex.map(([key, value]) => (
+        <div key={key} className="min-w-0">
+          <p className="mb-1.5 text-[0.65rem] uppercase tracking-[0.1em] text-[var(--muted)]">
+            {key.replace(/_/g, " ")}
+          </p>
+          <FieldValue value={value} />
+        </div>
+      ))}
+
+      {videos.length > 0 && <VideoCarousel videos={videos} />}
+      {sources.length > 0 && <SourceLinks sources={sources} label="Sources" />}
+      {result.warnings.map((warning, index) => (
+        <p key={index} className="text-xs text-[var(--warning)]">
+          {warning}
+        </p>
+      ))}
+    </div>
+  );
+
+  if (collapsible) {
+    return (
+      <Collapsible
+        title={title}
+        icon={Icon ? <Icon className="h-[1.15rem] w-[1.15rem]" /> : undefined}
+        summary={result.summary}
+      >
+        {body}
+      </Collapsible>
+    );
+  }
+
   return (
     <section>
-      <h3 className="mb-2 text-lg font-semibold">{title}</h3>
-      <div className="surface-card space-y-3 p-4">
-        <p className="text-sm text-[var(--muted)]">{result.summary}</p>
-
-        {simple.length > 0 && (
-          <dl className="grid gap-2 sm:grid-cols-2">
-            {simple.map(([key, value]) => (
-              <div key={key} className="min-w-0">
-                <dt className="text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
-                  {key.replace(/_/g, " ")}
-                </dt>
-                <dd className="break-words text-xs">{String(value)}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-
-        {complex.map(([key, value]) => (
-          <div key={key} className="min-w-0">
-            <p className="mb-1 text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
-              {key.replace(/_/g, " ")}
-            </p>
-            <FieldValue value={value} />
-          </div>
-        ))}
-
-        {videos.length > 0 && <VideoCarousel videos={videos} />}
-        {sources.length > 0 && (
-          <div className="min-w-0 space-y-1">
-            <p className="text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">
-              Sources
-            </p>
-            <ul className="space-y-1">
-              {sources.map((source, index) => (
-                <li key={index} className="min-w-0">
-                  <a
-                    href={source.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="block min-w-0 truncate text-xs text-[var(--brand-500)] hover:underline"
-                  >
-                    {source.title || source.url}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {result.warnings.map((warning, index) => (
-          <p key={index} className="text-xs text-[var(--warning)]">
-            {warning}
-          </p>
-        ))}
-      </div>
+      <SectionHeader
+        icon={Icon ? <Icon className="h-[1.15rem] w-[1.15rem]" /> : undefined}
+        title={title}
+      />
+      <div className="surface-card p-4">{body}</div>
     </section>
   );
 }

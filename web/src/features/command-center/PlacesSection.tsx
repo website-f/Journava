@@ -5,6 +5,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui";
+import { Rail, SectionHeader } from "@/components/layout/Page";
 import { Video as VideoIcon } from "@/components/ui/icons";
 import { VideoCarousel } from "@/components/ui/VideoCarousel";
 import type { AgentPlanResult, PlanOption, VideoReview } from "@/lib/types";
@@ -43,12 +44,12 @@ export function PlacesSection({
 
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-        <Icon className="h-5 w-5 text-[var(--brand-500)]" />
-        {title}
-        <Badge variant="brand">{options.length}</Badge>
-      </h3>
-      {result?.summary && <p className="mb-3 text-sm text-[var(--muted)]">{result.summary}</p>}
+      <SectionHeader
+        icon={<Icon className="h-[1.15rem] w-[1.15rem]" />}
+        title={title}
+        count={options.length}
+        hint={result?.summary}
+      />
 
       <Tabs defaultValue={options.length ? "places" : "videos"}>
         <TabsList>
@@ -64,15 +65,14 @@ export function PlacesSection({
 
         <TabsContent value="places">
           {options.length > 0 ? (
-            // Horizontal, snap-scrolling rail — a peek of the next card invites the
-            // swipe and keeps a long list from dominating the page vertically.
-            <div className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6">
+            // A snap-scrolling rail on phones — a peek of the next card invites the
+            // swipe — that becomes a real grid from md up, where a rail on a wide
+            // screen just leaves the right half of the row empty.
+            <Rail card="15.5rem" cols={2} colsLg={3} aria-label={placesLabel}>
               {options.map((option) => (
-                <div key={option.id} className="w-[15.5rem] shrink-0 snap-start">
-                  <PlaceCard option={option} />
-                </div>
+                <PlaceCard key={option.id} option={option} />
               ))}
-            </div>
+            </Rail>
           ) : (
             <p className="py-6 text-center text-sm text-[var(--muted)]">
               No {placesLabel.toLowerCase()} found — check the video reviews tab.

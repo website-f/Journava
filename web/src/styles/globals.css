@@ -88,11 +88,30 @@
   --r-sm: 10px;
   --r-md: 14px;
   --r-lg: 20px;
+  --r-xl: 28px;
   --r-pill: 999px;
   --shadow-1: 0 1px 2px rgba(11, 16, 32, 0.06), 0 1px 3px rgba(11, 16, 32, 0.1);
   --shadow-2: 0 8px 24px rgba(11, 16, 32, 0.12);
+  /* Wide, deep, low-opacity — three stacked layers instead of one hard drop.
+     This is what makes the floating nav and the hero cards read as *above* the
+     page rather than merely outlined on it. */
+  --shadow-3: 0 2px 6px rgba(11, 16, 32, 0.05), 0 12px 28px rgba(11, 16, 32, 0.1),
+    0 32px 64px -16px rgba(11, 16, 32, 0.14);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Slight overshoot, for things that should feel physical (sheets, presses). */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
   --dur: 180ms;
+  --dur-slow: 320ms;
+
+  /* Safe-area insets as tokens so each component pads itself. Applying them to
+     <body> instead pushed the sticky top bar down past the notch and left a
+     bare strip of background above the glass. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Height of the sticky top bar — also the scroll-padding for anchor jumps. */
+  --top-bar: 3.5rem;
+  /* Clearance the floating bottom nav needs from the end of page content. */
+  --nav-clearance: 7rem;
 
   /* Typography — faces are self-hosted from /public/fonts (declared above).
      The fallback stacks still matter: they are what renders during `swap`. */
@@ -112,7 +131,10 @@
   --text: #e9ece7;
   --muted: #93a09a;
   --border: #26302c;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 2px 6px rgba(0, 0, 0, 0.4), 0 14px 32px rgba(0, 0, 0, 0.5),
+    0 36px 64px -16px rgba(0, 0, 0, 0.6);
 }
 
 /* Expose tokens to Tailwind v4 utilities (bg-bg, text-muted, rounded-md, …) */
@@ -135,6 +157,7 @@
   --radius-sm: var(--r-sm);
   --radius-md: var(--r-md);
   --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
   --radius-pill: var(--r-pill);
   --font-sans: var(--font-body);
   --font-display: var(--font-display);
@@ -159,6 +182,22 @@ html {
   overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
   overflow-x: clip;
+  /* The DOCUMENT is the scroll container (see AppShell) — not an inner div — so
+     mobile browsers collapse their toolbar and momentum/rubber-band comes from
+     the platform instead of being emulated inside a 100dvh box. The trade-off is
+     that anchor jumps must clear the sticky top bar themselves, or a section
+     heading parks underneath the glass. */
+  scroll-padding-top: calc(var(--safe-top) + var(--top-bar) + 0.75rem);
+  scroll-behavior: smooth;
+}
+
+/* Overlay scroll-lock. `body { overflow: hidden }` is NOT enough here: body's
+   overflow only propagates to the viewport while the root element's own
+   overflow is `visible`, and `overflow-x: clip` above means it isn't. So the
+   lock is applied to <html>, which is the element that actually scrolls. */
+html[data-scroll-locked="true"] {
+  overflow: hidden;
+  touch-action: none;
 }
 
 body {
@@ -177,9 +216,11 @@ body {
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* PWA safe areas (notch) */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right)
-    env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Only the HORIZONTAL insets belong on <body>. The top and bottom ones are
+     owned by the glass top bar and the floating nav, which are supposed to
+     paint through the notch / home-indicator strips, not start below them. */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* -------------------------------------------------------------------------
@@ -235,11 +276,19 @@ h4 {
   outline-offset: 2px;
 }
 
-/* Touch targets ≥ 44px on coarse pointers */
+/* -------------------------------------------------------------------------
+   Touch targets ≥ 44px on coarse pointers
+   -------------------------------------------------------------------------
+   Controls whose SHAPE carries meaning have to opt out of this. A Switch is a
+   52×28 pill; `min-height: 44px` won every time because min-height beats the
+   element's own height, so on phones the track inflated into a squat rounded
+   box while desktop kept the pill — the toggle looked "squeezed" on mobile and
+   nowhere else. Such controls carry `data-fixed-size` and grow their HIT area
+   instead of their painted size, via the `tap-target` utility below. */
 @media (pointer: coarse) {
-  button,
-  [role="button"],
-  a[href],
+  button:not([data-fixed-size]),
+  [role="button"]:not([data-fixed-size]),
+  a[href]:not([data-fixed-size]),
   [role="tab"],
   [role="option"] {
     min-height: 44px;
@@ -259,34 +308,49 @@ h4 {
 
 /* =========================================================================
    Custom scrollbars + scroll progress  (spec §10.5)
+   -------------------------------------------------------------------------
+   Fine pointers only. A 10px painted track is one of the strongest "this is a
+   web page" tells there is, and on a phone it also stole horizontal room from
+   every card rail. Touch devices get the platform's own overlay indicator.
    ========================================================================= */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--brand-400) transparent;
+@media (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--muted) 38%, transparent);
+    border-radius: var(--r-pill);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--brand-400) 70%, transparent);
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-*::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--brand-400) 55%, transparent);
-  border-radius: var(--r-pill);
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--brand-500);
-  background-clip: content-box;
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
+
+@media (pointer: coarse) {
+  * {
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .scroll-progress {
   position: fixed;
   top: 0;
   left: 0;
-  height: 3px;
+  height: 2px;
   width: 100%;
   transform-origin: 0 50%;
   transform: scaleX(var(--p, 0));
@@ -295,11 +359,8 @@ h4 {
   pointer-events: none;
 }
 
-/* Scroll-lock applied by useScrollLock while an overlay/dialog is open */
-body[data-scroll-locked="true"] {
-  overflow: hidden;
-  touch-action: none;
-}
+/* Scroll-lock is applied to <html> by useScrollLock — see the rule next to the
+   html block above, which explains why body can't own it. */
 
 /* =========================================================================
    Utilities & keyframes
@@ -309,6 +370,34 @@ body[data-scroll-locked="true"] {
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-1);
+}
+
+/* Grows a control's touch target to 44px WITHOUT changing what's painted — the
+   invisible pseudo-element is what the finger actually hits. Pair with
+   `data-fixed-size` on any control that sets its own height. */
+@utility tap-target {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    width: 100%;
+    height: 100%;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Native-app press feedback: the whole element dips under the finger. Cheaper
+   and more convincing than a hover colour, which touch devices never show. */
+@utility pressable {
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+  &:active {
+    transform: scale(0.975);
+  }
 }
 
 /* Hide the scrollbar on horizontally-scrollable strips (e.g. the Vault tab row)
@@ -408,6 +497,96 @@ body[data-scroll-locked="true"] {
   display: none;
 }
 
+/* =========================================================================
+   Card rails  —  the horizontal-scroll primitive
+   -------------------------------------------------------------------------
+   Replaces the `-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4`
+   soup that was copy-pasted across eight files, each drifting slightly. Two
+   things were wrong everywhere:
+
+   1. No `scroll-padding-inline`. A `snap-start` child parks flush against the
+      scrollport edge, and because the rail is full-bleed (negative margin equal
+      to the page gutter) that edge sits one gutter LEFT of the heading above it.
+      So every swipe landed a few pixels off the content column — the "feels
+      unnatural / not aligned" complaint.
+   2. Only FlightResults degraded to a grid on wide screens. Everything else kept
+      a 260px rail at 1280px, which is where a rail stops being a gesture and
+      starts being a rail you have to drag with a mouse.
+
+   Layered in `components` so per-instance Tailwind utilities still win.
+   ========================================================================= */
+@layer components {
+  .rail {
+    /* Tunables — override per instance with an inline style or arbitrary value. */
+    --rail-pad: 1rem; /* page gutter this rail bleeds into */
+    --rail-card: 16rem; /* card width while it IS a rail */
+    --rail-cols: 2; /* columns once it becomes a grid (md) */
+    --rail-cols-lg: 3; /* … and at lg */
+
+    display: flex;
+    gap: 0.875rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: var(--rail-pad);
+    padding-inline: var(--rail-pad);
+    margin-inline: calc(var(--rail-pad) * -1);
+    padding-block-end: 0.5rem;
+    -webkit-overflow-scrolling: touch;
+    /* A swipe that runs out of rail must not pan the page sideways or fire the
+       browser's back gesture. */
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+  .rail::-webkit-scrollbar {
+    display: none;
+  }
+  .rail > * {
+    flex: 0 0 auto;
+    width: var(--rail-card);
+    scroll-snap-align: start;
+  }
+
+  /* For rails nested inside an already-padded card: don't bleed, the parent's
+     padding is the alignment edge. */
+  .rail-flush {
+    --rail-pad: 0px;
+  }
+
+  /* Rails that stay rails at every width (chip strips, filter rows). Pair with
+     `--rail-card: auto` so children size to their content. */
+  .rail-locked {
+    --rail-card: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  @media (min-width: 48rem) {
+    .rail:not(.rail-locked) {
+      display: grid;
+      grid-template-columns: repeat(var(--rail-cols), minmax(0, 1fr));
+      /* Generous whitespace is the point: a grid can afford 20px gutters where a
+         rail could not. */
+      gap: 1.25rem;
+      overflow: visible;
+      margin-inline: 0;
+      padding-inline: 0;
+      padding-block-end: 0;
+    }
+    .rail:not(.rail-locked) > * {
+      width: auto;
+    }
+    .rail-locked {
+      --rail-pad: 1.5rem;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .rail:not(.rail-locked) {
+      grid-template-columns: repeat(var(--rail-cols-lg), minmax(0, 1fr));
+    }
+  }
+}
+
 /* Reusable form input — consistent styling for text fields across settings pages */
 .input-field {
   width: 100%;
@@ -428,4 +607,11 @@ body[data-scroll-locked="true"] {
 .input-field::placeholder {
   color: var(--muted);
   opacity: 0.6;
+}
+/* Touch needs a taller field than a mouse does. The 44px floor rule only
+   covers buttons/links, so fields opt in here rather than growing everywhere. */
+@media (pointer: coarse) {
+  .input-field {
+    height: 2.875rem;
+  }
 }

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2, Check, Plus, Compass, Utensils, Copy, Download } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
+import { Rail } from "@/components/layout/Page";
 import { Switch } from "@/components/ui/Switch";
 import { Money } from "@/components/ui/Money";
 import { cn } from "@/lib/cn";
@@ -864,12 +865,12 @@ function BackupRail({
       <p className="mb-3 text-sm text-[var(--muted)]">
         Great picks that didn't fit — tap ＋ to slot any into your plan.
       </p>
-      <div className="no-scrollbar -mx-1 flex snap-x gap-2.5 overflow-x-auto px-1 pb-1">
+      <Rail card="13.5rem" cols={2} colsLg={3} pad="1.25rem" aria-label="Backup ideas">
         {backup.map((b) => {
           const isFood = b.kind === "restaurant";
           const Icon = isFood ? Utensils : Compass;
           return (
-            <div key={b.title} className="flex w-[13.5rem] shrink-0 snap-start flex-col rounded-[var(--r-md)] border border-[var(--border)] p-3">
+            <div key={b.title} className="flex flex-col rounded-[var(--r-md)] border border-[var(--border)] p-3">
               <span className="flex items-center gap-1.5">
                 <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
                 <span className="min-w-0 flex-1 truncate text-xs font-medium">{b.title}</span>
@@ -895,7 +896,7 @@ function BackupRail({
             </div>
           );
         })}
-      </div>
+      </Rail>
     </section>
   );
 }

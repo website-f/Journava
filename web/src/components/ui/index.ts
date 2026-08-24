@@ -14,6 +14,7 @@ export { EmptyState } from "./EmptyState";
 export { AgentPulse } from "./AgentPulse";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 export { Badge } from "./Badge";
+export { Collapsible } from "./Collapsible";
 export { OptionCard } from "./OptionCard";
 export { Calendar } from "./Calendar";
 export type { DateRange } from "./Calendar";

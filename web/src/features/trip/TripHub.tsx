@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -24,6 +24,7 @@ import {
   TabsContent,
   confirm,
 } from "@/components/ui";
+import { Page, PageHeader } from "@/components/layout/Page";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { usePlanStore, type PlanResults } from "@/stores/planStore";
@@ -60,21 +61,36 @@ export function TripHub() {
 
   if (openResults) {
     return (
-      <div className="mx-auto w-full max-w-6xl">
-        <Button variant="ghost" size="sm" className="mb-2" onClick={() => setOpenResults(null)}>
+      <Page width="xl">
+        {/* A back affordance, not a breadcrumb: this is a push/pop navigation, so
+            the control sits where a native back button would and nothing else
+            competes with it at the top of the detail view. */}
+        <Button variant="ghost" size="sm" className="mb-3 -ml-2" onClick={() => setOpenResults(null)}>
           <ArrowLeft className="h-4 w-4" /> All trips
         </Button>
         <MyTrip />
-      </div>
+      </Page>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl">
+    <Page width="xl">
+      <PageHeader
+        eyebrow="Your travel"
+        title="Trips"
+        subtitle="Everything you've committed to — plus the orders, payments and searches behind them."
+      />
       <TripTabs onOpen={setOpenResults} />
-    </div>
+    </Page>
   );
 }
+
+const TRIP_TABS = [
+  { value: "trips", label: "Trips", icon: Briefcase },
+  { value: "orders", label: "Orders", icon: ShoppingCart },
+  { value: "payments", label: "Payments", icon: CreditCard },
+  { value: "history", label: "History", icon: HistoryIcon },
+] as const;
 
 function TripTabs({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   const [params, setParams] = useSearchParams();
@@ -84,21 +100,19 @@ function TripTabs({ onOpen }: { onOpen: (r: PlanResults) => void }) {
 
   return (
     <Tabs value={tab} onValueChange={setTab}>
-      {/* Scroll the tab row on narrow screens rather than wrapping. */}
-      <div className="no-scrollbar -mx-1 overflow-x-auto px-1 pb-1">
-        <TabsList className="w-max flex-nowrap">
-          <TabsTrigger value="trips" className="shrink-0">
-            <Briefcase className="h-4 w-4" /> Trips
-          </TabsTrigger>
-          <TabsTrigger value="orders" className="shrink-0">
-            <ShoppingCart className="h-4 w-4" /> Orders
-          </TabsTrigger>
-          <TabsTrigger value="payments" className="shrink-0">
-            <CreditCard className="h-4 w-4" /> Payments
-          </TabsTrigger>
-          <TabsTrigger value="history" className="shrink-0">
-            <HistoryIcon className="h-4 w-4" /> History
-          </TabsTrigger>
+      {/* Sticky under the top bar so switching tab never means scrolling back up.
+          `TabsList` already scrolls sideways and centres the active chip, so the
+          hand-rolled overflow wrapper that used to be here is gone. */}
+      <div
+        className="sticky z-10 -mx-4 bg-[var(--bg)]/85 px-4 py-2 backdrop-blur-md md:-mx-6 md:px-6"
+        style={{ top: "var(--top-bar)" }}
+      >
+        <TabsList>
+          {TRIP_TABS.map(({ value, label, icon: Icon }) => (
+            <TabsTrigger key={value} value={value}>
+              <Icon className="h-4 w-4" weight={tab === value ? "fill" : "regular"} /> {label}
+            </TabsTrigger>
+          ))}
         </TabsList>
       </div>
       <TabsContent value="trips">
@@ -177,9 +191,9 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
 
   if (isLoading) {
     return (
-      <div className="grid gap-3 py-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 py-2 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-48 w-full" />
+          <Skeleton key={i} className="h-56 w-full rounded-[var(--r-xl)]" />
         ))}
       </div>
     );
@@ -201,7 +215,7 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   }
 
   return (
-    <div className="grid gap-3 py-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-4 py-2 sm:grid-cols-2 lg:grid-cols-3">
       {trips.map((t) => (
         <TripCard
           key={t.id}
@@ -291,50 +305,61 @@ function TripCard({
 
   const f = summary?.flights;
   return (
-    <div className="surface-card group relative overflow-hidden p-0 transition-colors hover:border-[var(--brand-400)]">
+    <div className="surface-card group pressable relative overflow-hidden p-0 hover:border-[var(--brand-400)] hover:shadow-[var(--shadow-2)]">
       {/* Banner is the open target */}
       <button onClick={onClick} disabled={loading} className="block w-full text-left disabled:opacity-70">
-        <div className="relative flex h-28 items-end overflow-hidden p-3" style={{ background: band }}>
+        <div className="relative flex h-36 items-end overflow-hidden p-4" style={{ background: band }}>
           {thumb && <img src={thumb} alt="" className="absolute inset-0 h-full w-full object-cover" />}
-          <span className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
-          <Plane className="absolute right-3 top-3 h-6 w-6 text-white/80 drop-shadow" />
-          <span className="relative font-[family-name:var(--font-display)] text-lg leading-tight text-white drop-shadow">
-            {title}
-          </span>
+          {/* A scrim, not decoration — the title has to stay legible over an
+              arbitrary photo, and the flat palette rule is about brand fills. */}
+          <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-black/5" />
+          <Plane className="absolute right-3.5 top-3.5 h-6 w-6 text-white/85 drop-shadow" weight="fill" />
+          <div className="relative min-w-0">
+            <span className="block truncate font-[family-name:var(--font-display)] text-[1.4rem] font-bold leading-tight tracking-[-0.02em] text-white drop-shadow">
+              {title}
+            </span>
+            {when && (
+              <span className="mt-1 flex items-center gap-1 text-[0.7rem] font-medium text-white/75">
+                <Clock className="h-3 w-3" /> {when}
+              </span>
+            )}
+          </div>
           {badge && (
-            <span className="absolute left-3 top-3 rounded-[var(--r-pill)] bg-white/25 px-2 py-0.5 text-[0.6rem] font-semibold uppercase text-white backdrop-blur-sm">
+            <span className="absolute left-4 top-3.5 rounded-[var(--r-pill)] bg-white/25 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.08em] text-white backdrop-blur-sm">
               {badge}
             </span>
           )}
         </div>
-        {subtitle && <p className="line-clamp-2 px-3 pt-3 text-sm font-medium">{subtitle}</p>}
+        {subtitle && (
+          <p className="line-clamp-2 px-4 pt-3.5 text-[0.9375rem] font-medium leading-snug">{subtitle}</p>
+        )}
       </button>
 
       {/* Details + interactive re-plan (outside the open-button) */}
-      <div className="space-y-1.5 px-3 pb-3 pt-2">
-        {f && f.count > 0 && (
-          <p className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-            <Plane className="h-3 w-3 text-[var(--brand-500)]" />
-            {f.count} flights ({f.atlas} Atlas · {f.research} research) —{" "}
-            <span className="font-medium text-[var(--warning)]">{f.picked ? "picked" : "none picked yet"}</span>
-          </p>
-        )}
-        {summary && (summary.places.suggested > 0 || summary.eats.suggested > 0) && (
-          <p className="text-xs text-[var(--muted)]">
-            ◆ {summary.places.suggested} places · {summary.places.scheduled} scheduled · 🍽 {summary.eats.suggested} to eat
-            {summary.places.suggested > summary.places.scheduled && (
-              <span className="text-[var(--warning)]"> · {summary.places.suggested - summary.places.scheduled} to pick</span>
-            )}
-          </p>
-        )}
+      <div className="space-y-2 px-4 pb-4 pt-2.5">
+        {/* Stats as pills rather than a run of glyph-prefixed sentences — they're
+            scannable at a glance, which is the whole job of a gallery card. */}
         <div className="flex flex-wrap items-center gap-1.5">
-          {typeof optionCount === "number" && optionCount > 0 && <Badge>{optionCount} options</Badge>}
-          {when && (
-            <span className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">
-              <Clock className="h-3 w-3" /> {when}
-            </span>
+          {f && f.count > 0 && (
+            <Stat
+              icon={<Plane className="h-3 w-3" weight="fill" />}
+              label={`${f.count} flight${f.count === 1 ? "" : "s"}`}
+              tone={f.picked ? "good" : "warn"}
+            />
           )}
+          {summary && summary.places.suggested > 0 && (
+            <Stat label={`${summary.places.scheduled}/${summary.places.suggested} places set`} />
+          )}
+          {summary && summary.eats.suggested > 0 && (
+            <Stat label={`${summary.eats.suggested} to eat`} />
+          )}
+          {typeof optionCount === "number" && optionCount > 0 && <Badge>{optionCount} options</Badge>}
         </div>
+        {f && f.count > 0 && (
+          <p className="text-[0.7rem] text-[var(--muted)]">
+            {f.atlas} Atlas · {f.research} research · {f.picked ? "one picked" : "none picked yet"}
+          </p>
+        )}
 
         {savedId && f && f.count > 0 && (
           <div className="pt-1">
@@ -342,7 +367,7 @@ function TripCard({
               <button
                 onClick={runReplan}
                 disabled={replanning}
-                className="flex items-center gap-1.5 rounded-[var(--r-md)] border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--brand-600)] hover:bg-[var(--bg)] disabled:opacity-60"
+                className="pressable flex w-full items-center justify-center gap-1.5 rounded-[var(--r-md)] border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--brand-600)] hover:border-[var(--brand-400)] hover:bg-[var(--bg)] disabled:opacity-60"
               >
                 {replanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plane className="h-3.5 w-3.5" />}
                 {replanning ? "Re-planning…" : "Flight delayed? Re-plan"}
@@ -380,20 +405,57 @@ function TripCard({
       {onDelete && (
         <button
           aria-label="Remove trip"
+          data-fixed-size
           onClick={(event) => {
             event.stopPropagation();
             onDelete();
           }}
-          className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/30 text-white/90 opacity-0 shadow backdrop-blur-sm transition-opacity hover:bg-[var(--danger)] group-hover:opacity-100"
+          className={cn(
+            "tap-target absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full",
+            "bg-black/40 text-white shadow backdrop-blur-sm",
+            "transition-[background-color,opacity] duration-[var(--dur)] hover:bg-[var(--danger)]",
+            // Visible by default: hover-to-reveal made this unreachable on touch,
+            // where there is no hover. It only hides on hover-capable pointers.
+            "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100",
+            "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+          )}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="h-4 w-4" />
         </button>
       )}
       {loading && (
-        <span className="absolute inset-0 grid place-items-center bg-[var(--surface)]/60">
+        <span className="absolute inset-0 grid place-items-center bg-[var(--surface)]/70 backdrop-blur-[1px]">
           <Loader2 className="h-5 w-5 animate-spin text-[var(--brand-500)]" />
         </span>
       )}
     </div>
+  );
+}
+
+/** One scannable fact on a trip card. `tone` flags whether it still needs you. */
+function Stat({
+  icon,
+  label,
+  tone = "neutral",
+}: {
+  icon?: ReactNode;
+  label: string;
+  tone?: "neutral" | "good" | "warn";
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-[var(--r-pill)] px-2 py-[0.1875rem] text-[0.6875rem] font-semibold",
+        tone === "good" &&
+          "bg-[color-mix(in_srgb,var(--success)_12%,transparent)] text-[var(--success)]",
+        tone === "warn" &&
+          "bg-[color-mix(in_srgb,var(--warning)_14%,transparent)] text-[var(--warning)]",
+        tone === "neutral" &&
+          "bg-[color-mix(in_srgb,var(--text)_6%,transparent)] text-[var(--muted)]",
+      )}
+    >
+      {icon}
+      {label}
+    </span>
   );
 }

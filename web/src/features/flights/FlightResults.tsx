@@ -8,6 +8,7 @@ import {
   ShoppingCart,
 } from "@/components/ui/icons";
 import { Badge, Button, NumberField, Select } from "@/components/ui";
+import { Rail } from "@/components/layout/Page";
 import { Money } from "@/components/ui/Money";
 import { SourceTrustRow } from "@/components/ui/SourceBadge";
 import { cn } from "@/lib/cn";
@@ -294,24 +295,23 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
 
       {groups.map((group) => (
         <div key={group.key}>
-          <div className="mb-2">
-            <h4 className="text-sm font-semibold">{group.title}</h4>
-            <p className="text-[0.7rem] text-[var(--muted)]">{group.blurb}</p>
+          <div className="mb-3">
+            <h4 className="text-[0.9375rem] font-semibold tracking-[-0.01em]">{group.title}</h4>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{group.blurb}</p>
           </div>
-          {/* Mobile: a horizontal snap-rail (consistent with Stays/Food/Places).
-              Desktop (lg+): a denser 2-column grid. */}
-          <div className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6 lg:mx-0 lg:grid lg:grid-cols-2 lg:overflow-visible lg:px-0 lg:pb-0">
+          {/* Rail on phones, 2-up grid from md — same primitive as Stays/Food/Places
+              so every card strip in the app snaps and aligns identically. */}
+          <Rail card="17rem" cols={2} colsLg={2} aria-label={group.title}>
             {group.options.map((option, index) => (
-              <div key={option.id} className="w-[17rem] shrink-0 snap-start lg:w-auto lg:shrink">
-                <FlightCard
-                  option={option}
-                  index={index}
-                  badges={badgesFor.get(option.id) ?? []}
-                  onBook={() => setBooking(option)}
-                />
-              </div>
+              <FlightCard
+                key={option.id}
+                option={option}
+                index={index}
+                badges={badgesFor.get(option.id) ?? []}
+                onBook={() => setBooking(option)}
+              />
             ))}
-          </div>
+          </Rail>
         </div>
       ))}
 

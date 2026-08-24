@@ -5,6 +5,8 @@ import {
   TrendingUp, GitCompareArrows, BadgeCheck, ShieldQuestion, Save,
 } from "@/components/ui/icons";
 import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge, Skeleton } from "@/components/ui";
+import { Collapsible } from "@/components/ui/Collapsible";
+import { Page, PageHeader, SectionHeader } from "@/components/layout/Page";
 import type { ItineraryItem, PlanOption } from "@/stores/planStore";
 import { useActiveTrip } from "@/hooks/useActiveTrip";
 import { recordOptionOutcome, recordOutcome } from "@/lib/outcomes";
@@ -30,16 +32,23 @@ type Contradiction = {
  */
 export function ResearchBoard() {
   return (
-    <div className="mx-auto w-full max-w-6xl">
+    <Page width="xl">
+      <PageHeader
+        eyebrow="Discovery"
+        title="Research"
+        subtitle="Destination intelligence — not a chat blob. Every pick carries the reasoning behind it."
+      />
       <Tabs defaultValue="trip">
-        <TabsList>
-          <TabsTrigger value="trip">
-            <Compass className="h-4 w-4" /> This trip
-          </TabsTrigger>
-          <TabsTrigger value="saved">
-            <Save className="h-4 w-4" /> Saved results
-          </TabsTrigger>
-        </TabsList>
+        <StickyTabs>
+          <TabsList>
+            <TabsTrigger value="trip">
+              <Compass className="h-4 w-4" /> This trip
+            </TabsTrigger>
+            <TabsTrigger value="saved">
+              <Save className="h-4 w-4" /> Saved results
+            </TabsTrigger>
+          </TabsList>
+        </StickyTabs>
         <TabsContent value="trip">
           <TripResearch />
         </TabsContent>
@@ -47,6 +56,25 @@ export function ResearchBoard() {
           <SavedResults />
         </TabsContent>
       </Tabs>
+    </Page>
+  );
+}
+
+/**
+ * Keeps a tab strip pinned under the app's top bar.
+ *
+ * Research nests two levels of tabs over very long content; losing either strip
+ * mid-scroll meant scrolling all the way back up to change view, which is the
+ * clearest "this is a web dashboard" tell on the whole page. The negative margin
+ * lets the blurred backdrop bleed to the screen edge through the page gutter.
+ */
+function StickyTabs({ children, offset = 0 }: { children: ReactNode; offset?: number }) {
+  return (
+    <div
+      className="sticky z-10 -mx-4 bg-[var(--bg)]/85 px-4 py-2 backdrop-blur-md md:-mx-6 md:px-6"
+      style={{ top: `calc(var(--top-bar) + ${offset}rem)` }}
+    >
+      {children}
     </div>
   );
 }
@@ -64,15 +92,12 @@ function TripResearch() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-6xl">
-        <ResearchHeader />
-        <div className="space-y-3">
-          <Skeleton className="h-10 w-full" />
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-32 w-full" />
-            ))}
-          </div>
+      <div className="space-y-3">
+        <Skeleton className="h-11 w-full rounded-[var(--r-md)]" />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full rounded-[var(--r-lg)]" />
+          ))}
         </div>
       </div>
     );
@@ -80,29 +105,25 @@ function TripResearch() {
 
   if (!results) {
     return (
-      <div className="mx-auto w-full max-w-6xl">
-        <ResearchHeader />
-        <div className="mt-12">
-          <EmptyState
-            icon={<Compass className="h-10 w-10" />}
-            title="No research runs yet"
-            description="Kick off a trip from the Command Center — agents will publish their findings here."
-            action={
-              <Button asChild variant="secondary">
-                <Link to="/">Open Command Center</Link>
-              </Button>
-            }
-          />
-        </div>
+      <div className="py-10">
+        <EmptyState
+          icon={<Compass className="h-10 w-10" />}
+          title="No research runs yet"
+          description="Kick off a trip from the Command Center — agents will publish their findings here."
+          action={
+            <Button asChild variant="secondary">
+              <Link to="/">Open Command Center</Link>
+            </Button>
+          }
+        />
       </div>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl">
-      <ResearchHeader />
-
-      <Tabs defaultValue="flights">
+    <Tabs defaultValue="flights">
+      {/* Offset by the outer strip's height so the two stack rather than overlap. */}
+      <StickyTabs offset={3.5}>
         <TabsList>
           <TabsTrigger value="flights">
             Flights <Badge variant="brand">{flights.length}</Badge>
@@ -115,6 +136,7 @@ function TripResearch() {
           </TabsTrigger>
           <TabsTrigger value="intelligence">Intelligence</TabsTrigger>
         </TabsList>
+      </StickyTabs>
 
         <TabsContent value="flights">
           {flights.length === 0 ? (

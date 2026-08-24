@@ -14,6 +14,7 @@ import { Brain, Activity, GitCompareArrows } from "@/components/ui/icons";
 
 import { cn } from "@/lib/cn";
 import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from "@/components/ui";
+import { Page, PageHeader, SectionHeader } from "@/components/layout/Page";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import type { AgentStatus } from "@/lib/sse";
 import { useIsMobile } from "@/hooks/useMediaQuery";
@@ -49,14 +50,26 @@ const AGENTS = [
   { slug: "memory", name: "Memory", role: "Gnosion read / write", tier: 3 },
 ] as const;
 
-const STATUS_COLORS: Record<AgentStatus, string> = {
-  idle: "#94A0B8",
-  active: "#10B981",
-  working: "#4F46E5",
-  monitoring: "#3B82F6",
-  waiting: "#F59E0B",
-  error: "#EF4444",
+/**
+ * Status → design token + the word we actually show.
+ *
+ * These used to be six raw hexes (`#4F46E5`, `#3B82F6`, …) picked from a
+ * different palette entirely, so a "working" agent glowed indigo in the middle of
+ * a teal-and-sand app and none of it followed the dark theme. Everything now
+ * resolves through the theme tokens, and `tint()` is how a token gets an alpha
+ * channel inside an inline style (React Flow and the glow shadows need real CSS
+ * values, not utility classes).
+ */
+const STATUS: Record<AgentStatus, { label: string; color: string }> = {
+  idle: { label: "idle", color: "var(--muted)" },
+  active: { label: "done", color: "var(--success)" },
+  working: { label: "working", color: "var(--brand-500)" },
+  monitoring: { label: "monitoring", color: "var(--brand-400)" },
+  waiting: { label: "waiting", color: "var(--warning)" },
+  error: { label: "error", color: "var(--danger)" },
 };
+
+const tint = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
 
 // Graph topology matching supervisor.py 3-tier architecture
 const GRAPH_EDGES: Array<[string, string]> = [
@@ -161,8 +174,8 @@ export function AgentControl() {
         type: "smoothstep",
         // Animated dashes = data flowing along the graph (the "heartbeat").
         animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, color: "#14b8a6" },
-        style: { stroke: "#14b8a6", strokeWidth: 1.6, opacity: 0.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "var(--brand-400)" },
+        style: { stroke: "var(--brand-400)", strokeWidth: 1.6, opacity: 0.5 },
       })),
     [],
   );
@@ -176,14 +189,14 @@ export function AgentControl() {
       nds.map((node) => {
         const latest = statusMap[node.id];
         const status: AgentStatus = latest?.status ?? "idle";
-        const color = STATUS_COLORS[status];
+        const color = STATUS[status].color;
         const message = latest?.message ?? AGENTS.find((a) => a.slug === node.id)?.role ?? "";
         return {
           ...node,
           data: { ...node.data, label: AGENTS.find((a) => a.slug === node.id)?.name, status, message },
           style: {
             borderColor: color,
-            boxShadow: status === "working" ? `0 0 12px ${color}60` : "none",
+            boxShadow: status === "working" ? `0 0 12px ${tint(color, 38)}` : "none",
           },
         };
       }),
@@ -203,9 +216,9 @@ export function AgentControl() {
           animated: true,
           style: {
             ...edge.style,
-            stroke: hot ? "#0f766e" : "#94A0B8",
+            stroke: hot ? "var(--brand-600)" : "var(--muted)",
             strokeWidth: hot ? 2.4 : 1.4,
-            opacity: hot ? 0.95 : 0.45,
+            opacity: hot ? 0.95 : 0.4,
           },
         };
       }),
@@ -213,31 +226,51 @@ export function AgentControl() {
   }, [statusMap, setNodes, setEdges]);
 
   return (
-    <div className="mx-auto w-full max-w-6xl">
-      <ControlHeader connected={connected} />
+    <Page width="xl">
+      <PageHeader
+        eyebrow="Mission control"
+        title="Agents"
+        subtitle="Twenty-one specialists, one graph. Watch them pick up your brief and hand work down the tiers."
+        actions={<StreamPill connected={connected} />}
+      />
 
       <Tabs defaultValue="mission">
-        <TabsList>
-          <TabsTrigger value="mission">
-            <Activity className="h-4 w-4" /> Mission Control
-          </TabsTrigger>
-          <TabsTrigger value="topology">
-            <GitCompareArrows className="h-4 w-4" /> Topology
-          </TabsTrigger>
-          <TabsTrigger value="live">
-            <Activity className="h-4 w-4" /> Live
-          </TabsTrigger>
-          <TabsTrigger value="brain">
-            <Brain className="h-4 w-4" /> Brain
-          </TabsTrigger>
-        </TabsList>
+        {/* Sticky under the top bar: on a phone the agent grid is long, and losing
+            the tab strip mid-scroll is what made this feel like a web dashboard. */}
+        <div
+          className="sticky z-10 -mx-4 bg-[var(--bg)]/85 px-4 py-2 backdrop-blur-md md:-mx-6 md:px-6"
+          style={{ top: "var(--top-bar)" }}
+        >
+          <TabsList>
+            <TabsTrigger value="mission">
+              <Activity className="h-4 w-4" /> Mission
+            </TabsTrigger>
+            <TabsTrigger value="topology">
+              <GitCompareArrows className="h-4 w-4" /> Topology
+            </TabsTrigger>
+            <TabsTrigger value="live">
+              <Activity className="h-4 w-4" /> Live
+            </TabsTrigger>
+            <TabsTrigger value="brain">
+              <Brain className="h-4 w-4" /> Brain
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="mission">
           <MissionControl events={events} statusMap={statusMap} connected={connected} />
         </TabsContent>
 
         <TabsContent value="topology">
-          <div className="surface-card overflow-hidden" style={{ height: isMobile ? 360 : 480 }}>
+          <SectionHeader
+            icon={<GitCompareArrows className="h-[1.15rem] w-[1.15rem]" />}
+            title="Graph topology"
+            hint="Chief fans out to eight core agents, enrichment gates through Concierge, then assembly runs in sequence."
+          />
+          <div
+            className="surface-card overflow-hidden p-0"
+            style={{ height: isMobile ? 380 : 500 }}
+          >
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -245,12 +278,20 @@ export function AgentControl() {
               onEdgesChange={onEdgesChange}
               nodeTypes={{ agentNode: AgentNodeComponent }}
               fitView
+              fitViewOptions={{ padding: 0.15 }}
               proOptions={{ hideAttribution: true }}
               nodesDraggable={false}
               nodesConnectable={false}
               elementsSelectable={false}
+              // A graph embedded in a scrolling page must not eat the scroll: wheel
+              // and one-finger drag belong to the page, pinch and two-finger pan
+              // belong to the canvas. Without this the page froze over the graph.
+              zoomOnScroll={false}
+              preventScrolling={false}
+              panOnScroll
+              zoomOnPinch
             >
-              <Background />
+              <Background gap={22} size={1} color="var(--border)" />
             </ReactFlow>
           </div>
         </TabsContent>
@@ -260,12 +301,17 @@ export function AgentControl() {
         </TabsContent>
 
         <TabsContent value="brain">
+          <SectionHeader
+            icon={<Brain className="h-[1.15rem] w-[1.15rem]" />}
+            title="Brain"
+            hint="What Gnosion remembers about you, and how it connects."
+          />
           <div className="surface-card p-3">
             <BrainGraph />
           </div>
         </TabsContent>
       </Tabs>
-    </div>
+    </Page>
   );
 }
 
@@ -273,25 +319,25 @@ export function AgentControl() {
 // Sub-components
 // --------------------------------------------------------------------------- //
 
-function ControlHeader({ connected }: { connected: boolean }) {
+/** Live/offline state of the SSE stream, small enough to ride in the header. */
+function StreamPill({ connected }: { connected: boolean }) {
   return (
-    <header className="pt-2 pb-6 flex items-start justify-between gap-4 flex-wrap">
-      <div>
-        <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">Agent Control Center</h2>
-        <p className="mt-1 text-sm text-[var(--muted)]">Live agent graph and event stream — proof of multi-agent collaboration.</p>
-      </div>
+    <span
+      className={cn(
+        "inline-flex items-center gap-2 rounded-[var(--r-pill)] px-3 py-1.5 text-xs font-semibold",
+        connected
+          ? "bg-[color-mix(in_srgb,var(--success)_14%,transparent)] text-[var(--success)]"
+          : "bg-[color-mix(in_srgb,var(--muted)_16%,transparent)] text-[var(--muted)]",
+      )}
+    >
       <span
         className={cn(
-          "inline-flex items-center gap-2 rounded-[var(--r-pill)] px-3 py-1.5 text-xs font-medium",
-          connected
-            ? "bg-[color-mix(in_srgb,var(--success)_16%,transparent)] text-[var(--success)]"
-            : "bg-[color-mix(in_srgb,var(--muted)_16%,transparent)] text-[var(--muted)]",
+          "h-2 w-2 rounded-full",
+          connected ? "animate-pulse bg-[var(--success)]" : "bg-[var(--muted)]",
         )}
-      >
-        <span className={cn("h-2 w-2 rounded-full", connected ? "bg-[var(--success)]" : "bg-[var(--muted)]")} />
-        {connected ? "Stream connected" : "Stream offline"}
-      </span>
-    </header>
+      />
+      {connected ? "Stream live" : "Stream offline"}
+    </span>
   );
 }
 
@@ -331,46 +377,90 @@ function MissionControl({ events, statusMap, connected }: {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <HealthStrip />
-      <div className="surface-card flex flex-wrap items-center gap-x-6 gap-y-3 p-4">
+
+      {/* Run bar. Stats are a grid on a phone (a wrapping flex row left orphans
+          on the second line) and the launch button goes full-width, because it's
+          the primary action on this tab. */}
+      <div className="surface-card space-y-4 p-4">
         <div className="flex items-center gap-2">
-          <span className={cn("h-2.5 w-2.5 rounded-full", connected ? "bg-[var(--success)] animate-pulse" : "bg-[var(--muted)]")} />
-          <span className="text-sm font-semibold">{connected ? "Mesh live" : "Idle"}</span>
+          <span
+            className={cn(
+              "h-2.5 w-2.5 rounded-full",
+              connected ? "animate-pulse bg-[var(--success)]" : "bg-[var(--muted)]",
+            )}
+          />
+          <span className="text-sm font-semibold">{connected ? "Mesh live" : "Mesh idle"}</span>
+          <span className="ml-auto text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+            {engaged}/{AGENTS.length} engaged
+          </span>
         </div>
-        <Hud label="Agents engaged" value={`${engaged}/${AGENTS.length}`} />
-        <Hud label="Completed" value={String(done)} />
-        <Hud label="Events" value={String(events.length)} />
-        <Hud label="Elapsed" value={`${elapsed}s`} />
-        <Button className="ml-auto" onClick={launch} loading={launching}>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+          <Hud label="Agents engaged" value={`${engaged}/${AGENTS.length}`} />
+          <Hud label="Completed" value={String(done)} />
+          <Hud label="Events" value={String(events.length)} />
+          <Hud label="Elapsed" value={`${elapsed}s`} />
+        </div>
+        <Button className="w-full sm:w-auto" onClick={launch} loading={launching}>
           <Activity className="h-4 w-4" /> Launch live plan
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {AGENTS.map((a) => {
-          const s = (statusMap[a.slug]?.status ?? "idle") as AgentStatus;
-          const busy = s === "working" || s === "monitoring" || s === "waiting";
-          const color = STATUS_COLORS[s];
-          return (
-            <div
-              key={a.slug}
-              className="surface-card relative overflow-hidden p-3 transition-shadow"
-              style={s === "idle" ? undefined : { borderColor: color, borderWidth: 1, boxShadow: `0 0 0 1px ${color}22, 0 4px 16px ${color}22` }}
-            >
-              {busy && <span className="absolute right-2 top-2 h-2 w-2 animate-ping rounded-full" style={{ background: color }} />}
-              <div className="flex items-center gap-2">
-                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[0.6rem] font-bold text-white" style={{ background: color }}>
-                  {a.name.slice(0, 2)}
-                </span>
-                <span className="truncate text-sm font-medium">{a.name}</span>
+      <section>
+        <SectionHeader
+          icon={<Activity className="h-[1.15rem] w-[1.15rem]" />}
+          title="The roster"
+          count={AGENTS.length}
+          hint="Each tile lights up in its own status colour the moment that agent picks up work."
+        />
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+          {AGENTS.map((a) => {
+            const s = (statusMap[a.slug]?.status ?? "idle") as AgentStatus;
+            const busy = s === "working" || s === "monitoring" || s === "waiting";
+            const { color, label } = STATUS[s];
+            return (
+              <div
+                key={a.slug}
+                className="surface-card relative overflow-hidden p-3 transition-shadow duration-[var(--dur)]"
+                style={
+                  s === "idle"
+                    ? undefined
+                    : {
+                        borderColor: color,
+                        boxShadow: `0 0 0 1px ${tint(color, 14)}, 0 6px 18px ${tint(color, 16)}`,
+                      }
+                }
+              >
+                {busy && (
+                  <span
+                    className="absolute right-2.5 top-2.5 h-2 w-2 animate-ping rounded-full"
+                    style={{ background: color }}
+                  />
+                )}
+                <div className="flex items-center gap-2">
+                  <span
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-[var(--r-sm)] text-[0.625rem] font-bold uppercase text-white"
+                    style={{ background: color }}
+                  >
+                    {a.name.slice(0, 2)}
+                  </span>
+                  <span className="truncate text-[0.8125rem] font-semibold">{a.name}</span>
+                </div>
+                <p className="mt-1.5 line-clamp-2 text-[0.6875rem] leading-snug text-[var(--muted)]">
+                  {statusMap[a.slug]?.message || a.role}
+                </p>
+                <p
+                  className="mt-1.5 text-[0.6rem] font-bold uppercase tracking-[0.1em]"
+                  style={{ color }}
+                >
+                  {label}
+                </p>
               </div>
-              <p className="mt-1 truncate text-[0.65rem] text-[var(--muted)]">{statusMap[a.slug]?.message || a.role}</p>
-              <p className="mt-1 text-[0.6rem] font-semibold uppercase tracking-wide" style={{ color }}>{s === "active" ? "done" : s}</p>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
@@ -397,49 +487,65 @@ function HealthStrip() {
   const errPct = Math.round((t.error_rate || 0) * 100);
   const hit = h.cache?.hit_rate != null ? `${Math.round(h.cache.hit_rate * 100)}%` : "—";
   return (
-    <div className="surface-card flex flex-wrap items-center gap-x-6 gap-y-3 p-4">
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--muted)]">
+    <div className="surface-card p-4">
+      <p className="mb-3 text-[0.65rem] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
         System health · 24h
-      </span>
-      <Hud label="LLM calls" value={String(t.llm_calls_24h)} />
-      <Hud label="Error rate" value={`${errPct}%`} />
-      <Hud label="Cache hit" value={hit} />
-      <Hud label="Tokens" value={t.tokens_24h.toLocaleString()} />
-      {t.slowest_agent && <Hud label="Slowest agent" value={t.slowest_agent} />}
+      </p>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-5">
+        <Hud label="LLM calls" value={String(t.llm_calls_24h)} />
+        <Hud label="Error rate" value={`${errPct}%`} />
+        <Hud label="Cache hit" value={hit} />
+        <Hud label="Tokens" value={t.tokens_24h.toLocaleString()} />
+        {t.slowest_agent && <Hud label="Slowest agent" value={t.slowest_agent} />}
+      </div>
     </div>
   );
 }
 
 function Hud({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <p className="text-xl font-bold tabular-nums text-[var(--brand-500)]">{value}</p>
-      <p className="text-[0.65rem] text-[var(--muted)]">{label}</p>
+    <div className="min-w-0">
+      <p className="truncate font-[family-name:var(--font-display)] text-[1.375rem] font-bold leading-none tabular-nums tracking-[-0.02em] text-[var(--brand-600)]">
+        {value}
+      </p>
+      <p className="mt-1 text-[0.65rem] font-medium uppercase tracking-[0.08em] text-[var(--muted)]">
+        {label}
+      </p>
     </div>
   );
 }
 
 function EventStream({ events }: { events: Array<{ id: string; ts: string; agent: string; message: string }> }) {
   return (
-    <aside className="surface-card p-4 min-w-0">
-      <h3 className="text-sm font-semibold mb-3">Event stream</h3>
-      <ol className="space-y-2 max-h-[22rem] overflow-y-auto font-[family-name:var(--font-mono)] text-[0.7rem] leading-relaxed">
-        {events.length === 0 && <li className="text-[var(--muted)]">Waiting for agent activity…</li>}
+    <section>
+      <SectionHeader
+        icon={<Activity className="h-[1.15rem] w-[1.15rem]" />}
+        title="Event stream"
+        count={events.length}
+        hint="Newest first. Raw, unedited — this is what the agents actually said."
+      />
+      {/* No inner scroll box: the log grows with the page so it inherits the
+          platform's own momentum instead of trapping a second scroller inside
+          the one you're already using. */}
+      <ol className="surface-card space-y-2 p-4 font-[family-name:var(--font-mono)] text-[0.7rem] leading-relaxed">
+        {events.length === 0 && (
+          <li className="text-[var(--muted)]">Waiting for agent activity…</li>
+        )}
         {events.map((event) => (
           <li key={event.id} className="min-w-0">
             <span className="text-[var(--muted)]">{new Date(event.ts).toLocaleTimeString()} </span>
-            <span className="text-[var(--brand-500)]">{event.agent}</span>{" "}
+            <span className="font-semibold text-[var(--brand-600)]">{event.agent}</span>{" "}
             <span className="break-words">{event.message}</span>
           </li>
         ))}
       </ol>
-    </aside>
+    </section>
   );
 }
 
 // Custom React Flow node
 function AgentNodeComponent({ data }: { data: { label: string; status: AgentStatus; message?: string } }) {
-  const color = STATUS_COLORS[data.status ?? "idle"];
+  const { color } = STATUS[data.status ?? "idle"];
   const isWorking = data.status === "working";
 
   return (

@@ -14,6 +14,8 @@ import {
   X,
 } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
+import { Page, SectionHeader } from "@/components/layout/Page";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { api } from "@/lib/api";
 import { useAuth } from "@/providers/AuthProvider";
 import { usePlanStore } from "@/stores/planStore";
@@ -71,13 +73,18 @@ export function PersonalHome({
   const tripScope = activeTrip?._scope as ScopeMeta | undefined;
 
   return (
-    <section className="mx-auto w-full max-w-5xl space-y-7">
+    <Page width="lg" className="space-y-7">
+      {/* The greeting is the app's face: oversized display type, the name on its
+          own line. A small "Good morning," over a 2xl name read like a dashboard
+          label; this reads like an app that knows who opened it. */}
       <header>
-        <p className="text-sm text-[var(--muted)]">{timeGreeting()},</p>
-        <h1 className="font-[family-name:var(--font-display)] text-2xl sm:text-3xl mt-0.5">
+        <p className="text-[0.8125rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {timeGreeting()}
+        </p>
+        <h1 className="mt-1 font-[family-name:var(--font-display)] text-[2.25rem] font-bold leading-[1.05] tracking-[-0.03em] sm:text-[2.75rem]">
           {firstName}
         </h1>
-        <p className="mt-1.5 text-sm text-[var(--muted)] max-w-prose">
+        <p className="mt-2.5 max-w-[42ch] text-sm leading-relaxed text-[var(--muted)]">
           Tell your agents what you want — they plan, research and book it while you watch.
         </p>
       </header>
@@ -85,44 +92,46 @@ export function PersonalHome({
       {activeTrip && (
         <button
           onClick={() => navigate("/trip")}
-          className="surface-card w-full p-4 flex items-center gap-4 text-left transition-colors hover:border-[var(--brand-400)]"
+          className="pressable flex w-full items-center gap-4 overflow-hidden rounded-[var(--r-xl)] bg-[var(--brand-600)] p-4 text-left text-white shadow-[var(--shadow-2)]"
         >
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] text-[var(--brand-500)]">
-            <Briefcase className="h-5 w-5" />
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--r-md)] bg-white/12 ring-1 ring-inset ring-white/20">
+            <Briefcase className="h-5 w-5" weight="fill" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[0.7rem] font-semibold uppercase tracking-wide text-[var(--muted)]">
+            <span className="block text-[0.65rem] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">
               Your active trip
             </span>
-            <span className="block font-medium truncate">
+            <span className="mt-0.5 block truncate font-[family-name:var(--font-display)] text-[1.0625rem] font-semibold">
               {tripScope?.label ?? "Continue planning"}
             </span>
           </span>
-          <ArrowRight className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+          <ArrowRight className="h-5 w-5 shrink-0 text-white/70" />
         </button>
       )}
 
-      <div>
-        <div className="mb-2.5 flex items-center justify-between">
-          <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-            <Sparkles className="h-3.5 w-3.5 text-[var(--accent)]" /> For you
-          </h2>
-          {recommendations.length > 3 && (
-            <button
-              onClick={() => setShowAll(true)}
-              className="inline-flex items-center gap-1 text-xs font-medium text-[var(--brand-500)] hover:underline"
-            >
-              See more
-              <ArrowRight className="h-3 w-3" />
-            </button>
-          )}
-        </div>
+      <section>
+        <SectionHeader
+          icon={<Sparkles className="h-[1.15rem] w-[1.15rem] text-[var(--accent)]" weight="fill" />}
+          title="For you"
+          hint="Drawn from your own trips and searches — not a generic featured list."
+          action={
+            recommendations.length > 3 && (
+              <button
+                onClick={() => setShowAll(true)}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--brand-600)] hover:underline"
+              >
+                See all {recommendations.length}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            )
+          }
+        />
         <div className="grid gap-3 sm:grid-cols-2">
-          {recommendations.slice(0, 3).map((rec, index) => (
+          {recommendations.slice(0, 4).map((rec, index) => (
             <RecCard key={rec.id ?? `${rec.scope}-${index}`} rec={rec} onLaunch={onLaunch} />
           ))}
         </div>
-      </div>
+      </section>
 
       {showAll && (
         <SuggestionsDrawer
@@ -134,7 +143,7 @@ export function PersonalHome({
           }}
         />
       )}
-    </section>
+    </Page>
   );
 }
 
@@ -149,22 +158,31 @@ function RecCard({
   return (
     <button
       onClick={() => onLaunch(rec.scope, rec.goal)}
-      className="surface-card group flex w-full items-start gap-3 p-4 text-left transition-colors hover:border-[var(--brand-400)]"
+      className="surface-card pressable group flex w-full items-start gap-3 p-4 text-left hover:border-[var(--brand-400)] hover:shadow-[var(--shadow-2)]"
     >
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] text-[var(--brand-500)]">
-        <Icon className="h-5 w-5" />
+      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] text-[var(--brand-600)]">
+        <Icon className="h-5 w-5" weight="fill" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block font-medium leading-snug">{rec.title}</span>
-        <span className="mt-0.5 block text-xs text-[var(--muted)]">{rec.subtitle}</span>
+        <span className="block text-[0.9375rem] font-semibold leading-snug tracking-[-0.01em]">
+          {rec.title}
+        </span>
+        <span className="mt-1 block text-xs leading-relaxed text-[var(--muted)]">{rec.subtitle}</span>
       </span>
-      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-[var(--muted)] opacity-0 transition-opacity group-hover:opacity-100" />
+      {/* The chevron always shows: on touch there is no hover to reveal it, and
+          it's the only thing saying the card is tappable. */}
+      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-[var(--muted)] transition-transform duration-[var(--dur)] group-hover:translate-x-0.5 group-hover:text-[var(--brand-600)]" />
     </button>
   );
 }
 
-/** Right-side offcanvas with the full suggestion list — recents, agent picks and
- *  "similar to your last trip" ideas. */
+/**
+ * The full suggestion list — recents, agent picks and "similar to your last trip".
+ *
+ * A bottom sheet on phones and a side panel from `sm` up. A right-hand offcanvas
+ * on a phone is a desktop pattern: it arrives from the edge furthest from your
+ * thumb, and the close button ends up in the top corner you can't reach.
+ */
 function SuggestionsDrawer({
   recs,
   onLaunch,
@@ -174,6 +192,8 @@ function SuggestionsDrawer({
   onLaunch: (scope: string, goal?: string) => void;
   onClose: () => void;
 }) {
+  const isMobile = useIsMobile();
+
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
@@ -186,33 +206,45 @@ function SuggestionsDrawer({
         </Dialog.Overlay>
         <Dialog.Content asChild>
           <motion.div
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
+            initial={isMobile ? { y: "100%" } : { x: "100%" }}
+            animate={isMobile ? { y: 0 } : { x: 0 }}
             transition={{ type: "spring", stiffness: 320, damping: 34 }}
             className={cn(
-              "fixed right-0 top-0 z-[86] flex h-full w-[min(28rem,100%)] flex-col",
-              "border-l border-[var(--border)] bg-[var(--elevated)] shadow-[var(--shadow-2)]",
+              "fixed z-[86] flex flex-col bg-[var(--elevated)] shadow-[var(--shadow-3)]",
+              "inset-x-0 bottom-0 max-h-[85dvh] rounded-t-[var(--r-xl)] border-t border-[var(--border)]",
+              "sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-[min(28rem,100%)]",
+              "sm:rounded-none sm:border-t-0 sm:border-l",
             )}
           >
-            <div className="flex items-center justify-between border-b border-[var(--border)] p-4">
-              <div>
-                <Dialog.Title className="font-[family-name:var(--font-display)] text-lg">
+            {/* Grab handle — the affordance that says "this sheet came from the
+                bottom edge and goes back there". Phones only. */}
+            <span
+              aria-hidden
+              className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-[var(--border)] sm:hidden"
+            />
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4">
+              <div className="min-w-0">
+                <Dialog.Title className="font-[family-name:var(--font-display)] text-[1.125rem] font-bold tracking-[-0.02em]">
                   Suggestions for you
                 </Dialog.Title>
-                <Dialog.Description className="text-xs text-[var(--muted)]">
+                <Dialog.Description className="mt-0.5 text-xs leading-relaxed text-[var(--muted)]">
                   From your past trips, searches, and places with a similar vibe.
                 </Dialog.Description>
               </div>
               <Dialog.Close asChild>
                 <button
                   aria-label="Close"
-                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-[var(--surface)]"
+                  data-fixed-size
+                  className="tap-target grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </Dialog.Close>
             </div>
-            <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-4">
+            <div
+              className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain p-4"
+              style={{ paddingBottom: "calc(1rem + var(--safe-bottom))" }}
+            >
               {recs.map((rec, index) => (
                 <RecCard key={rec.id ?? `${rec.scope}-${index}`} rec={rec} onLaunch={onLaunch} />
               ))}
