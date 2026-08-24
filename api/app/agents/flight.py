@@ -29,7 +29,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date as _date
+from datetime import date as _date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import quote_plus
@@ -326,42 +326,60 @@ class FlightAgent(BaseAgent):
         returns inventory, so a full-trip search still yields bookable Atlas fares
         instead of an empty section.
         """
-        if depart == "flexible":
-            return []  # Atlas requires a concrete departure date.
-
-        if not candidates:
-            return []
+        if depart == "flexible" or not candidates:
+            return []  # Atlas needs a concrete date; Camofox/Amadeus still run.
 
         api_key = await _atlas_key()
-        for dest_code in candidates[:4]:
+        ret = str(request.end_date) if request.end_date else None
+        gateways = list(candidates[:4])
+
+        async def _one(dest_code: str, dep: str, rt: str | None) -> tuple[str, list[dict[str, Any]]]:
             try:
-                envelope = await atlas_skill.search(
+                env = await atlas_skill.search(
                     origin,
                     dest_code,
-                    depart,
-                    return_date=str(request.end_date) if request.end_date else None,
+                    dep,
+                    return_date=rt,
                     adults=max(1, request.travellers),
                     currency=request.budget_currency,
+                    # Ask for economy/flex/premium fare families — more real choices
+                    # per flight instead of a single cheapest fare.
+                    multiple_fare_families=True,
                     api_key=api_key,
                 )
             except AtlasSkillError as exc:
                 logger.info("Atlas unavailable (%s)", exc)
-                return []
+                return "error", []
+            if env.is_auth_problem:
+                return "auth", []
+            if env.is_empty_result or not env.ok:
+                return "empty", []
+            return "ok", atlas_skill.normalize_offers(env)
 
-            if envelope.is_auth_problem:
-                self.emit(
-                    "waiting",
-                    "Atlas needs authorisation — add your sandbox keys in the API Vault",
-                    data={"code": envelope.code},
-                )
-                return []
-            if envelope.is_empty_result or not envelope.ok:
-                continue  # no inventory to this gateway — try the next one
+        # 1) Search EVERY candidate gateway at once and merge — a person comparing
+        #    "Tokyo" would check both NRT and HND, not stop at the first with a hit.
+        results = await asyncio.gather(*[_one(code, depart, ret) for code in gateways])
+        if any(status == "auth" for status, _ in results):
+            self.emit(
+                "waiting",
+                "Atlas needs authorisation — add your sandbox keys in the API Vault",
+            )
+            return []
+        merged = [offer for _, offers in results for offer in offers]
+        if merged:
+            hits = sum(1 for _, offers in results if offers)
+            self.emit("active", f"Atlas: {len(merged)} fare(s) across {hits} gateway(s)")
+            return merged
 
-            offers = atlas_skill.normalize_offers(envelope)
+        # 2) Nothing on the requested date — sandbox inventory is date-sparse, so
+        #    shift the whole trip a day or two (as a flexible traveller would) and
+        #    retry the primary gateway. Each offer is flagged with its real date.
+        for dep, rt in _flex_trip_dates(depart, ret):
+            status, offers = await _one(gateways[0], dep, rt)
             if offers:
-                if len(candidates) > 1:
-                    self.emit("active", f"Atlas: {len(offers)} fare(s) via {dest_code}")
+                for offer in offers:
+                    offer.setdefault("raw", {})["date_shifted_to"] = dep
+                self.emit("active", f"Atlas: none on {depart} — found {len(offers)} on {dep}")
                 return offers
 
         self.emit("active", f"Atlas: no inventory to {request.destination or origin}")
@@ -1787,3 +1805,22 @@ def _parse_iso_date(value: str | None) -> _date | None:
         return _date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+def _flex_trip_dates(depart: str, return_date: str | None) -> list[tuple[str, str | None]]:
+    """Nearby (depart, return) pairs that keep the trip length and skip the past —
+    so an Atlas search with no inventory on the exact day can still find flights a
+    day or two either side, the way a flexible traveller would."""
+    dep = _parse_iso_date(depart)
+    if dep is None:
+        return []
+    ret = _parse_iso_date(return_date)
+    today = _date.today()
+    pairs: list[tuple[str, str | None]] = []
+    for delta in (1, -1, 2, 3):
+        shifted = dep + timedelta(days=delta)
+        if shifted < today:
+            continue
+        shifted_ret = (ret + timedelta(days=delta)).isoformat() if ret else None
+        pairs.append((shifted.isoformat(), shifted_ret))
+    return pairs
