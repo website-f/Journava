@@ -135,3 +135,33 @@ def test_is_demo_trip_guard():
     ) is True
     assert _is_demo_trip({"chief": {"data": {"destination": "Osaka, Japan"}}}) is False
     assert _is_demo_trip(None) is False
+
+
+# --------------------------------------------------------------------------- #
+# Proactive trip-countdown notifications (pure helpers — dedupe-safe scheduler)
+# --------------------------------------------------------------------------- #
+def test_trip_start_date_parsing():
+    from app.bookings import _trip_start_date
+
+    assert _trip_start_date({"chief": {"data": {"start_date": "2026-09-10"}}}).isoformat() == "2026-09-10"
+    assert _trip_start_date({"chief": {"data": {"start_date": "2026-09-10T00:00:00"}}}).isoformat() == "2026-09-10"
+    assert _trip_start_date({"chief": {"data": {"start_date": None}}}) is None  # no dates → skip, don't mark
+    assert _trip_start_date({"chief": {"data": {"start_date": "soon"}}}) is None  # unparseable → skip
+    assert _trip_start_date({}) is None
+
+
+def test_countdown_phrase():
+    from app.bookings import _countdown_phrase
+
+    assert "today" in _countdown_phrase(0)
+    assert "tomorrow" in _countdown_phrase(1)
+    assert "3 days" in _countdown_phrase(3)
+
+
+def test_day_one_highlight():
+    from app.bookings import _day_one_highlight
+
+    assert _day_one_highlight({"itinerary": {"items": [{"title": "Senso-ji Temple"}]}}) == "Senso-ji Temple"
+    assert _day_one_highlight({"itinerary": {"items": [{"title": "  "}, {"name": "Ramen crawl"}]}}) == "Ramen crawl"
+    assert _day_one_highlight({"itinerary": {"items": []}}) is None
+    assert _day_one_highlight({}) is None

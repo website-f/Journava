@@ -68,15 +68,18 @@ logger = logging.getLogger("journava")
 
 
 async def _reminder_loop() -> None:
-    """Every ~6h, ping managers about upcoming check-ins (best-effort)."""
+    """Every ~6h, ping managers about upcoming check-ins and travellers about
+    imminent trips (best-effort). Both sweeps dedupe on their own marker column,
+    so a ping fires once per booking/trip regardless of how often the loop runs."""
     import asyncio
 
-    from app.bookings import send_due_reminders
+    from app.bookings import send_due_reminders, send_trip_countdowns
 
     while True:
         try:
             await asyncio.sleep(6 * 3600)
             await send_due_reminders()
+            await send_trip_countdowns()
         except asyncio.CancelledError:  # noqa: PERF203
             break
         except Exception as exc:  # noqa: BLE001

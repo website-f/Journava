@@ -526,6 +526,9 @@ CREATE TABLE IF NOT EXISTS saved_results (
 );
 CREATE INDEX IF NOT EXISTS saved_results_user_idx ON saved_results (user_id, created_at DESC);
 ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'result';
+-- When a proactive trip notification (e.g. a countdown) was last sent, so the
+-- reminder loop pings each trip once instead of every cycle.
+ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS finance_transactions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),

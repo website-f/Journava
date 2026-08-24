@@ -7,6 +7,7 @@ manager over Telegram — all so the money and the room state can never drift.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import date
@@ -208,6 +209,105 @@ async def send_due_reminders(*, days_ahead: int = 2, org_id: str | None = None) 
 async def remind_due(agency: dict = Depends(require_agency)) -> dict[str, Any]:
     """Manually run the check-in reminder sweep for this org (demo-friendly)."""
     return await send_due_reminders(days_ahead=7, org_id=agency["org_id"])
+
+
+def _trip_start_date(snap: dict[str, Any]) -> date | None:
+    """The canonical trip start from a saved snapshot (chief.data.start_date),
+    parsed to a date. Returns None when the trip has no fixed start."""
+    chief = snap.get("chief") if isinstance(snap, dict) else None
+    data = (chief.get("data") if isinstance(chief, dict) else {}) or {}
+    raw = data.get("start_date")
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+
+
+def _day_one_highlight(snap: dict[str, Any]) -> str | None:
+    """A single teaser line for the countdown — the first scheduled activity."""
+    items = (snap.get("itinerary") or {}).get("items") or []
+    for it in items:
+        title = (it.get("title") or it.get("name") or "").strip()
+        if title:
+            return title
+    return None
+
+
+def _countdown_phrase(days: int) -> str:
+    if days <= 0:
+        return "is <b>today</b> 🎉"
+    if days == 1:
+        return "is <b>tomorrow</b>"
+    return f"is in <b>{days} days</b>"
+
+
+async def send_trip_countdowns(*, days_ahead: int = 3) -> dict[str, Any]:
+    """Ping travellers about a saved trip whose start date is near, exactly once.
+
+    Mirrors ``send_due_reminders``: marks ``saved_results.notified_at`` so each
+    trip fires a single countdown instead of every cycle. Trips with no fixed
+    start date are left untouched (so a countdown fires once dates are added);
+    trips already in the past are marked notified silently so they stop being
+    re-scanned. Runs globally (the periodic task) with a demo-friendly manual
+    trigger below.
+    """
+    from app.tools import telegram
+
+    pool = await db.get_pool()
+    if pool is None:
+        return {"sent": 0, "trips": []}
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, title, destination, snapshot FROM saved_results "
+            "WHERE kind = 'trip' AND notified_at IS NULL ORDER BY created_at DESC LIMIT 200"
+        )
+
+    today = date.today()
+    sent = 0
+    done: list[dict[str, Any]] = []
+    for r in rows:
+        snap = r["snapshot"]
+        try:
+            snap = json.loads(snap) if isinstance(snap, str) else (snap or {})
+        except (ValueError, TypeError):
+            snap = {}
+        start = _trip_start_date(snap)
+        if start is None:
+            continue  # no dates yet — revisit next cycle, don't mark
+        days_until = (start - today).days
+        if days_until > days_ahead:
+            continue  # too far out — leave for a future cycle
+        # Past trips fall through and get marked (silent) so we stop scanning them.
+        if 0 <= days_until <= days_ahead:
+            dest = r["destination"] or r["title"] or "your trip"
+            highlight = _day_one_highlight(snap)
+            text = (
+                f"✈️ <b>Trip countdown</b>\nYour trip to <b>{dest}</b> "
+                f"{_countdown_phrase(days_until)}!"
+            )
+            if highlight:
+                text += f"\nFirst up: {highlight}."
+            text += "\nOpen Journava to review your plan and bookings."
+            try:
+                await telegram.notify(text)
+                sent += 1
+                done.append({"destination": dest, "start_date": start.isoformat(), "days_until": days_until})
+            except Exception as exc:  # noqa: BLE001
+                logger.info("countdown notify failed: %s", exc)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE saved_results SET notified_at = now() WHERE id = $1", r["id"]
+            )
+    return {"sent": sent, "trips": done}
+
+
+@router.post("/notify-countdowns")
+async def notify_countdowns(request: Request) -> dict[str, Any]:
+    """Manually run the trip-countdown sweep (demo-friendly, any authed user)."""
+    return await send_trip_countdowns(days_ahead=3)
 
 
 @router.get("/calendar")
