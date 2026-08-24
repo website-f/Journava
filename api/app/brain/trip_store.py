@@ -278,14 +278,14 @@ async def refine_itinerary(instruction: str | None = None) -> dict[str, Any] | N
 
 def _naive_schedule(picks: list[dict[str, Any]], days: int) -> list[dict[str, Any]]:
     """Deterministic fallback: spread picks across days with sensible meal/activity
-    slots so every day is filled even when the LLM is unavailable."""
+    slots so every day is filled even when the LLM is unavailable. 1-based days."""
     activities = [p for p in picks if str(p.get("kind")) != "restaurant"]
     meals = [p for p in picks if str(p.get("kind")) == "restaurant"]
     slots = [("09:00", "11:00", "activity"), ("11:30", "13:00", "activity"),
              ("13:00", "14:00", "meal"), ("15:00", "17:30", "activity"), ("19:00", "20:30", "meal")]
     items: list[dict[str, Any]] = []
     ai = mi = 0
-    for day in range(days):
+    for day in range(1, max(1, days) + 1):
         for start, end, kind in slots:
             if kind == "meal" and mi < len(meals):
                 p = meals[mi]; mi += 1
@@ -299,9 +299,56 @@ def _naive_schedule(picks: list[dict[str, Any]], days: int) -> list[dict[str, An
     return items
 
 
+def _compact_place(o: dict[str, Any]) -> dict[str, Any]:
+    """The fields the itinerary/backup UI needs from a suggested Option — enough
+    to show a rich card and link back to booking, without the whole payload."""
+    return {
+        "id": o.get("id"),
+        "title": o.get("title"),
+        "kind": o.get("kind"),
+        "price_amount": o.get("price_amount"),
+        "price_currency": o.get("price_currency"),
+        "provider": o.get("provider"),
+        "booking_url": o.get("booking_url") or o.get("source_url"),
+        "source": o.get("source"),
+        "reasoning": o.get("reasoning"),
+        "halal_confidence": o.get("halal_confidence"),
+        "rating": (o.get("raw") or {}).get("rating"),
+    }
+
+
+def _suggested_places(trip: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every place the agents suggested (research + recommendation), deduped by
+    title — the universe the traveller picks from."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for agent in ("research", "recommendation"):
+        for o in ((trip.get(agent) or {}).get("options") or []):
+            if o.get("kind") not in ("activity", "restaurant"):
+                continue
+            key = (o.get("title") or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(_compact_place(o))
+    return out
+
+
+def _detail_from_pick(pick: dict[str, Any]) -> dict[str, Any]:
+    """Carry the booking-relevant fields of a pick onto its scheduled item so a
+    scheduled place still shows its price and links back to book."""
+    return {
+        k: pick[k]
+        for k in ("id", "price_amount", "price_currency", "booking_url", "source", "provider", "rating")
+        if pick.get(k) is not None
+    }
+
+
 async def build_itinerary(picks: list[dict[str, Any]], days: int, *, arrival: str | None = None) -> dict[str, Any] | None:
     """Schedule the traveller's PICKED places into a complete N-day itinerary —
-    every day filled with smart, non-overlapping timing and meals at meal times."""
+    every day filled with smart, non-overlapping timing and meals at meal times —
+    and keep everything they DIDN'T pick as a `backup` list they can pull in
+    later."""
     from app.core import llm
 
     trip = await load_trip_durable()
@@ -319,8 +366,11 @@ async def build_itinerary(picks: list[dict[str, Any]], days: int, *, arrival: st
         "are more picks than fit keep the best and spread them; if fewer, add sensible "
         "free-time / rest / local-stroll blocks so no day is empty. Schedule popular / crowd-heavy "
         "landmarks for early morning or late afternoon (off-peak) and keep midday for meals or "
-        "indoor spots, so the traveller dodges the worst queues. Return JSON "
-        "{\"items\":[{day_index:int(0-based), kind:'activity'|'meal'|'transport'|'hotel', title, "
+        "indoor spots, so the traveller dodges the worst queues. Use each selected "
+        "place's EXACT title verbatim as the item title (so it links back to its "
+        "booking/price); only invent titles for the filler meal/free-time blocks. "
+        "Return JSON {\"items\":[{day_index:int STARTING AT 1, "
+        "kind:'activity'|'meal'|'transport'|'hotel', title, "
         "starts_at:'HH:MM', ends_at:'HH:MM', reasoning}]}."
     )
     user = (
@@ -341,8 +391,90 @@ async def build_itinerary(picks: list[dict[str, Any]], days: int, *, arrival: st
     if not items:
         items = _naive_schedule(picks, max(1, days))
 
+    # Attach each pick's booking details onto its scheduled item (price, link…),
+    # and normalise day_index to 1-based so the UI never renders "Day 0".
+    picks_by_title = {(p.get("title") or "").strip().lower(): p for p in picks}
+    for item in items:
+        try:
+            item["day_index"] = max(1, int(item.get("day_index") or 1))
+        except (TypeError, ValueError):
+            item["day_index"] = 1
+        detail = _detail_from_pick(picks_by_title.get((item.get("title") or "").strip().lower(), {}))
+        if detail:
+            merged = dict(item.get("details") or {})
+            merged.update(detail)
+            item["details"] = merged
+            if item.get("cost_amount") is None and detail.get("price_amount") is not None:
+                item["cost_amount"] = detail["price_amount"]
+                item["cost_currency"] = detail.get("price_currency")
+
+    # Everything suggested but NOT picked becomes the backup shortlist.
+    picked_titles = set(picks_by_title.keys())
+    backup = [p for p in _suggested_places(trip) if (p.get("title") or "").strip().lower() not in picked_titles]
+
     itinerary = dict(trip.get("itinerary") or {})
     itinerary["items"] = items
+    itinerary["backup"] = backup
     trip["itinerary"] = itinerary
+    await save_trip_durable(trip)
+    return trip
+
+
+async def move_place(title: str, action: str) -> dict[str, Any] | None:
+    """Instantly (no LLM) move a place between the schedule and the backup list.
+
+    `action="remove"` drops a scheduled item to backup; `action="add"` pulls a
+    backup place into the least-busy day at a sensible slot. Deterministic so the
+    picker feels immediate; the LLM "optimise" pass (build/refine) is separate."""
+    from collections import Counter
+
+    trip = await load_trip_durable()
+    if trip is None:
+        return None
+    itin = dict(trip.get("itinerary") or {})
+    items = list(itin.get("items") or [])
+    backup = list(itin.get("backup") or [])
+    key = (title or "").strip().lower()
+
+    if action == "remove":
+        moved = next((it for it in items if (it.get("title") or "").strip().lower() == key), None)
+        if moved is not None:
+            items = [it for it in items if it is not moved]
+            det = moved.get("details") or {}
+            backup.insert(0, {
+                "id": det.get("id"),
+                "title": moved.get("title"),
+                "kind": "restaurant" if moved.get("kind") == "meal" else "activity",
+                "price_amount": det.get("price_amount"),
+                "price_currency": det.get("price_currency"),
+                "booking_url": det.get("booking_url"),
+                "source": det.get("source"),
+                "reasoning": moved.get("reasoning"),
+            })
+    elif action == "add":
+        moved = next((b for b in backup if (b.get("title") or "").strip().lower() == key), None)
+        if moved is not None:
+            backup = [b for b in backup if b is not moved]
+            day_span = max((int(it.get("day_index") or 1) for it in items), default=1)
+            counts = Counter(int(it.get("day_index") or 1) for it in items)
+            target_day = min(range(1, day_span + 1), key=lambda d: counts.get(d, 0))
+            is_meal = moved.get("kind") == "restaurant"
+            start, end = ("13:00", "14:00") if is_meal else ("16:00", "18:00")
+            items.append({
+                "day_index": target_day,
+                "kind": "meal" if is_meal else "activity",
+                "title": moved.get("title"),
+                "starts_at": start,
+                "ends_at": end,
+                "reasoning": moved.get("reasoning") or "Pulled in from your backup ideas.",
+                "cost_amount": moved.get("price_amount"),
+                "cost_currency": moved.get("price_currency"),
+                "details": _detail_from_pick(moved),
+            })
+            items.sort(key=lambda it: (int(it.get("day_index") or 1), it.get("starts_at") or "99:99"))
+
+    itin["items"] = items
+    itin["backup"] = backup
+    trip["itinerary"] = itin
     await save_trip_durable(trip)
     return trip

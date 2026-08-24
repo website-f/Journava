@@ -1,7 +1,7 @@
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2 } from "@/components/ui/icons";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2, Check, Plus, Compass, Utensils } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
 import { Money } from "@/components/ui/Money";
@@ -135,6 +135,7 @@ export function MyTrip() {
       <WeatherCard results={results} />
       <CompleteItineraryCard results={results} setTrip={setTrip} />
       <ItinerarySection results={results} setTrip={setTrip} />
+      <BackupRail results={results} setTrip={setTrip} />
       {/* The full plan — flights, stays, food, places, visa, insurance — so the
           saved trip shows everything the agents produced, not just the summary. */}
       <div className="mt-8">
@@ -613,6 +614,28 @@ function GuardianCard() {
 // Complete-your-itinerary place picker + plan readiness
 // --------------------------------------------------------------------------- //
 
+type Suggestion = {
+  id?: string;
+  title: string;
+  kind?: string;
+  price_amount?: number | null;
+  price_currency?: string | null;
+  booking_url?: string | null;
+  source_url?: string | null;
+  source?: string;
+  reasoning?: string | null;
+  halal_confidence?: string | null;
+  raw?: { rating?: number | string | null };
+};
+
+const _key = (t?: string) => (t ?? "").trim().toLowerCase();
+
+/**
+ * The interactive itinerary designer. The agents suggest far more places than a
+ * short trip can fit; here the traveller taps the ones they want, and we
+ * schedule them into full days — everything they leave out is kept as a backup
+ * shortlist they can pull in later (see BackupRail).
+ */
 function CompleteItineraryCard({
   results,
   setTrip,
@@ -620,14 +643,36 @@ function CompleteItineraryCard({
   results: Record<string, AgentPlanResult>;
   setTrip: (trip: Record<string, AgentPlanResult>) => void;
 }) {
-  const suggestions = ((results.research?.options ?? []) as Array<{ title: string; kind?: string }>).filter(
-    (o) => o.kind === "activity" || o.kind === "restaurant",
+  // Merge everything the agents suggested (research + recommendation), deduped.
+  const suggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Suggestion[] = [];
+    for (const o of [
+      ...((results.research?.options ?? []) as Suggestion[]),
+      ...((results.recommendation?.options ?? []) as Suggestion[]),
+    ]) {
+      if (o.kind !== "activity" && o.kind !== "restaurant") continue;
+      const k = _key(o.title);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(o);
+    }
+    return out;
+  }, [results]);
+
+  const scheduled = useMemo(
+    () => new Set((results.itinerary?.items ?? []).map((i) => _key(i.title))),
+    [results],
   );
   const [days, setDays] = useState(() => {
     const items = results.itinerary?.items ?? [];
-    return items.length ? Math.max(...items.map((i) => Number(i.day_index) || 0)) + 1 : 3;
+    return items.length ? Math.max(...items.map((i) => Number(i.day_index) || 1)) : 3;
   });
-  const [picked, setPicked] = useState<Set<string>>(new Set());
+  // Pre-seed the selection from whatever is already scheduled, so the picker
+  // reflects the current plan instead of starting blank.
+  const [picked, setPicked] = useState<Set<string>>(
+    () => new Set(suggestions.filter((s) => scheduled.has(_key(s.title))).map((s) => s.title)),
+  );
   const [busy, setBusy] = useState(false);
   if (suggestions.length === 0) return null;
 
@@ -639,14 +684,27 @@ function CompleteItineraryCard({
       return n;
     });
 
+  const fit = days * 3;
   const build = async () => {
-    const picks = suggestions.filter((s) => picked.has(s.title)).map((s) => ({ title: s.title, kind: s.kind }));
+    const picks = suggestions
+      .filter((s) => picked.has(s.title))
+      .map((s) => ({
+        id: s.id,
+        title: s.title,
+        kind: s.kind,
+        price_amount: s.price_amount,
+        price_currency: s.price_currency,
+        booking_url: s.booking_url ?? s.source_url,
+        source: s.source,
+        reasoning: s.reasoning,
+        rating: s.raw?.rating,
+      }));
     if (!picks.length) return toast.info("Pick a few places first.");
     setBusy(true);
     try {
       const r = await api.post<{ trip: Record<string, AgentPlanResult> }>("/trip/itinerary/build", { days, picks });
       setTrip(r.trip);
-      toast.success(`Scheduled ${picks.length} place(s) across ${days} days.`);
+      toast.success(`Scheduled ${picks.length} place(s) across ${days} days — the rest are in your backup.`);
     } catch {
       toast.error("Couldn't build the itinerary.");
     } finally {
@@ -658,30 +716,57 @@ function CompleteItineraryCard({
     <section className="surface-card mb-6 p-5">
       <div className="mb-1 flex items-center gap-2">
         <Sparkles className="h-5 w-5 text-[var(--brand-500)]" />
-        <h3 className="text-base font-semibold">Complete your itinerary</h3>
+        <h3 className="text-base font-semibold">Design your days</h3>
       </div>
       <p className="mb-3 text-sm text-[var(--muted)]">
-        The agents surfaced <strong className="text-[var(--text)]">{suggestions.length}</strong> places. A{" "}
-        {days}-day plan fits about <strong className="text-[var(--text)]">{days * 3}</strong> — pick the ones you
-        want and we'll schedule them into full days. <strong className="text-[var(--text)]">{picked.size}</strong> picked.
+        Your agents found <strong className="text-[var(--text)]">{suggestions.length}</strong> places. Tap the ones
+        you want — we'll schedule them across full days and keep the rest as backup you can swap in anytime.
       </p>
-      <div className="flex flex-wrap gap-2">
-        {suggestions.map((s) => (
-          <button
-            key={s.title}
-            onClick={() => toggle(s.title)}
-            className={cn(
-              "rounded-[var(--r-pill)] border px-3 py-1.5 text-xs transition-colors",
-              picked.has(s.title)
-                ? "border-transparent bg-[var(--brand-500)] text-white"
-                : "border-[var(--border)] hover:bg-[var(--bg)]",
-            )}
-          >
-            {s.kind === "restaurant" ? "🍽 " : "◆ "}
-            {s.title}
-          </button>
-        ))}
+
+      {/* Selectable place cards */}
+      <div className="grid max-h-80 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+        {suggestions.map((s) => {
+          const on = picked.has(s.title);
+          const isFood = s.kind === "restaurant";
+          const Icon = isFood ? Utensils : Compass;
+          const price = s.price_amount != null ? `${s.price_currency ?? ""} ${Number(s.price_amount).toLocaleString()}`.trim() : null;
+          const rating = s.raw?.rating;
+          return (
+            <button
+              key={s.title}
+              onClick={() => toggle(s.title)}
+              aria-pressed={on}
+              className={cn(
+                "flex items-start gap-2.5 rounded-[var(--r-md)] border p-2.5 text-left transition-all",
+                on
+                  ? "border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] ring-1 ring-[var(--brand-500)]"
+                  : "border-[var(--border)] hover:border-[var(--brand-400)]",
+              )}
+            >
+              <span
+                className={cn(
+                  "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[var(--r-sm)] border transition-colors",
+                  on ? "border-[var(--brand-500)] bg-[var(--brand-500)] text-white" : "border-[var(--border)]",
+                )}
+              >
+                {on && <Check className="h-3.5 w-3.5" weight="bold" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--brand-500)]" />
+                  <span className="min-w-0 truncate text-xs font-medium">{s.title}</span>
+                </span>
+                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.65rem] text-[var(--muted)]">
+                  {price && <span className="font-medium text-[var(--brand-500)]">{price}</span>}
+                  {rating != null && rating !== "" && <span className="text-[var(--accent)]">★ {rating}</span>}
+                  {isFood && s.halal_confidence && <span className="capitalize">{String(s.halal_confidence).replace(/_/g, " ")}</span>}
+                </span>
+              </span>
+            </button>
+          );
+        })}
       </div>
+
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <div className="w-28">
           <Select
@@ -691,9 +776,86 @@ function CompleteItineraryCard({
             aria-label="days"
           />
         </div>
-        <Button onClick={build} loading={busy} disabled={!picked.size}>
-          <Sparkles className="h-4 w-4" /> Build my {days}-day itinerary
+        <span className="text-xs text-[var(--muted)]">
+          <strong className={cn(picked.size > fit ? "text-[var(--warning)]" : "text-[var(--text)]")}>{picked.size}</strong>{" "}
+          selected · a {days}-day trip fits ~{fit}
+          {picked.size > fit && " (we'll keep the best, rest → backup)"}
+        </span>
+        <Button className="ml-auto" onClick={build} loading={busy} disabled={!picked.size}>
+          <Sparkles className="h-4 w-4" /> Build my {days}-day plan
         </Button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Backup shortlist — the suggestions that didn't make the schedule. Each can be
+ * pulled straight into the plan (instant, no rebuild); a scheduled place bumped
+ * out lands back here. This is what makes the plan feel alive and reversible.
+ */
+function BackupRail({
+  results,
+  setTrip,
+}: {
+  results: Record<string, AgentPlanResult>;
+  setTrip: (trip: Record<string, AgentPlanResult>) => void;
+}) {
+  const backup = ((results.itinerary as { backup?: Suggestion[] } | undefined)?.backup ?? []) as Suggestion[];
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!backup.length) return null;
+
+  const add = async (title: string) => {
+    setBusy(title);
+    try {
+      const r = await api.post<{ trip: Record<string, AgentPlanResult> }>("/trip/itinerary/pick", { title, action: "add" });
+      setTrip(r.trip);
+      toast.success(`Added “${title}” to your plan.`);
+    } catch {
+      toast.error("Couldn't add that to the plan.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="surface-card mb-6 p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <Briefcase className="h-5 w-5 text-[var(--accent)]" />
+        <h3 className="text-base font-semibold">Backup ideas</h3>
+        <span className="rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] px-2 py-0.5 text-[0.65rem] font-semibold text-[var(--accent)]">
+          {backup.length}
+        </span>
+      </div>
+      <p className="mb-3 text-sm text-[var(--muted)]">
+        Great picks that didn't fit — tap ＋ to slot any into your plan.
+      </p>
+      <div className="no-scrollbar -mx-1 flex snap-x gap-2.5 overflow-x-auto px-1 pb-1">
+        {backup.map((b) => {
+          const isFood = b.kind === "restaurant";
+          const Icon = isFood ? Utensils : Compass;
+          const price = b.price_amount != null ? `${b.price_currency ?? ""} ${Number(b.price_amount).toLocaleString()}`.trim() : null;
+          return (
+            <div key={b.title} className="flex w-[13.5rem] shrink-0 snap-start flex-col rounded-[var(--r-md)] border border-[var(--border)] p-3">
+              <span className="flex items-center gap-1.5">
+                <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">{b.title}</span>
+              </span>
+              {(b.reasoning || price) && (
+                <span className="mt-1 line-clamp-2 flex-1 text-[0.65rem] text-[var(--muted)]">
+                  {price ? `${price} · ` : ""}{b.reasoning}
+                </span>
+              )}
+              <button
+                onClick={() => void add(b.title)}
+                disabled={busy === b.title}
+                className="mt-2 inline-flex items-center justify-center gap-1 rounded-[var(--r-md)] border border-[var(--brand-400)] px-2.5 py-1.5 text-xs font-medium text-[var(--brand-600)] transition-colors hover:bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] disabled:opacity-60"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add to plan
+              </button>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -1057,6 +1219,23 @@ function ItinerarySection({
     }
   };
 
+  // Bump a scheduled place out to the backup list (instant, no rebuild).
+  const removeItem = async (title: string) => {
+    try {
+      const res = await api.post<{ trip: Record<string, AgentPlanResult> }>(
+        "/trip/itinerary/pick",
+        { title, action: "remove" },
+      );
+      if (res.trip) {
+        setTrip(res.trip);
+        setItems(res.trip.itinerary?.items ?? []);
+        toast.success(`Moved “${title}” to backup.`);
+      }
+    } catch {
+      toast.error("Couldn't move that to backup.");
+    }
+  };
+
   return (
     <section className="mb-6">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1084,6 +1263,7 @@ function ItinerarySection({
               dayIndex={dayIndex}
               dayItems={dayItems}
               onReorder={(from, to) => reorderDay(dayIndex, from, to)}
+              onRemove={(title) => void removeItem(title)}
             />
           ))}
       </div>
@@ -1095,10 +1275,12 @@ function DayItinerary({
   dayIndex,
   dayItems,
   onReorder,
+  onRemove,
 }: {
   dayIndex: number;
   dayItems: ItineraryItem[];
   onReorder: (from: number, to: number) => void;
+  onRemove: (title: string) => void;
 }) {
   const [drag, setDrag] = useState<number | null>(null);
   return (
@@ -1159,6 +1341,18 @@ function DayItinerary({
               >
                 <ArrowDown className="h-4 w-4" />
               </button>
+              {/* Only real places can go to backup — not flights/hotels/transport. */}
+              {(item.kind === "activity" || item.kind === "meal") && (
+                <button
+                  type="button"
+                  aria-label="Move to backup"
+                  title="Move to backup"
+                  onClick={() => onRemove(item.title)}
+                  className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] hover:bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] hover:text-[var(--accent)]"
+                >
+                  <ArrowDown className="h-4 w-4 rotate-[135deg]" />
+                </button>
+              )}
             </div>
           </li>
         ))}

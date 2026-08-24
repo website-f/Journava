@@ -398,12 +398,29 @@ class ItineraryBuild(BaseModel):
 
 @app.post(f"{settings.api_prefix}/trip/itinerary/build", tags=["trip"])
 async def build_itinerary(request: ItineraryBuild) -> dict[str, object]:
-    """Schedule the traveller's PICKED places into a full N-day itinerary."""
+    """Schedule the traveller's PICKED places into a full N-day itinerary; the
+    unpicked suggestions come back as `itinerary.backup`."""
     updated = await trip_store.build_itinerary(
         list(request.picks), max(1, request.days), arrival=request.arrival
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="No active trip to build")
+    return {"trip": updated}
+
+
+class ItineraryPick(BaseModel):
+    title: str
+    action: Literal["add", "remove"]
+
+
+@app.post(f"{settings.api_prefix}/trip/itinerary/pick", tags=["trip"])
+async def pick_itinerary(request: ItineraryPick) -> dict[str, object]:
+    """Instantly move a place between the schedule and the backup list — "add"
+    pulls a backup idea into the plan, "remove" drops a scheduled place back to
+    backup. No LLM, so the picker feels immediate."""
+    updated = await trip_store.move_place(request.title, request.action)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No active trip")
     return {"trip": updated}
 
 
