@@ -70,9 +70,23 @@ class InsuranceAgent(BaseAgent):
                 "Higher-risk destination — comprehensive medical + evacuation coverage recommended."
             )
 
+        # A place to actually compare & buy — the section listed provider names
+        # with no way to reach them.
+        from urllib.parse import quote_plus
+
+        sources = [
+            {"title": "Compare travel insurance (search)", "url": f"https://www.google.com/search?q={quote_plus('compare travel insurance ' + destination + ' online quote')}"},
+        ]
+        providers = data.get("providers") or []
+        for name in providers[:5]:
+            if isinstance(name, str) and name.strip():
+                sources.append(
+                    {"title": name.strip(), "url": f"https://www.google.com/search?q={quote_plus(name.strip() + ' travel insurance')}"}
+                )
+
         return AgentResult(
             agent=self.slug,
             summary=f"Insurance coverage for {destination} ({safety})",
             warnings=warnings,
-            data={"destination": destination, "safety_level": safety, **data},
+            data={"destination": destination, "safety_level": safety, **data, "sources": sources},
         )

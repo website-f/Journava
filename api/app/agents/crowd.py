@@ -90,6 +90,14 @@ class CrowdAgent(BaseAgent):
                 "tip": "Book popular attractions in advance during peak season",
             }
 
+        # Keep the article URLs GDELT already returned so the section links its
+        # evidence (they were being counted, then thrown away).
+        sources = [
+            {"title": (e.get("title") or e.get("url") or "Article")[:120], "url": e["url"]}
+            for e in news_events
+            if isinstance(e, dict) and e.get("url")
+        ][:6]
+
         return AgentResult(
             agent=self.slug,
             summary=f"Crowd level: {crowd_info.get('crowd_level', 'unknown')} — {crowd_info.get('tip', '')}",
@@ -101,5 +109,6 @@ class CrowdAgent(BaseAgent):
                 "reason": crowd_info.get("reason"),
                 "tip": crowd_info.get("tip"),
                 "tourism_buzz_articles": article_count,
+                "sources": sources,
             },
         )

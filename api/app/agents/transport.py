@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from urllib.parse import quote_plus
 
 from app.agents.base import BaseAgent
 from app.agents.schemas import AgentResult, TravelerProfile, TripRequest
@@ -17,6 +18,18 @@ from app.core import llm
 from app.tools import discover
 
 logger = logging.getLogger(__name__)
+
+
+def _booking_links(destination: str) -> list[dict[str, str]]:
+    """Where to actually BUY tickets/passes — the transport section had only
+    reference blogs, no purchase path. These search URLs always resolve to real
+    bookable inventory for the destination."""
+    q = quote_plus(destination)
+    return [
+        {"title": f"Klook — {destination} transport, passes & transfers", "url": f"https://www.klook.com/en-US/search/?query={q}"},
+        {"title": "12Go — trains, buses & ferries", "url": f"https://12go.asia/en?z=&people=1&query={q}"},
+        {"title": f"Book {destination} tickets (search)", "url": f"https://www.google.com/search?q={quote_plus('book ' + destination + ' transport tickets pass online')}"},
+    ]
 
 SYSTEM = """You are Journava's Transport agent. Recommend how to get around the \
 destination, grounded in the RESEARCH provided (don't rely on memory alone).
@@ -91,12 +104,13 @@ class TransportAgent(BaseAgent):
                 "tips": "Use rideshare apps for convenience.",
             }
 
-        sources = discover.source_links(research["sources"])
-        if sources:
-            self.emit("active", f"Transport: grounded in {len(sources)} source(s)")
+        # Booking links first (guaranteed, actionable) then crawled references.
+        booking = _booking_links(destination)
+        sources = booking + discover.source_links(research["sources"])
+        self.emit("active", f"Transport: {len(booking)} booking links + grounded sources")
 
         return AgentResult(
             agent=self.slug,
             summary=f"Transport options for {destination}",
-            data={"destination": destination, **data, "sources": sources},
+            data={"destination": destination, **data, "booking_links": booking, "sources": sources},
         )

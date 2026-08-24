@@ -364,7 +364,7 @@ class FlightAgent(BaseAgent):
                     self.emit("active", f"Atlas: {len(offers)} fare(s) via {dest_code}")
                 return offers
 
-        self.emit("active", f"Atlas: no inventory to {destination}")
+        self.emit("active", f"Atlas: no inventory to {request.destination or origin}")
         return []
 
     async def _try_amadeus(

@@ -83,6 +83,19 @@ class VisaAgent(BaseAgent):
         if visa_info.get("visa_required") is True and visa_info.get("visa_type") == "embassy-visa":
             warnings.append("Embassy visa required — apply at least 2 weeks before departure.")
 
+        # Always give the traveller an authoritative place to verify — visa rules
+        # change and shouldn't be trusted to an LLM alone. IATA Travel Centre is
+        # the airlines' canonical source; a scoped official search backs it up.
+        from urllib.parse import quote_plus
+
+        sources = [
+            {"title": "IATA Travel Centre — official entry requirements", "url": "https://www.iatatravelcentre.com/"},
+            {
+                "title": f"Official {destination} visa requirements (search)",
+                "url": f"https://www.google.com/search?q={quote_plus('official ' + destination + ' tourist visa requirements government')}",
+            },
+        ]
+
         return AgentResult(
             agent=self.slug,
             summary=f"Visa: {visa_info.get('visa_type', 'unknown')} for {destination}",
@@ -98,5 +111,6 @@ class VisaAgent(BaseAgent):
                 "notes": visa_info.get("notes", ""),
                 "country_currencies": country.get("currencies", []) if country else [],
                 "country_languages": country.get("languages", []) if country else [],
+                "sources": sources,
             },
         )
