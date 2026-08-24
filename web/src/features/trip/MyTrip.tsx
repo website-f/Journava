@@ -129,6 +129,7 @@ export function MyTrip() {
 
       <TripHeader results={results} onDelete={handleDeleteTrip} />
       <TripSummary results={results} />
+      <TodayCard results={results} />
       <PlanReadinessNote results={results} />
       <RiskBanner results={results} />
       <Suspense fallback={<Skeleton className="mb-6 h-64 w-full" />}>
@@ -1233,6 +1234,64 @@ function TripHeader({
         )}
       </div>
     </header>
+  );
+}
+
+/**
+ * Today companion — while a trip is in progress, surface *today's* plan at the
+ * top with an "up next" highlight. The on-screen counterpart to the daily
+ * "what to do today" push. Renders nothing outside the travel window.
+ */
+function TodayCard({ results }: { results: Record<string, AgentPlanResult> }) {
+  const chief = (results.chief?.data as { destination?: string; start_date?: string } | undefined) ?? {};
+  const items = (results.itinerary?.items ?? []) as ItineraryItem[];
+  if (!chief.start_date || items.length === 0) return null;
+  const start = new Date(`${chief.start_date}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayN = Math.floor((today0.getTime() - start.getTime()) / 86_400_000) + 1;
+  const maxDay = Math.max(...items.map((i) => Number(i.day_index) || 1));
+  if (dayN < 1 || dayN > maxDay) return null; // trip not in progress today
+
+  const todays = items
+    .filter((i) => Number(i.day_index) === dayN)
+    .sort((a, b) => String(a.starts_at ?? "").localeCompare(String(b.starts_at ?? "")));
+  if (todays.length === 0) return null;
+
+  const hhmm = now.toTimeString().slice(0, 5);
+  const nextIdx = todays.findIndex((i) => String(i.starts_at ?? "99:99") >= hhmm);
+  const dest = chief.destination ?? "your trip";
+
+  return (
+    <section className="mb-6">
+      <div className="surface-card border-l-4 border-[var(--brand-500)] p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-[var(--brand-500)]" />
+          <h3 className="text-base font-semibold">
+            Today · Day {dayN} in {dest}
+          </h3>
+        </div>
+        <ol className="space-y-1.5">
+          {todays.map((it, i) => (
+            <li
+              key={i}
+              className={cn(
+                "flex items-center gap-2.5 rounded-[var(--r-md)] px-3 py-2 text-sm",
+                i === nextIdx
+                  ? "bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] ring-1 ring-[var(--brand-500)]/30"
+                  : "bg-[var(--bg)]",
+              )}
+            >
+              <span className="w-12 shrink-0 text-xs tabular-nums text-[var(--muted)]">{it.starts_at ?? "—"}</span>
+              <span className="min-w-0 flex-1 truncate">{it.title}</span>
+              {i === nextIdx && <Badge variant="brand">Up next</Badge>}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
   );
 }
 
