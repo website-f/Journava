@@ -557,6 +557,18 @@ CREATE TABLE IF NOT EXISTS fare_watches (
 CREATE INDEX IF NOT EXISTS fare_watches_user_idx ON fare_watches (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS fare_watches_active_idx ON fare_watches (status) WHERE status = 'active';
 
+-- Collaborative voting: friends vote on a shared plan's places by its public
+-- token. UNIQUE(token,item,voter) makes a vote idempotent (toggle).
+CREATE TABLE IF NOT EXISTS plan_votes (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token      TEXT NOT NULL,
+    item       TEXT NOT NULL,
+    voter      TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (token, item, voter)
+);
+CREATE INDEX IF NOT EXISTS plan_votes_token_idx ON plan_votes (token);
+
 -- Group expense split: shared trip costs + who-owes-whom settle-up. Scoped to
 -- the trip owner (user_id) and grouped within a trip by trip_key.
 CREATE TABLE IF NOT EXISTS trip_expenses (

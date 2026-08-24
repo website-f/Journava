@@ -6,6 +6,7 @@ import { Button, Spinner } from "@/components/ui";
 import { api, API_BASE } from "@/lib/api";
 import { useAuth } from "@/providers/AuthProvider";
 import { TripExtraPanels } from "@/features/command-center/ScopedResults";
+import { GroupVote } from "./GroupVote";
 import type { PlanResults } from "@/stores/planStore";
 
 /**
@@ -85,7 +86,10 @@ export function SharedPlan() {
             <Spinner className="h-6 w-6 text-[var(--brand-500)]" />
           </div>
         ) : (
-          <TripExtraPanels results={state.results} />
+          <>
+            {token && <GroupVote token={token} results={state.results} />}
+            <TripExtraPanels results={state.results} />
+          </>
         )}
       </main>
     </div>
