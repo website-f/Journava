@@ -448,12 +448,17 @@ async def read_many(
     *,
     scrolls: int = 3,
     ready: str | None = None,
+    respect_robots: bool = True,
 ) -> list[dict[str, Any]]:
     """Read several pages concurrently, bounded by the page-slot semaphore.
 
     Each target is `{"url": ..., "label": ..., ...}`. Failures come back as
     entries with `ok: False` rather than disappearing, so the caller can report
     which sites it could not read instead of silently narrowing the comparison.
+
+    `respect_robots=False` lets a caller read the public results pages of sites
+    whose robots.txt blocks automated access (e.g. flight metasearch) — the same
+    real, fingerprinted browser a person would use, just not self-censored.
     """
 
     async def one(target: dict[str, Any]) -> dict[str, Any]:
@@ -468,6 +473,7 @@ async def read_many(
                 attempts=target.get("attempts", 4),
                 delay=target.get("delay", 1.0),
                 scrolls=target.get("scrolls", scrolls),
+                respect_robots=respect_robots,
             )
         except Exception as exc:  # noqa: BLE001 — one bad page must not stop the sweep
             logger.info("camofox read failed for %s: %s", label, exc)

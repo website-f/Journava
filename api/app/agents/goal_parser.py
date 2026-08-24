@@ -410,6 +410,19 @@ def _route(text: str) -> tuple[str | None, str | None]:
             destination = _code_for(match.group("dest"))
             if destination:
                 return None, destination
+
+    # Bare-city fallback: a goal can name a city with no preposition at all —
+    # "3 days chengdu China 2 pax". Take the first known city name we see so the
+    # plan doesn't fall through to a country-only guess (which defaulted Chengdu
+    # to Shanghai). Skip a city that's clearly the origin ("from KLIA").
+    for match in re.finditer(rf"\b(?P<city>{_CITY_ALTERNATION})\b", text):
+        name = match.group("city")
+        preceding = text[max(0, match.start() - 6) : match.start()]
+        if preceding.rstrip().endswith("from"):
+            continue
+        code = _code_for(name)
+        if code:
+            return None, code
     return None, None
 
 

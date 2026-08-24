@@ -31,8 +31,6 @@ import { MyTrip } from "@/features/trip/MyTrip";
 import { History } from "@/features/history/History";
 import { BookingsHub } from "@/features/trip/BookingsHub";
 
-const TRIP_SCOPES = new Set(["full_trip", "itinerary_only"]);
-
 /** Flat (no-gradient) banner colours, chosen by destination so cards vary. */
 const BANDS = ["#0F766E", "#1D4ED8", "#B45309", "#15803D", "#7E22CE", "#0E7490"];
 function bandFor(seed: string): string {
@@ -128,8 +126,6 @@ type SavedTrip = {
 
 function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   const setResults = usePlanStore((s) => s.setResults);
-  const current = usePlanStore((s) => s.results);
-  const currentScope = usePlanStore((s) => s.activeScope);
   const [opening, setOpening] = useState<string | null>(null);
   const qc = useQueryClient();
 
@@ -157,23 +153,6 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
     }
   };
 
-  const removeCurrent = async () => {
-    const ok = await confirm({
-      title: "Remove the active trip?",
-      body: "Your active trip is cleared. Confirmed trips + searches stay saved.",
-      confirmText: "Remove",
-      tone: "danger",
-    });
-    if (!ok) return;
-    try {
-      await api.del("/trip");
-      usePlanStore.getState().clear();
-      toast.success("Active trip removed.");
-    } catch {
-      toast.error("Could not remove the trip.");
-    }
-  };
-
   const trips = data ?? [];
 
   const openTrip = async (t: SavedTrip) => {
@@ -185,6 +164,9 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
         return;
       }
       setResults(full.results, full.scope);
+      // Opening a saved trip makes it the ACTIVE trip so the detail view (which
+      // reads GET /trip) shows *this* trip — not the last one or an empty state.
+      await api.post("/trip/save", { results: full.results }).catch(() => {});
       onOpen(full.results);
     } catch {
       toast.error("Could not open that trip.");
@@ -193,11 +175,7 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
     }
   };
 
-  const showCurrent = current && currentScope && TRIP_SCOPES.has(currentScope);
-  const currentDestination =
-    (current?.chief?.data as { destination?: string } | undefined)?.destination ?? "";
-
-  if (isLoading && !showCurrent) {
+  if (isLoading) {
     return (
       <div className="grid gap-3 py-3 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
@@ -207,7 +185,10 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
     );
   }
 
-  if (!showCurrent && trips.length === 0) {
+  // Only trips the traveller confirmed with "Add to my trip" appear here — a
+  // raw plan result the agents produced is NOT a trip until it's added. Those
+  // live in the results view and in History.
+  if (trips.length === 0) {
     return (
       <div className="py-10">
         <EmptyState
@@ -221,17 +202,6 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
 
   return (
     <div className="grid gap-3 py-3 sm:grid-cols-2 lg:grid-cols-3">
-      {showCurrent && (
-        <TripCard
-          title={currentDestination || "Current trip"}
-          subtitle={(current?._scope as { label?: string } | undefined)?.label ?? "Active plan"}
-          band={bandFor("current")}
-          badge="Active"
-          thumbKey={currentDestination || undefined}
-          onClick={() => onOpen(current!)}
-          onDelete={() => void removeCurrent()}
-        />
-      )}
       {trips.map((t) => (
         <TripCard
           key={t.id}

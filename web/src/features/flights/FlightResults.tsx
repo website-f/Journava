@@ -368,7 +368,7 @@ function FlightCard({
   badges: string[];
   onBook: () => void;
 }) {
-  const raw = option.raw as {
+  const raw = (option.raw ?? {}) as {
     stops?: number;
     duration_hours?: number;
     departure_time?: string;

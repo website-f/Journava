@@ -471,8 +471,14 @@ class FlightAgent(BaseAgent):
         )
 
         # A price token is the signal that a results page has actually rendered.
+        # Fare metasearch sites (Expedia, Kayak…) disallow crawlers in robots.txt,
+        # but their results are public prices a person reads in a normal browser —
+        # which is exactly what our fingerprinted stealth browser is. Read them.
         pages = await camofox.read_many(
-            targets, scrolls=2, ready=r"RM\s?\d|MYR|ringgit|\$\s?\d|USD"
+            targets,
+            scrolls=2,
+            ready=r"RM\s?\d|MYR|ringgit|\$\s?\d|USD",
+            respect_robots=False,
         )
 
         fares: list[dict[str, Any]] = []

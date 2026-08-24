@@ -1094,9 +1094,13 @@ async def plan_clarify(request: ClarifyRequest) -> dict[str, object]:
     has_from = bool(re.search(r"\bfrom\s+[a-z0-9]", text))
     needs_origin = needs_flights and not origin and not has_from
 
+    # If the parser already resolved a specific destination city (e.g. "chengdu
+    # China" -> CTU), never ask "which city?" — the traveller named one, even if
+    # it isn't in our short per-country pick-list.
+    resolved_city = bool(parsed.get("destination"))
     country_only: dict[str, object] | None = None
     for key, info in _CLARIFY_COUNTRIES.items():
-        if re.search(rf"\b{re.escape(key)}\b", text):
+        if not resolved_city and re.search(rf"\b{re.escape(key)}\b", text):
             cities = info["cities"]
             named_city = any(str(c).split(" (")[0].lower() in text for c in cities)  # type: ignore[union-attr]
             if not named_city:

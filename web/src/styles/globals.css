@@ -189,15 +189,29 @@ body {
    computed font-size below 16px — which our compact 0.875rem fields (login, the
    trip prompt, every settings input) trip on. On touch devices, float every
    field to a minimum of 16px so focusing an input never zooms the page.
-   `#root …` gives this enough specificity to beat `.input-field` and Tailwind's
-   `text-sm`/`text-xs` without `!important`; desktop keeps its compact sizing. */
+
+   Plain element selectors + `!important` (not `#root …`) so the rule ALSO
+   reaches inputs inside Radix dialogs/popovers, which portal to <body> — the
+   clarify popup's origin/city/date fields were outside `#root` and still
+   zoomed. `!important` beats `.input-field` and Tailwind's `text-sm`/`text-xs`;
+   desktop (fine pointer) keeps its compact sizing. */
 @media (pointer: coarse) {
-  #root input,
-  #root textarea,
-  #root select,
-  #root [contenteditable="true"] {
-    font-size: 16px;
+  input,
+  textarea,
+  select,
+  [contenteditable="true"] {
+    font-size: 16px !important;
   }
+}
+
+/* Native-app feel: tapping a control shouldn't wait for / trigger a double-tap
+   zoom, and long-press shouldn't pop the iOS callout on buttons. */
+button,
+a,
+[role="button"],
+label {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
 }
 
 *,
