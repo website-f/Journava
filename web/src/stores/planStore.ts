@@ -20,6 +20,8 @@ interface PlanJobRecord {
     history_id: string | null;
     duration_ms: number;
   } | null;
+  /** Accumulated results while still running — streamed tier-by-tier. */
+  partial: PlanResults | null;
   error: string | null;
 }
 
@@ -93,6 +95,9 @@ export interface PlanState {
    *  can jump to the Agents Workspace and the run keeps going. */
   jobRunning: boolean;
   jobId: string | null;
+  /** True while a run is streaming partial results (some sections in, more
+   *  still landing) — drives the inline "agents still working" banner. */
+  streaming: boolean;
 
   inputs: PlanInputs;
 
@@ -131,6 +136,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
   error: null,
   jobRunning: false,
   jobId: null,
+  streaming: false,
   inputs: { ...EMPTY_INPUTS },
   recovery: null,
   recoveryLoading: false,
@@ -152,7 +158,8 @@ export const usePlanStore = create<PlanState>((set, get) => ({
   setError: (error) => set({ error, loading: false }),
 
   runPlanJob: async (payload) => {
-    set({ jobRunning: true, error: null });
+    set({ jobRunning: true, streaming: false, error: null });
+    const jobScope = String((payload as { scope?: string }).scope || "full_trip");
     try {
       const created = await api.post<{ id: string }>("/jobs/plan", payload);
       set({ jobId: created.id });
@@ -171,17 +178,24 @@ export const usePlanStore = create<PlanState>((set, get) => ({
             durationMs: duration_ms,
             historyId: history_id,
           });
-          set({ jobRunning: false, jobId: null });
+          set({ jobRunning: false, streaming: false, jobId: null });
           return;
         }
+        // Stream partial results as tiers land — the traveller browses flights/
+        // stays/places while the itinerary is still assembling.
+        if (job.partial && Object.keys(job.partial).length > 0) {
+          get().setResults(job.partial, jobScope);
+          set({ streaming: true });
+        }
         if (job.status === "error") {
-          set({ jobRunning: false, jobId: null, error: job.error ?? "Planning failed" });
+          set({ jobRunning: false, streaming: false, jobId: null, error: job.error ?? "Planning failed" });
           return;
         }
         if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
           // The backend job keeps running; we just stop the foreground poll.
           set({
             jobRunning: false,
+            streaming: false,
             jobId: null,
             error:
               "Still planning in the background — check the Agents workspace, or we'll notify you if Telegram is connected.",
@@ -192,6 +206,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     } catch (error) {
       set({
         jobRunning: false,
+        streaming: false,
         jobId: null,
         error: error instanceof Error ? error.message : "Planning failed",
       });
@@ -216,6 +231,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       loading: false,
       error: null,
       jobRunning: false,
+      streaming: false,
       jobId: null,
       lastDurationMs: null,
       lastHistoryId: null,

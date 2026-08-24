@@ -51,6 +51,7 @@ export function CommandCenter() {
   const resetInputs = usePlanStore((s) => s.resetInputs);
   const setInputs = usePlanStore((s) => s.setInputs);
   const jobRunning = usePlanStore((s) => s.jobRunning);
+  const streaming = usePlanStore((s) => s.streaming);
   const runPlanJob = usePlanStore((s) => s.runPlanJob);
 
   // Remember the departure airport once resolved (typed or picked in the popup),
@@ -242,8 +243,10 @@ export function CommandCenter() {
 
   return (
     <>
+      {/* Block only until the first tier of results lands; after that the
+          results render live behind a slim "still working" banner. */}
       <LoadingOverlay
-        open={jobRunning}
+        open={jobRunning && !results}
         events={events}
         onCancel={cancel}
         onWatch={() => navigate("/agents")}
@@ -279,6 +282,7 @@ export function CommandCenter() {
         <ScopedResults
           scope={scope}
           results={results}
+          streaming={streaming}
           onAskAgain={() => usePlanStore.setState({ results: null, activeScope: null })}
           onBack={backToPicker}
           onOpenTrip={() => navigate("/trip")}

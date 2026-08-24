@@ -88,7 +88,11 @@ async def _run_plan_job(body: PlanJobRequest, user_id: str | None) -> dict[str, 
     profile = MemoryAgent.load_profile(user_id)
 
     started = time.monotonic()
-    results = await run_plan(trip_request, profile, scope=scope)
+    # Stream partial results to this job as each tier lands (flights first, then
+    # stays/places, then the itinerary) so the client shows them progressively.
+    results = await run_plan(
+        trip_request, profile, scope=scope, on_progress=jobs.current_progress()
+    )
     duration_ms = int((time.monotonic() - started) * 1000)
 
     # Document what the agents just learned into the knowledge library. Must

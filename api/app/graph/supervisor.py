@@ -38,6 +38,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, NotRequired, TypedDict
 
 from app.agents import REGISTRY
@@ -539,11 +540,16 @@ async def run_plan(
     request: TripRequest,
     profile: TravelerProfile,
     scope: Scope | str | None = None,
+    *,
+    on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Execute one planning run for `scope` and return every agent's result.
 
     Exactly one executor runs: the compiled LangGraph when it is installed,
-    otherwise the asyncio mirror.
+    otherwise the asyncio mirror. `on_progress`, when given, is called with the
+    accumulated results after each superstep so the caller can stream partial
+    results (flights first, then stays/places, then itinerary) instead of making
+    the traveller wait for the whole plan.
     """
     global _clock
 
@@ -577,11 +583,34 @@ async def run_plan(
         "critic_candidates": parallel,
     }
 
+    async def _emit(partial: dict[str, Any]) -> None:
+        if on_progress and partial:
+            try:
+                await on_progress(dict(partial))
+            except Exception as exc:  # noqa: BLE001 — progress is best-effort
+                logger.debug("on_progress hook failed: %s", exc)
+
     if compiled is not None:
-        final = await compiled.ainvoke(state)
-        results = final["results"]
+        results = {}
+        try:
+            # Stream full state snapshots per superstep so partial results (a tier
+            # at a time) reach the client as they land.
+            final: dict[str, Any] | None = None
+            async for chunk in compiled.astream(state, stream_mode="values"):
+                final = chunk
+                if isinstance(chunk, dict) and chunk.get("results"):
+                    await _emit(chunk["results"])
+            results = (final or {}).get("results", {})
+        except Exception as exc:  # noqa: BLE001 — never let streaming break a plan
+            logger.warning("astream failed (%s) — falling back to ainvoke", exc)
+            results = {}
+        if not results:  # streaming yielded nothing usable → safe fallback
+            final = await compiled.ainvoke(state)
+            results = final["results"]
     else:
-        results = await _run_without_langgraph(state, parallel, sequential, use_critic)
+        results = await _run_without_langgraph(
+            state, parallel, sequential, use_critic, on_progress=_emit
+        )
 
     if _clock.cancelled:
         sse.publish("system", "idle", "Plan cancelled by user")
@@ -609,14 +638,21 @@ async def _run_without_langgraph(
     parallel: tuple[str, ...],
     sequential: tuple[str, ...],
     use_critic: bool,
+    *,
+    on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Mirror of the compiled graph for environments without langgraph.
 
     Same node set, same order, same barrier semantics — behaviour must not
-    change with the dependency's presence.
+    change with the dependency's presence. Emits partial results per tier so
+    streaming works here too.
     """
     results: dict[str, Any] = {}
     request, profile = state["request"], state["profile"]
+
+    async def _emit() -> None:
+        if on_progress and results:
+            await on_progress(results)
 
     async def call(
         slug: str,
@@ -644,10 +680,13 @@ async def _run_without_langgraph(
         return results
     request = apply_chief_enrichment(request, results.get("chief", {}))
 
+    await _emit()  # chief resolved — destination/dates are known
+
     if parallel:
         await asyncio.gather(*(call(slug) for slug in parallel))
         if _clock.cancelled:
             return results
+        await _emit()  # Tier 1 (flights, stays, research…) is in
 
     if use_critic:
         critic_update = await _critic_node(
@@ -664,5 +703,6 @@ async def _run_without_langgraph(
 
     for slug in sequential:
         await call(slug, context=results)
+        await _emit()  # Tier 3 assembles itinerary → budget → memory
 
     return results

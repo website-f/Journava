@@ -13,6 +13,7 @@ the right size, and Redis covers durability without a broker.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import uuid
@@ -28,12 +29,26 @@ JOB_TTL_SECONDS = 3600
 _JOBS: dict[str, dict[str, Any]] = {}
 _TASKS: dict[str, asyncio.Task] = {}
 
+#: Set inside a running job's task to a coroutine that stores partial results on
+#: that job. Long-running work (a plan) reads it via `current_progress()` to
+#: stream tiers back without knowing its own job id.
+_PROGRESS: contextvars.ContextVar[Callable[[dict[str, Any]], Awaitable[None]] | None] = (
+    contextvars.ContextVar("journava_job_progress", default=None)
+)
+
+
+def current_progress() -> Callable[[dict[str, Any]], Awaitable[None]] | None:
+    """The partial-results setter for the job running in this task (or None)."""
+    return _PROGRESS.get()
+
+
 _PUBLIC_FIELDS = (
     "id",
     "kind",
     "status",
     "meta",
     "result",
+    "partial",
     "error",
     "created_at",
     "updated_at",
@@ -70,13 +85,21 @@ def launch(
         "meta": meta or {},
         "user_id": user_id,
         "result": None,
+        "partial": None,
         "error": None,
         "created_at": _now(),
         "updated_at": _now(),
     }
     _JOBS[job_id] = job
 
+    async def _set_partial(partial: dict[str, Any]) -> None:
+        # In-memory only — polling reads _JOBS directly; persisting every tier to
+        # Redis would be needless write amplification.
+        job["partial"] = partial
+        job["updated_at"] = _now()
+
     async def runner() -> None:
+        _PROGRESS.set(_set_partial)
         job["status"] = "running"
         job["updated_at"] = _now()
         await _persist(job)

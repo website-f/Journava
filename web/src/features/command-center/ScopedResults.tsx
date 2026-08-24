@@ -173,6 +173,7 @@ function videoReviews(results: PlanResults, key: "attractions" | "food"): VideoR
 export function ScopedResults({
   scope,
   results,
+  streaming = false,
   onAskAgain,
   onBack,
   onOpenTrip,
@@ -180,6 +181,8 @@ export function ScopedResults({
 }: {
   scope: Scope;
   results: PlanResults;
+  /** True while more sections are still streaming in tier-by-tier. */
+  streaming?: boolean;
   onAskAgain: () => void;
   onBack: () => void;
   onOpenTrip: () => void;
@@ -219,8 +222,20 @@ export function ScopedResults({
         </Button>
         <div className="min-w-0 flex-1" />
         <CurrencySwitcher className="h-8 w-[6.5rem] text-xs" />
-        <Badge>{agents.length} agents ran</Badge>
+        <Badge>{agents.length} agents{streaming ? " running" : " ran"}</Badge>
       </div>
+
+      {streaming && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-[var(--r-md)] border border-[var(--brand-400)]/40 bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] px-4 py-2.5">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-60" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--brand-500)]" />
+          </span>
+          <p className="text-xs text-[var(--muted)]">
+            Your agents are still working — sections appear here the moment each finishes.
+          </p>
+        </div>
+      )}
 
       <SectionNav containerRef={panelsRef} deps={results} />
 
