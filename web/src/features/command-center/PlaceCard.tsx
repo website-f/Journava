@@ -1,15 +1,17 @@
-import { ExternalLink, ShoppingCart } from "@/components/ui/icons";
+import { useState } from "react";
+import { ExternalLink, ShoppingCart, Video } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { SourceBadge } from "@/components/ui/SourceBadge";
-import { cn } from "@/lib/cn";
+import { api } from "@/lib/api";
 import type { PlanOption } from "@/lib/types";
 
 /**
  * One place / stay / eatery card: name, price (or price range), a source tag
  * (so you can tell a Camofox-read page from a direct-API result), a review
- * snippet, and always a View/Book button that opens the source or a maps link.
+ * snippet, a View/Book button, and — for places & eateries — a "Video" button
+ * that opens a real-life YouTube look at the spot.
  */
-export function PlaceCard({ option }: { option: PlanOption }) {
+export function PlaceCard({ option, city }: { option: PlanOption; city?: string }) {
   const raw = (option.raw ?? {}) as {
     price_range?: string | null;
     rating?: number | string | null;
@@ -18,6 +20,25 @@ export function PlaceCard({ option }: { option: PlanOption }) {
   };
   const link = option.booking_url || option.source_url || null;
   const isStay = option.kind === "hotel";
+  const canVideo = option.kind === "activity" || option.kind === "restaurant";
+  const [videoLoading, setVideoLoading] = useState(false);
+
+  const seeVideo = async () => {
+    setVideoLoading(true);
+    const fallback = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${option.title} ${city ?? ""} travel`)}`;
+    // Open the tab synchronously (avoids popup-blockers), then redirect it once resolved.
+    const tab = window.open("about:blank", "_blank", "noopener,noreferrer");
+    try {
+      const res = await api.get<{ url: string }>(
+        `/places/video?q=${encodeURIComponent(option.title)}&city=${encodeURIComponent(city ?? "")}`,
+      );
+      if (tab) tab.location.href = res.url || fallback;
+    } catch {
+      if (tab) tab.location.href = fallback;
+    } finally {
+      setVideoLoading(false);
+    }
+  };
   const price =
     option.price_amount != null
       ? `${option.price_currency ?? ""} ${Number(option.price_amount).toLocaleString()}`.trim()
@@ -57,14 +78,22 @@ export function PlaceCard({ option }: { option: PlanOption }) {
         )}
       </div>
 
-      {link && (
-        <div className="mt-3">
-          <Button asChild size="sm" variant={isStay ? undefined : "secondary"} className={cn("w-full sm:w-auto")}>
-            <a href={link} target="_blank" rel="noreferrer noopener">
-              {isStay ? <ShoppingCart className="h-4 w-4" /> : <ExternalLink className="h-4 w-4" />}
-              {isStay ? "View & book" : "View"}
-            </a>
-          </Button>
+      {(link || canVideo) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {link && (
+            <Button asChild size="sm" variant={isStay ? undefined : "secondary"}>
+              <a href={link} target="_blank" rel="noreferrer noopener">
+                {isStay ? <ShoppingCart className="h-4 w-4" /> : <ExternalLink className="h-4 w-4" />}
+                {isStay ? "View & book" : "View"}
+              </a>
+            </Button>
+          )}
+          {canVideo && (
+            <Button size="sm" variant="ghost" loading={videoLoading} onClick={() => void seeVideo()}>
+              <Video className="h-4 w-4" />
+              Video
+            </Button>
+          )}
         </div>
       )}
     </div>

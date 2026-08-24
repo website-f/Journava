@@ -630,6 +630,7 @@ export function TripExtraPanels({ results }: { results: PlanResults }) {
 }
 
 function Panel({ name, results }: { name: string; results: PlanResults }) {
+  const city = (results.chief?.data as { destination?: string } | undefined)?.destination;
   switch (name) {
     case "intelligence":
       return <TravelIntelPanel results={results} />;
@@ -646,6 +647,7 @@ function Panel({ name, results }: { name: string; results: PlanResults }) {
           result={results.research}
           kind="restaurant"
           videos={videoReviews(results, "food")}
+          city={city}
         />
       );
     case "activities":
@@ -658,6 +660,7 @@ function Panel({ name, results }: { name: string; results: PlanResults }) {
           extra={results.recommendation}
           kind="activity"
           videos={videoReviews(results, "attractions")}
+          city={city}
         />
       );
     case "itinerary":

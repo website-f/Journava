@@ -91,7 +91,7 @@ export function AgencyConsole() {
         </p>
       </header>
 
-      <div className="surface-card border-l-4 border-[var(--success)] p-5">
+      <div className="surface-card p-5">
         <p className="text-xs uppercase tracking-wide text-[var(--muted)]">OTA commission avoided</p>
         <p className="mt-1 text-3xl font-bold text-[var(--success)]">
           <Money amount={m?.total_saved ?? 0} currency={currency} />

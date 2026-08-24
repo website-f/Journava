@@ -1165,6 +1165,36 @@ async def trip_export_pdf(body: TripExport) -> StreamingResponse:
     )
 
 
+# --- Per-place video — a real-life look at a spot (YouTube) ----------------- #
+
+
+@app.get(f"{settings.api_prefix}/places/video", tags=["places"])
+async def place_video(q: str, city: str = "") -> dict[str, object]:
+    """Resolve a short real-life video for a place. Uses the YouTube Data API to
+    return the top matching video; falls back to a YouTube search deep-link when
+    no key/quota (so the button always leads somewhere). Cached 12h by the tool.
+    """
+    from urllib.parse import quote
+
+    from app.tools import youtube
+
+    query = f"{q} {city}".strip()
+    vids = await youtube.search_videos(f"{query} travel", max_results=1)
+    if vids:
+        v = vids[0]
+        return {
+            "url": f"https://www.youtube.com/watch?v={v['video_id']}",
+            "title": v.get("title"),
+            "thumbnail": v.get("thumbnail"),
+            "source": "youtube",
+        }
+    return {
+        "url": f"https://www.youtube.com/results?search_query={quote(query + ' travel')}",
+        "title": None,
+        "source": "search",
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Scopes - the Command Center presets
 # --------------------------------------------------------------------------- #

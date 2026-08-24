@@ -270,7 +270,7 @@ function FlightWatchCard() {
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="rounded-[var(--r-md)] border-l-4 border-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-4 py-3">
+                <div className="rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-4 py-3">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="h-4 w-4 text-[var(--warning)]" />
                     <span className="text-sm font-semibold">
@@ -1210,7 +1210,7 @@ function TripHeader({
           The full plan — your agents keep monitoring flights, weather and safety after checkout.
         </p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
         {countdown && (
           <span className="inline-flex items-center gap-1.5 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-3 py-1.5 text-sm font-semibold text-[var(--brand-600)]">
             <Clock className="h-4 w-4" />
@@ -1269,7 +1269,7 @@ function TodayCard({ results }: { results: Record<string, AgentPlanResult> }) {
 
   return (
     <section className="mb-6">
-      <div className="surface-card border-l-4 border-[var(--brand-500)] p-5">
+      <div className="surface-card p-5">
         <div className="mb-3 flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-[var(--brand-500)]" />
           <h3 className="text-base font-semibold">
@@ -1307,7 +1307,7 @@ function TripSummary({ results }: { results: Record<string, AgentPlanResult> }) 
     | undefined;
 
   return (
-    <div className="surface-card mb-6 overflow-hidden border-l-4 border-[var(--brand-500)]">
+    <div className="surface-card mb-6 overflow-hidden">
       {heroImage && (
         <img
           src={heroImage}
@@ -1346,7 +1346,7 @@ function RiskBanner({ results }: { results: Record<string, AgentPlanResult> }) {
   if (!safetyLevel || safetyLevel === "safe") {
     // Show a subtle "safe" indicator
     return (
-      <div className="surface-card p-3 mb-6 flex items-center gap-3 border-l-4 border-[var(--success)]">
+      <div className="surface-card p-3 mb-6 flex items-center gap-3">
         <ShieldCheck className="h-5 w-5 text-[var(--success)] shrink-0" />
         <div>
           <p className="text-sm font-medium text-[var(--success)]">Destination assessed as safe</p>
@@ -1359,7 +1359,7 @@ function RiskBanner({ results }: { results: Record<string, AgentPlanResult> }) {
   const isDangerous = safetyLevel === "dangerous";
 
   return (
-    <div className={`surface-card p-4 mb-6 border-l-4 ${isDangerous ? "border-[var(--danger)]" : "border-[var(--warning)]"}`}>
+    <div className={"surface-card p-4 mb-6"}>
       <div className="flex items-start gap-3">
         <ShieldAlert className={`h-6 w-6 shrink-0 ${isDangerous ? "text-[var(--danger)]" : "text-[var(--warning)]"}`} />
         <div className="min-w-0">
@@ -1913,7 +1913,7 @@ function DisruptionSection({
           </div>
         </div>
       ) : (
-        <div className="surface-card p-6 border-l-4 border-[var(--success)]">
+        <div className="surface-card p-6">
           <div className="flex items-center gap-2 mb-3 flex-wrap">
             <Badge variant="success">Recovery Complete</Badge>
             <span className="text-sm font-semibold">{recovery.summary}</span>

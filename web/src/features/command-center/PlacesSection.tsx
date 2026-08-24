@@ -27,6 +27,7 @@ export function PlacesSection({
   extra,
   kind,
   videos,
+  city,
 }: {
   title: string;
   placesLabel: string;
@@ -35,6 +36,7 @@ export function PlacesSection({
   extra?: AgentPlanResult;
   kind: PlanOption["kind"];
   videos: VideoReview[];
+  city?: string;
 }) {
   const own = result?.options ?? [];
   const extras = extra?.options ?? [];
@@ -70,7 +72,7 @@ export function PlacesSection({
             // screen just leaves the right half of the row empty.
             <Rail card="15.5rem" cols={2} colsLg={3} aria-label={placesLabel}>
               {options.map((option) => (
-                <PlaceCard key={option.id} option={option} />
+                <PlaceCard key={option.id} option={option} city={city} />
               ))}
             </Rail>
           ) : (

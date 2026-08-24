@@ -107,30 +107,42 @@ function IdentityCard() {
   const org = user.memberships[0];
 
   return (
-    <section className="mb-5 overflow-hidden rounded-[var(--r-xl)] bg-[var(--brand-600)] text-white shadow-[var(--shadow-2)]">
-      {/* The single sand rule is the app's one accent gesture — same treatment as
-          the results hero and the login panel, so all three read as one product. */}
-      <div className="h-[3px] bg-[var(--accent)]" />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 p-5">
+    <section className="mb-5 rounded-[var(--r-xl)] bg-[var(--brand-600)] p-4 text-white shadow-[var(--shadow-2)] sm:p-5">
+      <div className="flex items-start gap-3 sm:gap-4">
         <span
           aria-hidden
-          className="grid h-14 w-14 shrink-0 place-items-center rounded-[var(--r-lg)] bg-white/12 font-[family-name:var(--font-display)] text-[1.5rem] font-bold ring-1 ring-inset ring-white/20"
+          className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--r-lg)] bg-white/12 font-[family-name:var(--font-display)] text-[1.35rem] font-bold ring-1 ring-inset ring-white/20 sm:h-14 sm:w-14 sm:text-[1.5rem]"
         >
           {initial}
         </span>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate font-[family-name:var(--font-display)] text-[1.35rem] font-bold leading-tight tracking-[-0.02em]">
-            {name}
-          </h1>
-          <p className="mt-0.5 truncate text-[0.8125rem] text-white/70">{user.email}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h1 className="truncate font-[family-name:var(--font-display)] text-[1.2rem] font-bold leading-tight tracking-[-0.02em] sm:text-[1.35rem]">
+                {name}
+              </h1>
+              <p className="mt-0.5 truncate text-[0.8125rem] text-white/70">{user.email}</p>
+            </div>
+            {/* Icon-only on phones so the row never overflows; label returns ≥sm. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void signOut()}
+              aria-label="Sign out"
+              className="shrink-0 text-white/80 hover:bg-white/10 hover:text-white"
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">Sign out</span>
+            </Button>
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             {isPlatformAdmin && (
-              <span className="inline-flex items-center gap-1 rounded-[var(--r-pill)] bg-[var(--accent)] px-2.5 py-[0.1875rem] text-[0.6875rem] font-bold uppercase tracking-[0.08em] text-[#3b2405]">
+              <span className="inline-flex items-center gap-1 rounded-[var(--r-pill)] bg-white/15 px-2.5 py-[0.1875rem] text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-white ring-1 ring-inset ring-white/20">
                 <ShieldCheck className="h-3 w-3" weight="fill" /> Platform admin
               </span>
             )}
             {org && (
-              <span className="inline-flex items-center gap-1 rounded-[var(--r-pill)] bg-white/12 px-2.5 py-[0.1875rem] text-[0.6875rem] font-semibold text-white/85 ring-1 ring-inset ring-white/15">
+              <span className="inline-flex items-center gap-1 rounded-[var(--r-pill)] bg-white/10 px-2.5 py-[0.1875rem] text-[0.6875rem] font-medium text-white/85 ring-1 ring-inset ring-white/15">
                 {org.org_name} · {org.role}
               </span>
             )}
@@ -141,14 +153,6 @@ function IdentityCard() {
             )}
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void signOut()}
-          className="ml-auto shrink-0 text-white/80 hover:bg-white/10 hover:text-white"
-        >
-          <LogOut className="h-4 w-4" /> Sign out
-        </Button>
       </div>
     </section>
   );
