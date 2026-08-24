@@ -12,6 +12,7 @@ const TripMap = lazy(() =>
   import("@/components/ui/TripMap").then((m) => ({ default: m.TripMap })),
 );
 import { api } from "@/lib/api";
+import { PriceWatchCard } from "./PriceWatchCard";
 import { usePlanStore } from "@/stores/planStore";
 import type { AgentPlanResult, CostDetail, DisruptionRecovery, ItineraryItem, PlanResults } from "@/stores/planStore";
 import { useAgentStream } from "@/hooks/useAgentStream";
@@ -145,6 +146,7 @@ export function MyTrip() {
       </div>
       <LocalIntelCard />
       <FlightWatchCard />
+      <PriceWatchCard />
       <ItineraryGraphCard />
       <GuardianCard />
       <DisruptionSection recovery={recovery} setRecovery={setRecovery} setRecoveryLoading={setRecoveryLoading} recoveryLoading={recoveryLoading} />

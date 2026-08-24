@@ -530,6 +530,30 @@ ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'r
 -- reminder loop pings each trip once instead of every cycle.
 ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
 
+-- Price-drop autopilot: a traveller arms a watch on a fare; a background sweep
+-- re-prices it and, when it drops past the threshold, notifies (and, if armed,
+-- auto-rebooks). notified_at dedupes so each drop fires a single alert.
+CREATE TABLE IF NOT EXISTS fare_watches (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+    origin          TEXT NOT NULL,
+    destination     TEXT NOT NULL,
+    depart_date     TEXT,
+    travellers      INTEGER NOT NULL DEFAULT 1,
+    baseline_amount NUMERIC NOT NULL,
+    currency        TEXT NOT NULL DEFAULT 'MYR',
+    threshold_pct   INTEGER NOT NULL DEFAULT 10,
+    auto_rebook     BOOLEAN NOT NULL DEFAULT false,
+    budget_amount   NUMERIC,
+    last_amount     NUMERIC,
+    status          TEXT NOT NULL DEFAULT 'active',  -- active | triggered | rebooked
+    last_checked_at TIMESTAMPTZ,
+    notified_at     TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS fare_watches_user_idx ON fare_watches (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS fare_watches_active_idx ON fare_watches (status) WHERE status = 'active';
+
 CREATE TABLE IF NOT EXISTS finance_transactions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

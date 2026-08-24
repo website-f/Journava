@@ -39,6 +39,7 @@ from app.intel import router as intel_router
 from app.content import router as content_router
 from app.chaos_lab import router as chaos_router
 from app.mapping import router as mapping_router
+from app.pricewatch import router as pricewatch_router
 from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
 from app.supplier.router import router as supplier_router
@@ -75,12 +76,14 @@ async def _reminder_loop() -> None:
     import asyncio
 
     from app.bookings import send_due_reminders, send_trip_countdowns
+    from app.pricewatch import run_price_watches
 
     while True:
         try:
             await asyncio.sleep(6 * 3600)
             await send_due_reminders()
             await send_trip_countdowns()
+            await run_price_watches()  # re-price armed fare watches; alert on drops
         except asyncio.CancelledError:  # noqa: PERF203
             break
         except Exception as exc:  # noqa: BLE001
@@ -177,6 +180,7 @@ app.include_router(intel_router)
 app.include_router(content_router)
 app.include_router(chaos_router)
 app.include_router(mapping_router)
+app.include_router(pricewatch_router)
 
 
 # --------------------------------------------------------------------------- #
