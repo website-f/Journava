@@ -1,19 +1,31 @@
 import {
+  Activity,
   ArrowLeft,
-  Briefcase,
+  Bus,
+  Building2,
+  Calendar,
   CheckCircle2,
   Cloud,
   Compass,
+  CreditCard,
   ExternalLink,
   FileCheck2,
+  Info,
+  Leaf,
   MapPin,
+  Plane,
   RotateCcw,
   Save,
   ShieldAlert,
   ShieldCheck,
+  ShoppingCart,
   Sparkles,
+  ThumbsUp,
   TrendingUp,
+  Users,
   Utensils,
+  Wallet,
+  type IconType,
 } from "@/components/ui/icons";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -28,35 +40,36 @@ import { PlacesSection } from "./PlacesSection";
 import { VideoCarousel } from "@/components/ui/VideoCarousel";
 import type { AgentPlanResult, PlanOption, PlanResults, Scope, VideoReview } from "@/lib/types";
 
-/** Friendly labels for the section-jump nav — keeps the chips short. */
-const PANEL_LABELS: Record<string, string> = {
-  summary: "Overview",
-  flights: "Flights",
-  hotels: "Stays",
-  dining: "Food",
-  activities: "Places",
-  itinerary: "Itinerary",
-  budget: "Budget",
-  weather: "Weather",
-  risk: "Safety",
-  transport: "Transport",
-  visa: "Visa",
-  insurance: "Insurance",
-  crowd: "Crowds",
-  social: "Social",
-  practical: "Practical",
-  shopping: "Shopping",
-  payment: "Money",
-  sustainability: "Eco",
-  analytics: "Analytics",
-  concierge: "Concierge",
+/** Per-section label + a recognizable icon, for the jump-bar and headers. */
+const SECTION_META: Record<string, { label: string; Icon: IconType }> = {
+  summary: { label: "Overview", Icon: Sparkles },
+  flights: { label: "Flights", Icon: Plane },
+  hotels: { label: "Stays", Icon: Building2 },
+  dining: { label: "Food", Icon: Utensils },
+  activities: { label: "Places", Icon: Compass },
+  itinerary: { label: "Itinerary", Icon: Calendar },
+  budget: { label: "Budget", Icon: Wallet },
+  weather: { label: "Weather", Icon: Cloud },
+  risk: { label: "Safety", Icon: ShieldAlert },
+  transport: { label: "Transport", Icon: Bus },
+  visa: { label: "Visa", Icon: FileCheck2 },
+  insurance: { label: "Insurance", Icon: ShieldCheck },
+  crowd: { label: "Crowds", Icon: Users },
+  social: { label: "Social", Icon: ThumbsUp },
+  practical: { label: "Practical", Icon: Info },
+  shopping: { label: "Shopping", Icon: ShoppingCart },
+  payment: { label: "Money", Icon: CreditCard },
+  sustainability: { label: "Eco", Icon: Leaf },
+  analytics: { label: "Analytics", Icon: Activity },
+  concierge: { label: "Concierge", Icon: Sparkles },
 };
 
 /**
  * Sticky jump-bar for the results. A full trip stacks a dozen sections; this
  * lets the traveller hop straight to Visa (or back to Flights) instead of
- * scrolling past everything. Only sections that actually rendered content get a
- * chip, and the active one highlights as you scroll (IntersectionObserver).
+ * scrolling past everything. Each chip carries its section icon; only sections
+ * that rendered content get one, and the active chip tracks the scroll
+ * position (IntersectionObserver) and auto-scrolls itself into view.
  */
 function SectionNav({
   containerRef,
@@ -65,8 +78,9 @@ function SectionNav({
   containerRef: React.RefObject<HTMLDivElement | null>;
   deps: unknown;
 }) {
-  const [items, setItems] = useState<{ id: string; label: string }[]>([]);
+  const [items, setItems] = useState<{ id: string; key: string; label: string }[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -74,7 +88,12 @@ function SectionNav({
     const els = Array.from(container.querySelectorAll<HTMLElement>("[data-section]")).filter(
       (el) => (el.textContent ?? "").trim().length > 0,
     );
-    setItems(els.map((el) => ({ id: el.id, label: el.dataset.label || el.dataset.section || "" })));
+    setItems(
+      els.map((el) => {
+        const key = el.dataset.section || "";
+        return { id: el.id, key, label: SECTION_META[key]?.label || el.dataset.label || key };
+      }),
+    );
     if (els.length === 0) return;
 
     const observer = new IntersectionObserver(
@@ -90,31 +109,46 @@ function SectionNav({
     return () => observer.disconnect();
   }, [containerRef, deps]);
 
+  // Keep the active chip visible as the page scrolls through sections.
+  useEffect(() => {
+    if (!active || !navRef.current) return;
+    const chip = navRef.current.querySelector<HTMLElement>(`[data-chip="${active}"]`);
+    chip?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [active]);
+
   if (items.length <= 1) return null;
 
   return (
     <nav
-      className="sticky top-0 z-40 -mx-1 mb-5 flex gap-1.5 overflow-x-auto px-1 py-2 backdrop-blur"
-      style={{ backgroundColor: "color-mix(in srgb, var(--bg) 88%, transparent)" }}
+      ref={navRef}
+      className="no-scrollbar sticky top-0 z-40 -mx-4 mb-5 flex gap-1.5 overflow-x-auto border-b border-[var(--border)] px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6"
+      style={{ backgroundColor: "color-mix(in srgb, var(--bg) 82%, transparent)" }}
       aria-label="Jump to section"
     >
-      {items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          onClick={() =>
-            document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
-          className={cn(
-            "shrink-0 rounded-[var(--r-pill)] border px-3 py-1 text-xs font-medium transition-colors",
-            active === item.id
-              ? "border-[var(--brand-500)] bg-[var(--brand-500)] text-white"
-              : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--brand-400)] hover:text-[var(--text)]",
-          )}
-        >
-          {item.label}
-        </button>
-      ))}
+      {items.map((item) => {
+        const Icon = SECTION_META[item.key]?.Icon;
+        const isActive = active === item.id;
+        return (
+          <button
+            key={item.id}
+            data-chip={item.id}
+            type="button"
+            aria-current={isActive}
+            onClick={() =>
+              document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-[var(--r-pill)] px-3 py-1.5 text-xs font-medium transition-all",
+              isActive
+                ? "bg-[var(--brand-500)] text-white shadow-[0_2px_8px_color-mix(in_srgb,var(--brand-500)_45%,transparent)]"
+                : "bg-[var(--surface)] text-[var(--muted)] ring-1 ring-inset ring-[var(--border)] hover:text-[var(--text)] hover:ring-[var(--brand-400)]",
+            )}
+          >
+            {Icon && <Icon className="h-3.5 w-3.5" weight={isActive ? "fill" : "regular"} />}
+            {item.label}
+          </button>
+        );
+      })}
     </nav>
   );
 }
@@ -199,8 +233,8 @@ export function ScopedResults({
             key={panel}
             id={`sec-${panel}`}
             data-section={panel}
-            data-label={PANEL_LABELS[panel] ?? panel}
-            className="scroll-mt-16"
+            data-label={SECTION_META[panel]?.label ?? panel}
+            className="scroll-mt-20"
           >
             <Panel name={panel} results={results} onOpenTrip={onOpenTrip} />
           </div>
@@ -379,7 +413,7 @@ function Panel({
     case "flights":
       return results.flight ? <FlightResults result={results.flight} /> : null;
     case "hotels":
-      return <OptionsPanel result={results.hotel} title="Stays" icon={Briefcase} />;
+      return <OptionsPanel result={results.hotel} title="Stays" icon={Building2} />;
     case "dining":
       return (
         <PlacesSection
@@ -490,7 +524,7 @@ function OptionsPanel({
 }: {
   result?: AgentPlanResult;
   title: string;
-  icon: typeof Briefcase;
+  icon: IconType;
   filter?: (option: PlanOption) => boolean;
   extra?: AgentPlanResult;
 }) {
@@ -509,9 +543,11 @@ function OptionsPanel({
       {result?.summary && (
         <p className="mb-3 text-sm text-[var(--muted)]">{result.summary}</p>
       )}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6">
         {options.map((option) => (
-          <PlaceCard key={option.id} option={option} />
+          <div key={option.id} className="w-[16rem] shrink-0 snap-start">
+            <PlaceCard option={option} />
+          </div>
         ))}
       </div>
       {(result?.warnings ?? []).length > 0 && (
@@ -854,6 +890,39 @@ function ReportTile({ label, value }: { label: string; value: string }) {
 }
 
 /** Visa & entry — leads with a clear required / visa-free verdict. */
+/** A labelled list of external links from a section's `data.sources`. Custom
+ *  panels (Visa/Insurance) don't get DataPanel's automatic source rendering, so
+ *  they use this to surface official / booking / comparison links. */
+function SourceLinks({
+  sources,
+  label = "Official links",
+}: {
+  sources?: Array<{ title?: string; url: string }>;
+  label?: string;
+}) {
+  if (!sources || sources.length === 0) return null;
+  return (
+    <div className="border-t border-[var(--border)] pt-2">
+      <p className="mb-1 text-[0.65rem] uppercase tracking-wide text-[var(--muted)]">{label}</p>
+      <ul className="space-y-1">
+        {sources.map((s, i) => (
+          <li key={i}>
+            <a
+              href={s.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1.5 text-xs text-[var(--brand-500)] hover:underline"
+            >
+              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">{s.title || s.url}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function VisaPanel({ result }: { result?: AgentPlanResult }) {
   if (!result) return null;
   const d = result.data as {
@@ -863,6 +932,7 @@ function VisaPanel({ result }: { result?: AgentPlanResult }) {
     processing_time?: string;
     max_stay?: string;
     cost?: string;
+    sources?: Array<{ title?: string; url: string }>;
   };
   const required = d.visa_required;
   const tone = required === false ? "success" : required === true ? "warning" : "muted";
@@ -926,6 +996,7 @@ function VisaPanel({ result }: { result?: AgentPlanResult }) {
             {w}
           </p>
         ))}
+        <SourceLinks sources={d.sources} label="Verify entry rules" />
       </div>
     </section>
   );
@@ -938,6 +1009,7 @@ function InsurancePanel({ result }: { result?: AgentPlanResult }) {
     recommended_coverage?: string[];
     notes?: string;
     providers?: string[];
+    sources?: Array<{ title?: string; url: string }>;
   };
   if (!(d.recommended_coverage ?? []).length && !result.summary) return null;
 
@@ -974,6 +1046,7 @@ function InsurancePanel({ result }: { result?: AgentPlanResult }) {
             {w}
           </p>
         ))}
+        <SourceLinks sources={d.sources} label="Compare & buy" />
       </div>
     </section>
   );
@@ -1045,7 +1118,7 @@ function DataPanel({ result, title }: { result?: AgentPlanResult; title: string 
     ? (data.sources as Array<{ title?: string; url: string }>)
     : [];
   const videos = Array.isArray(data.videos) ? (data.videos as VideoReview[]) : [];
-  const HIDDEN = ["destination", "sources", "videos", "hero_image"];
+  const HIDDEN = ["destination", "sources", "videos", "hero_image", "booking_links"];
   const entries = Object.entries(data).filter(
     ([key, value]) =>
       !HIDDEN.includes(key) &&

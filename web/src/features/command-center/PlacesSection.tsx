@@ -64,9 +64,13 @@ export function PlacesSection({
 
         <TabsContent value="places">
           {options.length > 0 ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            // Horizontal, snap-scrolling rail — a peek of the next card invites the
+            // swipe and keeps a long list from dominating the page vertically.
+            <div className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6">
               {options.map((option) => (
-                <PlaceCard key={option.id} option={option} />
+                <div key={option.id} className="w-[15.5rem] shrink-0 snap-start">
+                  <PlaceCard option={option} />
+                </div>
               ))}
             </div>
           ) : (

@@ -85,6 +85,7 @@ export {
   Trash as Trash2,
   TrendUp as TrendingUp,
   User,
+  UsersThree as Users,
   UserPlus,
   ForkKnife as Utensils,
   VideoCamera as Video,

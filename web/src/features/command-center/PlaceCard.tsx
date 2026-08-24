@@ -24,7 +24,7 @@ export function PlaceCard({ option }: { option: PlanOption }) {
       : raw.price_range || null;
 
   return (
-    <div className="surface-card flex flex-col p-4">
+    <div className="surface-card flex h-full flex-col p-4 transition-colors hover:border-[var(--brand-400)]">
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-sm font-semibold">{option.title}</p>
         {price && (
