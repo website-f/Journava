@@ -310,6 +310,96 @@ async def notify_countdowns(request: Request) -> dict[str, Any]:
     return await send_trip_countdowns(days_ahead=3)
 
 
+def _trip_end_date(snap: dict[str, Any], start: date) -> date:
+    """The trip's last day — chief.data.end_date if present, else derived from the
+    highest itinerary day index (so the digest knows when the trip is over)."""
+    from datetime import timedelta
+
+    chief = snap.get("chief") if isinstance(snap, dict) else None
+    data = (chief.get("data") if isinstance(chief, dict) else {}) or {}
+    raw = data.get("end_date")
+    if raw:
+        try:
+            return date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            pass
+    items = (snap.get("itinerary") or {}).get("items") or []
+    max_day = max((int(it.get("day_index") or 1) for it in items), default=1)
+    return start + timedelta(days=max_day - 1)
+
+
+async def send_daily_digests() -> dict[str, Any]:
+    """Each day of a trip, send that day's plan ("what to do today") once.
+
+    Deduped on saved_results.last_digest_on so a single digest goes out per
+    calendar day no matter how often the loop runs. Past trips are marked so
+    they stop being re-scanned; trips with no dates are left for later.
+    """
+    from app.tools import notify
+
+    pool = await db.get_pool()
+    if pool is None:
+        return {"sent": 0, "trips": []}
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, title, destination, snapshot FROM saved_results "
+            "WHERE kind = 'trip' AND (last_digest_on IS NULL OR last_digest_on < current_date) "
+            "ORDER BY created_at DESC LIMIT 200"
+        )
+
+    today = date.today()
+    sent = 0
+    done: list[dict[str, Any]] = []
+    for r in rows:
+        snap = r["snapshot"]
+        try:
+            snap = json.loads(snap) if isinstance(snap, str) else (snap or {})
+        except (ValueError, TypeError):
+            snap = {}
+        start = _trip_start_date(snap)
+        if start is None:
+            continue  # no dates yet — revisit when they're added
+        end = _trip_end_date(snap, start)
+
+        async def _mark(rid: Any = r["id"]) -> None:
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE saved_results SET last_digest_on = current_date WHERE id = $1", rid)
+
+        if today < start or today > end:
+            if today > end:
+                await _mark()  # trip's over — stop scanning it
+            continue
+
+        day_n = (today - start).days + 1
+        items = (snap.get("itinerary") or {}).get("items") or []
+        todays = [it for it in items if int(it.get("day_index") or 0) == day_n]
+        await _mark()  # one digest per day even if today is a free day
+        if not todays:
+            continue
+
+        dest = r["destination"] or r["title"] or "your trip"
+        lines = []
+        for it in sorted(todays, key=lambda x: str(x.get("starts_at") or "")):
+            when = str(it.get("starts_at") or "").strip()
+            title = str(it.get("title") or "").strip()
+            if title:
+                lines.append(f"• {when + ' — ' if when else ''}{title}")
+        text = f"☀️ <b>Day {day_n} in {dest}</b> — today's plan:\n" + "\n".join(lines)
+        try:
+            await notify.broadcast(text, subject=f"Today in {dest} — Day {day_n}")
+            sent += 1
+            done.append({"destination": dest, "day": day_n, "items": len(todays)})
+        except Exception as exc:  # noqa: BLE001
+            logger.info("daily digest notify failed: %s", exc)
+    return {"sent": sent, "trips": done}
+
+
+@router.post("/daily-digest")
+async def daily_digest(request: Request) -> dict[str, Any]:
+    """Manually run the 'what to do today' digest sweep (demo-friendly)."""
+    return await send_daily_digests()
+
+
 @router.get("/calendar")
 async def calendar(agency: dict = Depends(require_agency)) -> dict[str, Any]:
     """Bookings keyed by check-in date, for a month-grid view."""

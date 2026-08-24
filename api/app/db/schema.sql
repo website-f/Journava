@@ -529,6 +529,9 @@ ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'r
 -- When a proactive trip notification (e.g. a countdown) was last sent, so the
 -- reminder loop pings each trip once instead of every cycle.
 ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+-- The calendar date the "what to do today" digest last went out for this trip,
+-- so it fires once per day regardless of how often the reminder loop runs.
+ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS last_digest_on DATE;
 
 -- Price-drop autopilot: a traveller arms a watch on a fare; a background sweep
 -- re-prices it and, when it drops past the threshold, notifies (and, if armed,

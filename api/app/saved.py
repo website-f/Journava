@@ -71,6 +71,38 @@ async def save(body: SaveRequest, request: Request) -> dict[str, Any]:
     return {"id": str(sid), "title": _title(body), "kind": kind}
 
 
+class CloneSharedRequest(BaseModel):
+    token: str
+
+
+@router.post("/from-shared")
+async def save_from_shared(body: CloneSharedRequest, request: Request) -> dict[str, Any]:
+    """Clone a shared plan (by its public token) into the signed-in user's own
+    trips, so a recipient of a shared link gets their own editable copy."""
+    from app.shared import get_shared
+
+    uid = _user_id(request)
+    if not uid:
+        return {"error": "Sign in to save this trip to your account."}
+    shared = await get_shared(body.token)
+    snap = shared.get("results") if isinstance(shared, dict) else None
+    if not snap:
+        return {"error": "This shared plan link is invalid or has expired."}
+
+    pool = await db.get_pool()
+    if pool is None:
+        return {"error": "database unavailable"}
+    dest = ((snap.get("chief") or {}).get("data") or {}).get("destination")
+    title = (shared.get("title") or f"{dest or 'Shared'} trip")[:120]
+    async with pool.acquire() as conn:
+        sid = await conn.fetchval(
+            """INSERT INTO saved_results (user_id, scope, kind, title, destination, snapshot)
+               VALUES ($1, 'full_trip', 'trip', $2, $3, $4) RETURNING id""",
+            uuid.UUID(uid), title, dest, json.dumps(_json_safe(snap), default=str),
+        )
+    return {"id": str(sid), "title": title, "kind": "trip"}
+
+
 def _trip_summary(snap: dict[str, Any]) -> dict[str, Any]:
     """A compact card summary from a trip snapshot — what's in the plan and
     what still needs a choice — without shipping the whole snapshot."""

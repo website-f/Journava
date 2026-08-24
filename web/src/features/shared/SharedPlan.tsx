@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { Sparkles } from "@/components/ui/icons";
-import { Spinner } from "@/components/ui";
-import { API_BASE } from "@/lib/api";
+import { useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
+import { Plus, Sparkles } from "@/components/ui/icons";
+import { Button, Spinner } from "@/components/ui";
+import { api, API_BASE } from "@/lib/api";
+import { useAuth } from "@/providers/AuthProvider";
 import { TripExtraPanels } from "@/features/command-center/ScopedResults";
 import type { PlanResults } from "@/stores/planStore";
 
@@ -13,8 +15,32 @@ import type { PlanResults } from "@/stores/planStore";
  */
 export function SharedPlan() {
   const { token } = useParams();
+  const navigate = useNavigate();
+  const { status } = useAuth();
   const [state, setState] = useState<{ title: string; results: PlanResults } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const saveToMyTrips = async () => {
+    if (status !== "authed") {
+      toast.info("Sign in to Journava, then reopen this link to save the trip.");
+      navigate("/");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api.post<{ id?: string; error?: string }>("/saved/from-shared", { token });
+      if (res.error) toast.error(res.error);
+      else {
+        toast.success("Saved to your trips!");
+        navigate("/trip");
+      }
+    } catch {
+      toast.error("Couldn't save this trip.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -38,10 +64,16 @@ export function SharedPlan() {
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--brand-500)] text-white">
             <Sparkles className="h-4 w-4" />
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">{state?.title ?? "Your trip"}</p>
             <p className="text-[0.7rem] text-[var(--muted)]">Prepared with Journava · interactive itinerary</p>
           </div>
+          {state && (
+            <Button size="sm" loading={saving} onClick={() => void saveToMyTrips()}>
+              <Plus className="h-4 w-4" />
+              Save to my trips
+            </Button>
+          )}
         </div>
       </header>
 

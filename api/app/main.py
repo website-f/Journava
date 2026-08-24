@@ -75,7 +75,7 @@ async def _reminder_loop() -> None:
     so a ping fires once per booking/trip regardless of how often the loop runs."""
     import asyncio
 
-    from app.bookings import send_due_reminders, send_trip_countdowns
+    from app.bookings import send_daily_digests, send_due_reminders, send_trip_countdowns
     from app.pricewatch import run_price_watches
 
     while True:
@@ -83,6 +83,7 @@ async def _reminder_loop() -> None:
             await asyncio.sleep(6 * 3600)
             await send_due_reminders()
             await send_trip_countdowns()
+            await send_daily_digests()  # "what to do today" for trips in progress
             await run_price_watches()  # re-price armed fare watches; alert on drops
         except asyncio.CancelledError:  # noqa: PERF203
             break
