@@ -5,8 +5,7 @@ import {
   TrendingUp, GitCompareArrows, BadgeCheck, ShieldQuestion, Save,
 } from "@/components/ui/icons";
 import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge, Skeleton } from "@/components/ui";
-import { Collapsible } from "@/components/ui/Collapsible";
-import { Page, PageHeader, SectionHeader } from "@/components/layout/Page";
+import { Page, PageHeader } from "@/components/layout/Page";
 import type { ItineraryItem, PlanOption } from "@/stores/planStore";
 import { useActiveTrip } from "@/hooks/useActiveTrip";
 import { recordOptionOutcome, recordOutcome } from "@/lib/outcomes";
@@ -279,7 +278,6 @@ function TripResearch() {
           </div>
         </TabsContent>
       </Tabs>
-    </div>
   );
 }
 
@@ -377,19 +375,6 @@ function PagedRows<T extends { id: string }>({
       <div className="space-y-2">{slice.map(render)}</div>
       <Pager page={p} pages={pages} setPage={setPage} total={items.length} label={label} />
     </>
-  );
-}
-
-function ResearchHeader() {
-  return (
-    <header className="pt-2 pb-6">
-      <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">
-        Research Board
-      </h2>
-      <p className="mt-1 text-sm text-[var(--muted)]">
-        Destination intelligence — not a chat blob. Each pick shows the reasoning.
-      </p>
-    </header>
   );
 }
 
