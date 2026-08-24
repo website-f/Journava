@@ -14,6 +14,7 @@ const TripMap = lazy(() =>
 import { api, API_BASE } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth";
 import { PriceWatchCard } from "./PriceWatchCard";
+import { ExpenseSplitCard } from "./ExpenseSplitCard";
 import { useChecklist } from "@/hooks/useChecklist";
 import { usePlanStore } from "@/stores/planStore";
 import type { AgentPlanResult, CostDetail, DisruptionRecovery, ItineraryItem, PlanResults } from "@/stores/planStore";
@@ -141,6 +142,7 @@ export function MyTrip() {
       <BudgetOptimizerCard results={results} setTrip={setTrip} />
       <ItinerarySection results={results} setTrip={setTrip} />
       <BackupRail results={results} setTrip={setTrip} />
+      <ExpenseSplitCard results={results} />
       <TripStoryCard results={results} />
       {/* The full plan — flights, stays, food, places, visa, insurance — so the
           saved trip shows everything the agents produced, not just the summary. */}

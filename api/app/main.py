@@ -40,6 +40,7 @@ from app.content import router as content_router
 from app.chaos_lab import router as chaos_router
 from app.mapping import router as mapping_router
 from app.pricewatch import router as pricewatch_router
+from app.expenses import router as expenses_router
 from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
 from app.supplier.router import router as supplier_router
@@ -182,6 +183,7 @@ app.include_router(content_router)
 app.include_router(chaos_router)
 app.include_router(mapping_router)
 app.include_router(pricewatch_router)
+app.include_router(expenses_router)
 
 
 # --------------------------------------------------------------------------- #

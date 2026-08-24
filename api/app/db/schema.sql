@@ -557,6 +557,21 @@ CREATE TABLE IF NOT EXISTS fare_watches (
 CREATE INDEX IF NOT EXISTS fare_watches_user_idx ON fare_watches (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS fare_watches_active_idx ON fare_watches (status) WHERE status = 'active';
 
+-- Group expense split: shared trip costs + who-owes-whom settle-up. Scoped to
+-- the trip owner (user_id) and grouped within a trip by trip_key.
+CREATE TABLE IF NOT EXISTS trip_expenses (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    trip_key    TEXT NOT NULL,
+    description TEXT NOT NULL,
+    amount      NUMERIC NOT NULL,
+    currency    TEXT NOT NULL DEFAULT 'MYR',
+    paid_by     TEXT NOT NULL,
+    shared_by   JSONB NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS trip_expenses_key_idx ON trip_expenses (user_id, trip_key, created_at);
+
 CREATE TABLE IF NOT EXISTS finance_transactions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
