@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  api-tests:
+    name: API tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      # The app's defaults point at localhost:5432/6379 with journava/journava —
+      # so these service containers satisfy the integration tests (which need a
+      # real DB + Redis for lifespan schema-init, auth and job persistence).
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: journava
+          POSTGRES_PASSWORD: journava
+          POSTGRES_DB: journava
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U journava"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync deps (with dev)
+        working-directory: api
+        run: uv sync --dev
+      - name: Run tests
+        working-directory: api
+        env:
+          SEED_DEMO_USERS: "true"
+          JWT_SECRET: ci-test-secret
+        run: uv run python -m pytest -q
+
+  web-build:
+    name: Web build (tsc + vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        working-directory: web
+        run: npm ci
+      - name: Build (typecheck + bundle)
+        working-directory: web
+        run: npm run build
