@@ -122,7 +122,7 @@ export function MyTrip() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl">
+    <div className="mx-auto w-full max-w-5xl space-y-6">
       <LoadingOverlay
         open={recoveryLoading}
         events={events}
@@ -147,7 +147,7 @@ export function MyTrip() {
       <TripStoryCard results={results} />
       {/* The full plan — flights, stays, food, places, visa, insurance — so the
           saved trip shows everything the agents produced, not just the summary. */}
-      <div className="mt-8">
+      <div>
         <TripExtraPanels results={results as PlanResults} />
       </div>
       <LocalIntelCard />
@@ -755,8 +755,8 @@ function CompleteItineraryCard({
         you want — we'll schedule them across full days and keep the rest as backup you can swap in anytime.
       </p>
 
-      {/* Selectable place cards */}
-      <div className="grid max-h-80 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+      {/* Selectable place cards — wrap into a responsive grid (no inner scroll). */}
+      <div className="grid gap-2 sm:grid-cols-2">
         {suggestions.map((s) => {
           const on = picked.has(s.title);
           const isFood = s.kind === "restaurant";
@@ -768,7 +768,7 @@ function CompleteItineraryCard({
               onClick={() => toggle(s.title)}
               aria-pressed={on}
               className={cn(
-                "flex items-start gap-2.5 rounded-[var(--r-md)] border p-2.5 text-left transition-all",
+                "flex min-w-0 items-start gap-2.5 rounded-[var(--r-md)] border p-2.5 text-left transition-all",
                 on
                   ? "border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] ring-1 ring-[var(--brand-500)]"
                   : "border-[var(--border)] hover:border-[var(--brand-400)]",
@@ -1713,7 +1713,7 @@ function DayItinerary({
               setDrag(null);
             }}
             className={cn(
-              "surface-card flex items-start gap-2 p-3 transition-opacity",
+              "flex items-center gap-2.5 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 transition-opacity",
               drag === idx && "opacity-50",
               done && "opacity-60",
             )}
@@ -1724,40 +1724,45 @@ function DayItinerary({
               aria-label={done ? "Mark not done" : "Mark done"}
               onClick={() => onToggle(key)}
               className={cn(
-                "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[var(--r-sm)] border transition-colors",
+                "grid h-5 w-5 shrink-0 place-items-center rounded-full border transition-colors",
                 done
                   ? "border-[var(--success)] bg-[var(--success)] text-white"
                   : "border-[var(--border)] text-transparent hover:border-[var(--success)]",
               )}
             >
-              <Check className="h-3.5 w-3.5" />
+              <Check className="h-3 w-3" weight="bold" />
             </button>
-            <GripHorizontal className="mt-0.5 hidden h-4 w-4 shrink-0 cursor-grab text-[var(--muted)] active:cursor-grabbing sm:block" />
+
+            <GripHorizontal className="hidden h-4 w-4 shrink-0 cursor-grab text-[var(--muted)]/60 active:cursor-grabbing sm:block" />
+
             <div className="min-w-0 flex-1">
-              <p className={cn("text-sm font-medium", done && "line-through text-[var(--muted)]")}>{item.title}</p>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                <Badge>{item.kind}</Badge>
+              <p className={cn("truncate text-sm font-medium leading-tight", done && "text-[var(--muted)] line-through")}>
+                {item.title}
+              </p>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-[var(--muted)]">
+                <span className="uppercase tracking-wide">{item.kind}</span>
                 {item.starts_at && (
-                  <span>
-                    {item.starts_at}
-                    {item.ends_at ? ` – ${item.ends_at}` : ""}
+                  <span className="tabular-nums">
+                    · {item.starts_at}
+                    {item.ends_at ? `–${item.ends_at}` : ""}
                   </span>
                 )}
                 {item.cost_amount != null && (
                   <span className="font-medium text-[var(--brand-500)]">
-                    <Money amount={item.cost_amount} currency={item.cost_currency ?? "MYR"} />
+                    · <Money amount={item.cost_amount} currency={item.cost_currency ?? "MYR"} />
                   </span>
                 )}
               </div>
             </div>
-            {/* Reorder controls — work on touch (HTML5 drag is desktop-only). */}
-            <div className="flex shrink-0 flex-col gap-1">
+
+            {/* Compact, horizontal move controls — keeps each row thin. */}
+            <div className="flex shrink-0 items-center gap-0.5">
               <button
                 type="button"
                 aria-label="Move up"
                 disabled={idx === 0}
                 onClick={() => onReorder(idx, idx - 1)}
-                className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-30"
+                className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-25"
               >
                 <ArrowUp className="h-4 w-4" />
               </button>
@@ -1766,7 +1771,7 @@ function DayItinerary({
                 aria-label="Move down"
                 disabled={idx === dayItems.length - 1}
                 onClick={() => onReorder(idx, idx + 1)}
-                className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-30"
+                className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-25"
               >
                 <ArrowDown className="h-4 w-4" />
               </button>

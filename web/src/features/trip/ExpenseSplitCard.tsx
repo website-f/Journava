@@ -99,7 +99,7 @@ export function ExpenseSplitCard({ results }: { results: Record<string, AgentPla
   const hasData = data && data.expenses.length > 0;
 
   return (
-    <section className="mt-8">
+    <section>
       <div className="surface-card p-5">
         <div className="mb-3 flex items-center gap-2">
           <Wallet className="h-5 w-5 text-[var(--brand-500)]" />
