@@ -5,6 +5,7 @@ import { cn } from "@/lib/cn";
 import { useScrollLock } from "@/hooks/useScrollLock";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { AgentPulse } from "./AgentPulse";
+import { AgentTheater } from "./AgentTheater";
 import type { AgentEvent } from "@/lib/sse";
 
 /* ------------------------------------------------------------------ */
@@ -164,9 +165,9 @@ export function LoadingOverlay({ open, events, onCancel, onWatch }: OverlayProps
             exit={{ y: 16, scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 26, stiffness: 220 }}
             className={cn(
-              "w-full max-w-lg rounded-[var(--r-lg)] bg-[var(--elevated)]",
+              "w-full max-w-xl rounded-[var(--r-lg)] bg-[var(--elevated)]",
               "border border-[var(--border)] shadow-[var(--shadow-2)]",
-              "outline-none flex flex-col overflow-hidden",
+              "outline-none flex flex-col overflow-hidden max-h-[90vh]",
             )}
           >
             {/* ── Header ── */}
@@ -258,11 +259,16 @@ export function LoadingOverlay({ open, events, onCancel, onWatch }: OverlayProps
               })}
             </div>
 
+            {/* ── Agent Theater — the live 21-agent mesh ── */}
+            <div className="mx-4 mb-2 overflow-y-auto rounded-[var(--r-md)] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_60%,transparent)] px-2 py-3">
+              <AgentTheater events={events} />
+            </div>
+
             {/* ── Live log panel ── */}
             <div
               ref={logRef}
               className={cn(
-                "mx-4 mb-4 max-h-52 overflow-y-auto rounded-[var(--r-md)]",
+                "mx-4 mb-4 max-h-28 overflow-y-auto rounded-[var(--r-md)]",
                 "bg-[color-mix(in_srgb,var(--bg)_80%,black)] border border-[var(--border)]",
                 "px-3 py-2 scroll-smooth",
               )}

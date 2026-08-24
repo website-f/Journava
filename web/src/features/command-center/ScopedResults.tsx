@@ -30,6 +30,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Button, OptionCard, Skeleton } from "@/components/ui";
+import { AgentTheater } from "@/components/ui/AgentTheater";
+import { useAgentStream } from "@/hooks/useAgentStream";
 import { Money, CurrencySwitcher } from "@/components/ui/Money";
 import { useCurrency } from "@/lib/money";
 import { cn } from "@/lib/cn";
@@ -170,6 +172,42 @@ function videoReviews(results: PlanResults, key: "attractions" | "food"): VideoR
  * the order that scope considers most useful.
  */
 
+/**
+ * The live-run banner on the results page. Sections stream in tier-by-tier, so
+ * the run keeps going after the first results render — this keeps the Agent
+ * Theater on screen (collapsible) so the traveller can watch the 21-agent mesh
+ * finish while browsing what's already landed. Same SSE stream as the overlay.
+ */
+function StreamingMesh() {
+  const { events } = useAgentStream();
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="mb-4 rounded-[var(--r-md)] border border-[var(--brand-400)]/40 bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] px-4 py-2.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2.5 text-left"
+      >
+        <span className="relative flex h-2.5 w-2.5 shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-60" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--brand-500)]" />
+        </span>
+        <p className="flex-1 text-xs text-[var(--muted)]">
+          Your agents are still working — sections appear here the moment each finishes.
+        </p>
+        <span className="text-[0.65rem] font-medium text-[var(--brand-500)]">
+          {open ? "Hide mesh" : "Watch mesh"}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-2 border-t border-[var(--brand-400)]/20 pt-2">
+          <AgentTheater events={events} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ScopedResults({
   scope,
   results,
@@ -225,17 +263,7 @@ export function ScopedResults({
         <Badge>{agents.length} agents{streaming ? " running" : " ran"}</Badge>
       </div>
 
-      {streaming && (
-        <div className="mb-4 flex items-center gap-2.5 rounded-[var(--r-md)] border border-[var(--brand-400)]/40 bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] px-4 py-2.5">
-          <span className="relative flex h-2.5 w-2.5 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-60" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--brand-500)]" />
-          </span>
-          <p className="text-xs text-[var(--muted)]">
-            Your agents are still working — sections appear here the moment each finishes.
-          </p>
-        </div>
-      )}
+      {streaming && <StreamingMesh />}
 
       <SectionNav containerRef={panelsRef} deps={results} />
 
