@@ -86,6 +86,14 @@ async def _run_plan_job(body: PlanJobRequest, user_id: str | None) -> dict[str, 
         body.model_dump(exclude={"scope"}, exclude_none=True)
     )
     profile = MemoryAgent.load_profile(user_id)
+    # Personalise: fold the traveller's learned taste (from their past trips +
+    # goals) into the profile so every agent skews to what they actually like.
+    try:
+        taste = await MemoryAgent.build_taste_profile(user_id)
+        if taste:
+            profile.extras = {**(profile.extras or {}), "taste": taste}
+    except Exception:  # noqa: BLE001 — personalisation must never break a plan
+        pass
 
     started = time.monotonic()
     # Stream partial results to this job as each tier lands (flights first, then

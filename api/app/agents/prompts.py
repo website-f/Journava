@@ -43,6 +43,16 @@ def _profile_summary(profile: TravelerProfile) -> str:
         parts.append(f"Accessibility needs: {json.dumps(profile.accessibility)}.")
     if profile.seat_preference:
         parts.append(f"Seat preference: {profile.seat_preference}.")
+    # Learned taste from the traveller's own history — personalises every agent.
+    taste = (profile.extras or {}).get("taste") if isinstance(profile.extras, dict) else None
+    if isinstance(taste, dict):
+        if taste.get("loves"):
+            parts.append(
+                f"LEARNED TASTE (from past trips) — leans toward: {', '.join(taste['loves'])}; "
+                "favour options that match this."
+            )
+        if taste.get("visited"):
+            parts.append(f"Has already been to: {', '.join(taste['visited'])} (suggest fresh spots).")
     parts.append(f"Default pace: {profile.pace}. Budget currency: {profile.budget_currency}.")
     return " ".join(parts) if parts else "No standing preferences — search globally."
 

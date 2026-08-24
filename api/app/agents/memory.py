@@ -158,6 +158,66 @@ class MemoryAgent(BaseAgent):
             logger.warning("Stored profile unreadable (%s) — searching globally", exc)
             return TravelerProfile()
 
+    #: Interest cues we look for in a traveller's past goals to learn their taste.
+    _TASTE_CUES = (
+        "halal", "beach", "island", "temple", "shrine", "food", "foodie", "street food",
+        "nature", "hiking", "mountain", "waterfall", "luxury", "budget", "backpack",
+        "shopping", "nightlife", "culture", "museum", "history", "adventure", "romantic",
+        "honeymoon", "family", "kids", "ski", "snow", "diving", "snorkel", "safari",
+        "wildlife", "photography", "instagram", "cafe", "coffee", "wellness", "spa",
+    )
+
+    @staticmethod
+    async def build_taste_profile(user_id: str | None) -> dict[str, Any]:
+        """Learn a compact taste profile from the traveller's own history — the
+        destinations they've saved and the interests recurring in their past
+        goals — so every future plan is personalised to them, not generic.
+        Heuristic + cheap (no LLM); safe/empty for a new or anonymous user."""
+        from collections import Counter
+
+        from app.core import db
+
+        pool = await db.get_pool()
+        if pool is None or not user_id:
+            return {}
+        import uuid as _uuid
+
+        try:
+            uid = _uuid.UUID(user_id)
+            async with pool.acquire() as conn:
+                trips = await conn.fetch(
+                    "SELECT destination, snapshot FROM saved_results "
+                    "WHERE user_id = $1 AND kind = 'trip' ORDER BY created_at DESC LIMIT 20",
+                    uid,
+                )
+        except Exception as exc:  # noqa: BLE001 — personalisation is best-effort
+            logger.info("taste profile query skipped: %s", exc)
+            return {}
+
+        visited: list[str] = []
+        seen: set[str] = set()
+        goal_text: list[str] = []
+        for row in trips:
+            dest = (row["destination"] or "").split(",")[0].strip()
+            key = dest.lower()
+            if dest and key not in seen:
+                seen.add(key)
+                visited.append(dest)
+            # The goal that produced each saved trip is the richest taste signal.
+            try:
+                snap = row["snapshot"]
+                snap = json.loads(snap) if isinstance(snap, str) else (snap or {})
+                goal_text.append(str(((snap.get("chief") or {}).get("data") or {}).get("goal") or ""))
+            except Exception:  # noqa: BLE001
+                pass
+
+        text = " ".join(goal_text).lower()
+        counts = Counter(cue for cue in MemoryAgent._TASTE_CUES if cue in text)
+        loves = [cue for cue, _ in counts.most_common(6)]
+        if not loves and not visited:
+            return {}
+        return {"loves": loves, "visited": visited[:8]}
+
     @staticmethod
     def save_profile(profile: TravelerProfile, user_id: str | None = None) -> None:
         """Persist a user's standing preferences (seed of long-term memory, §3.5)."""
