@@ -1,0 +1,245 @@
+"""Immersive map itinerary (feature) — geocode the day-by-day plan and hand the
+frontend everything it needs to draw a real map: a tile style, per-day markers,
+route polylines, and walking-time legs.
+
+Keyless-first: if a MapTiler key is in the vault we use MapTiler tiles +
+geocoding (nicer, faster, higher limits); otherwise we fall back to OpenStreetMap
+raster tiles + Nominatim geocoding so the map works out of the box with no key.
+Every geocode is cached (24h), so a second load of the same trip is instant.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from math import asin, cos, radians, sin, sqrt
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from app.agents.goal_parser import CITY_CODES
+from app.core import cache, vault
+from app.core.settings import settings
+
+logger = logging.getLogger("journava")
+
+# Reverse the city→IATA table into IATA→city, preferring the fullest proper name
+# per code ("kuala lumpur" over "kl"/"klia"), so a trip whose destination was
+# resolved to an airport code (e.g. "NRT") still geocodes as its city ("Tokyo").
+_IATA_TO_CITY: dict[str, str] = {}
+for _name, _code in CITY_CODES.items():
+    _cur = _IATA_TO_CITY.get(_code)
+    if _cur is None or len(_name) > len(_cur):
+        _IATA_TO_CITY[_code] = _name
+
+
+def _resolve_city(destination: str) -> str:
+    """A human city name for geocoding — turns a bare IATA code into its city."""
+    d = destination.strip()
+    if len(d) == 3 and d.isalpha():
+        city = _IATA_TO_CITY.get(d.upper())
+        if city:
+            return city.title()
+    return destination
+
+
+# Itinerary titles carry human decoration a geocoder chokes on — a stop count,
+# a sub-attraction, a tagline. Cut at the first such separator to leave the
+# core place name ("Narita City Park – Cherry Blossom Walk" → "Narita City Park").
+_TITLE_SEPARATORS = (" · ", " – ", " — ", " (", " — ", ": ", " & ")
+
+
+def _clean_title(title: str) -> str:
+    t = (title or "").strip()
+    for sep in _TITLE_SEPARATORS:
+        idx = t.find(sep)
+        if idx > 0:
+            t = t[:idx]
+    return t.strip(" -·–—")
+
+router = APIRouter(prefix=f"{settings.api_prefix}/trip", tags=["trip"])
+
+_TIMEOUT = httpx.Timeout(12.0)
+_UA = "Journava/1.0 (travel planner; contact fitri@craveasia.com)"
+_WALK_M_PER_MIN = 80.0  # ~4.8 km/h
+_TRANSIT_M_PER_MIN = 500.0  # ~30 km/h — used past the walkable threshold
+_WALK_LIMIT_M = 2500.0
+
+# Nominatim asks for <= 1 req/s; serialize keyless geocodes behind this lock.
+_nominatim_lock = asyncio.Lock()
+
+
+class MapItem(BaseModel):
+    title: str
+    kind: str | None = None
+    day_index: int | None = None
+    starts_at: str | None = None
+
+
+class MapRequest(BaseModel):
+    destination: str
+    items: list[MapItem] = []
+
+
+def _osm_style() -> dict[str, Any]:
+    """A self-contained MapLibre raster style over OpenStreetMap tiles — no key."""
+    return {
+        "version": 8,
+        "sources": {
+            "osm": {
+                "type": "raster",
+                "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+                "tileSize": 256,
+                "attribution": "© OpenStreetMap contributors",
+            }
+        },
+        "layers": [{"id": "osm", "type": "raster", "source": "osm"}],
+    }
+
+
+def _haversine_m(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance in metres between (lat, lng) points."""
+    lat1, lng1, lat2, lng2 = map(radians, (a[0], a[1], b[0], b[1]))
+    dlat, dlng = lat2 - lat1, lng2 - lng1
+    h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
+    return 2 * 6371000 * asin(sqrt(h))
+
+
+async def _geocode_maptiler(query: str, key: str, proximity: tuple[float, float] | None) -> list[float] | None:
+    params: dict[str, Any] = {"key": key, "limit": 1}
+    if proximity:  # (lat, lng) → MapTiler wants lng,lat
+        params["proximity"] = f"{proximity[1]},{proximity[0]}"
+    url = f"https://api.maptiler.com/geocoding/{quote(query)}.json"
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        r = await client.get(url, params=params)
+        r.raise_for_status()
+        feats = (r.json() or {}).get("features") or []
+    if not feats:
+        return None
+    center = feats[0].get("center")  # [lng, lat]
+    return [float(center[0]), float(center[1])] if center else None
+
+
+#: Drop a geocode this far from the trip city — a match on the wrong continent
+#: (Nominatim's top hit for an ambiguous name) is worse than no pin at all.
+_MAX_FROM_CITY_M = 500_000.0
+
+
+async def _geocode_nominatim(query: str, proximity: tuple[float, float] | None) -> list[float] | None:
+    # Nominatim's free search has no proximity param, so pull several candidates
+    # and pick the one nearest the trip city — the reliable way to beat a
+    # same-named place on another continent.
+    params = {"q": query, "format": "jsonv2", "limit": 5 if proximity else 1}
+    async with _nominatim_lock:  # honour the 1 req/s policy
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers={"User-Agent": _UA}) as client:
+            r = await client.get("https://nominatim.openstreetmap.org/search", params=params)
+            r.raise_for_status()
+            rows = r.json() or []
+        await asyncio.sleep(1.1)
+    if not rows:
+        return None
+    if not proximity:
+        return [float(rows[0]["lon"]), float(rows[0]["lat"])]
+    best, best_d = None, None
+    for row in rows:
+        lat, lng = float(row["lat"]), float(row["lon"])
+        d = _haversine_m((lat, lng), proximity)
+        if best_d is None or d < best_d:
+            best, best_d = [lng, lat], d
+    if best is None or (best_d is not None and best_d > _MAX_FROM_CITY_M):
+        return None  # nearest candidate is implausibly far → drop it
+    return best
+
+
+async def _geocode(query: str, key: str | None, proximity: tuple[float, float] | None) -> list[float] | None:
+    """Cached geocode → [lng, lat]. MapTiler when keyed, else Nominatim."""
+    provider = "mt" if key else "osm"
+    prox = f"{proximity[0]:.2f},{proximity[1]:.2f}" if proximity else "none"
+    ckey = f"geo:{provider}:{prox}:{query.lower().strip()}"
+
+    async def produce() -> list[float] | None:
+        try:
+            if key:
+                return await _geocode_maptiler(query, key, proximity)
+            return await _geocode_nominatim(query, proximity)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("geocode failed for %r: %s", query, exc)
+            return None
+
+    return await cache.cached(ckey, produce, ttl=settings.cache_ttl_long)
+
+
+def _leg(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    meters = _haversine_m((a["lat"], a["lng"]), (b["lat"], b["lng"]))
+    if meters <= _WALK_LIMIT_M:
+        return {"meters": round(meters), "minutes": max(1, round(meters / _WALK_M_PER_MIN)), "mode": "walk"}
+    return {"meters": round(meters), "minutes": max(1, round(meters / _TRANSIT_M_PER_MIN)), "mode": "transit"}
+
+
+@router.post("/map")
+async def trip_map(body: MapRequest) -> dict[str, Any]:
+    """Geocode the itinerary and return a drawable map payload.
+
+    Returns ``configured: false`` only if even the city can't be geocoded (e.g.
+    no network) — the frontend then shows the list view unchanged.
+    """
+    key = await vault.secret_for("maptiler")
+    provider = "maptiler" if key else "osm"
+    city_name = _resolve_city(body.destination)
+
+    city = await _geocode(city_name, key, None)
+    if not city:
+        return {"configured": False, "provider": provider, "reason": "could not geocode destination"}
+    proximity = (city[1], city[0])  # (lat, lng) for biasing subsequent lookups
+
+    # Geocode each place, biased toward the city. MapTiler tolerates parallelism;
+    # Nominatim is serialized by its lock inside _geocode.
+    async def locate(item: MapItem) -> dict[str, Any] | None:
+        kind = item.kind or "activity"
+        if kind == "flight":
+            return None  # a flight isn't a place on the map
+        name = _clean_title(item.title)
+        if not name:
+            return None
+        # Many titles already carry the locale ("Naritasan Shinshoji Temple"), so
+        # try the bare name first (nearest-to-city wins), then fall back to a
+        # city-qualified query for generic names.
+        pt = await _geocode(name, key, proximity)
+        if not pt:
+            pt = await _geocode(f"{name}, {city_name}", key, proximity)
+        if not pt:
+            return None
+        return {
+            "title": item.title,
+            "kind": item.kind or "activity",
+            "day_index": item.day_index or 1,
+            "starts_at": item.starts_at,
+            "lng": pt[0],
+            "lat": pt[1],
+        }
+
+    located = [p for p in await asyncio.gather(*[locate(it) for it in body.items]) if p]
+
+    # Group by day, order within a day by starts_at, build legs.
+    by_day: dict[int, list[dict[str, Any]]] = {}
+    for p in located:
+        by_day.setdefault(int(p["day_index"]), []).append(p)
+    days = []
+    for d in sorted(by_day):
+        pts = sorted(by_day[d], key=lambda x: x.get("starts_at") or "")
+        legs = [_leg(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+        days.append({"day": d, "places": pts, "legs": legs})
+
+    style: Any = f"https://api.maptiler.com/maps/streets-v2/style.json?key={key}" if key else _osm_style()
+    return {
+        "configured": True,
+        "provider": provider,
+        "style": style,
+        "center": city,  # [lng, lat]
+        "located": len(located),
+        "requested": len(body.items),
+        "days": days,
+    }

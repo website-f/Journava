@@ -1,59 +1,65 @@
 /**
- * TripMap — MapLibre GL map showing itinerary points on an interactive map.
+ * TripMap — MapLibre GL map of the itinerary on REAL geocoded coordinates.
  *
- * Reads the active trip's coordinates and itinerary items, plots markers for
- * each activity/meal/landmark, and draws a simple route between day groups.
+ * The plan's places have no lat/lng, so the backend (`POST /trip/map`) geocodes
+ * each stop (keyless OSM + Nominatim, upgrading to MapTiler when a key is in the
+ * vault), returns a tile style + per-day markers + walking/transit legs, and
+ * this component draws them: day tabs, numbered markers, a dashed route line,
+ * and a leg strip ("Senso-ji → Skytree · ~18 min walk").
  *
  * Spec §3.3 — My Trip page maps integration.
  */
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Navigation } from "@/components/ui/icons";
+
+/** The GeoJSON shape MapLibre's GeoJSONSource.setData accepts — derived from its
+ *  own signature so we don't need the @types/geojson global namespace. */
+type RouteData = Parameters<maplibregl.GeoJSONSource["setData"]>[0];
+import { Navigation, Footprints, Bus } from "@/components/ui/icons";
 import { usePlanStore } from "@/stores/planStore";
+import { api } from "@/lib/api";
+import { cn } from "@/lib/cn";
 
-/** Default center: Venice (our demo destination) */
-const DEFAULT_CENTER: [number, number] = [12.32, 45.44];
-const DEFAULT_ZOOM = 13;
-
-/** MapTiler free-tier style URL (key in env or open OSM style) */
-const MAP_STYLE = {
-  version: 8 as const,
-  sources: {
-    osm: {
-      type: "raster" as const,
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution: "&copy; OpenStreetMap contributors",
-    },
-  },
-  layers: [
-    {
-      id: "osm",
-      type: "raster" as const,
-      source: "osm",
-    },
-  ],
+type MapPlace = { title: string; kind: string; day_index: number; starts_at: string | null; lng: number; lat: number };
+type MapLeg = { meters: number; minutes: number; mode: "walk" | "transit" };
+type MapDay = { day: number; places: MapPlace[]; legs: MapLeg[] };
+type MapPayload = {
+  configured: boolean;
+  provider: string;
+  style: string | maplibregl.StyleSpecification;
+  center: [number, number];
+  located: number;
+  requested: number;
+  days: MapDay[];
 };
 
-/** Kind → color mapping for markers */
 const KIND_COLORS: Record<string, string> = {
-  flight: "#3B82F6",
-  hotel: "#8B5CF6",
-  activity: "#4F46E5",
-  meal: "#F59E0B",
-  transport: "#10B981",
+  flight: "#7C3AED",
+  hotel: "#16A34A",
+  activity: "#2563EB",
+  meal: "#E0973B",
+  restaurant: "#E0973B",
+  transport: "#0891B2",
 };
 
-/** Kind → emoji mapping */
-const KIND_ICONS: Record<string, string> = {
-  flight: "✈️",
-  hotel: "🏨",
-  activity: "📍",
-  meal: "🍽️",
-  transport: "🚌",
-};
+function markerEl(index: number, color: string): HTMLElement {
+  const el = document.createElement("div");
+  el.style.cssText = "width:28px;height:28px;cursor:pointer;";
+  const bubble = document.createElement("div");
+  bubble.style.cssText =
+    `width:28px;height:28px;border-radius:50%;background:${color};border:2px solid #fff;` +
+    "display:grid;place-items:center;font:600 13px/1 system-ui;color:#fff;" +
+    "box-shadow:0 2px 6px rgba(0,0,0,.3);transition:transform .15s ease;";
+  bubble.textContent = String(index + 1);
+  el.appendChild(bubble);
+  el.addEventListener("mouseenter", () => (bubble.style.transform = "scale(1.25)"));
+  el.addEventListener("mouseleave", () => (bubble.style.transform = "scale(1)"));
+  return el;
+}
+
+const short = (t: string) => t.split(" ").slice(0, 2).join(" ");
 
 interface TripMapProps {
   className?: string;
@@ -62,44 +68,68 @@ interface TripMapProps {
 export function TripMap({ className }: TripMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
   const results = usePlanStore((s) => s.results);
 
-  // Extract coordinates from weather_risk data and itinerary
-  const { center, items } = useMemo(() => {
-    if (!results) return { center: DEFAULT_CENTER, items: [] };
+  const [payload, setPayload] = useState<MapPayload | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [activeDay, setActiveDay] = useState<number | null>(null);
 
-    const weatherData = results.weather_risk?.data;
-    const coords = weatherData?.coordinates as { lat: number; lng: number } | undefined;
-    const ctr: [number, number] = coords ? [coords.lng, coords.lat] : DEFAULT_CENTER;
-
-    const it = results.itinerary?.items ?? [];
-    return { center: ctr, items: it };
+  const { destination, items } = useMemo(() => {
+    const dest = (results?.chief?.data as { destination?: string } | undefined)?.destination ?? "";
+    const it = (results?.itinerary?.items ?? []).map((i) => ({
+      title: i.title,
+      kind: i.kind,
+      day_index: i.day_index,
+      starts_at: i.starts_at,
+    }));
+    return { destination: dest, items: it };
   }, [results]);
 
+  // 1) Fetch geocoded coordinates once per (destination, items) signature.
+  const sig = useMemo(
+    () => `${destination}|${items.map((i) => `${i.day_index}:${i.title}`).join(",")}`,
+    [destination, items],
+  );
   useEffect(() => {
-    if (!mapRef.current || mapInstance.current) return;
+    let cancelled = false;
+    if (!destination || items.length === 0) {
+      setPayload(null);
+      return;
+    }
+    setFailed(false);
+    api
+      .post<MapPayload>("/trip/map", { destination, items })
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.configured || !res.days?.length) {
+          setFailed(true);
+          return;
+        }
+        setPayload(res);
+        setActiveDay((d) => d ?? res.days[0]?.day ?? 1);
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 2) Create the map once we have a style.
+  useEffect(() => {
+    if (!payload || !mapRef.current || mapInstance.current) return;
     const map = new maplibregl.Map({
       container: mapRef.current,
-      style: MAP_STYLE,
-      center,
-      zoom: DEFAULT_ZOOM,
+      style: payload.style,
+      center: payload.center,
+      zoom: 12,
       attributionControl: false,
     });
-
-    map.addControl(new maplibregl.NavigationControl(), "top-right");
-    map.addControl(
-      new maplibregl.AttributionControl({ compact: true }),
-      "bottom-right",
-    );
-
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     mapInstance.current = map;
 
-    // Keep the canvas sized to its container — tab switches, window resizes and
-    // the responsive layout can all change the width, and without a resize the
-    // map renders at a stale size (the "not responsive" bug). Coalesce bursts of
-    // resize events (e.g. during the page-enter animation) into one rAF call so
-    // MapLibre isn't asked to re-layout dozens of times a frame (the lag).
+    // Keep the canvas sized to its container (tab switches / resizes).
     let raf = 0;
     const scheduleResize = () => {
       if (raf) return;
@@ -121,99 +151,99 @@ export function TripMap({ className }: TripMapProps) {
       map.remove();
       mapInstance.current = null;
     };
-  }, []);
+  }, [payload]);
 
-  // Update markers when items change
+  // 3) Redraw markers + route line whenever the active day changes.
   useEffect(() => {
     const map = mapInstance.current;
-    if (!map || items.length === 0) return;
+    if (!map || !payload || activeDay == null) return;
+    const day = payload.days.find((d) => d.day === activeDay);
+    if (!day) return;
 
-    // Clear existing markers
-    const markers: maplibregl.Marker[] = [];
-
-    // Add markers for each itinerary item
-    items.forEach((item, idx) => {
-      // Generate pseudo-random positions around center for demo
-      // In production, itinerary items would have lat/lng
-      const angle = (idx / items.length) * Math.PI * 2;
-      const radius = 0.005 + (idx % 3) * 0.003;
-      const lng = center[0] + Math.cos(angle) * radius;
-      const lat = center[1] + Math.sin(angle) * radius;
-
-      const color = KIND_COLORS[item.kind] || "#4F46E5";
-      const emoji = KIND_ICONS[item.kind] || "📍";
-
-      // The marker's OUTER element carries MapLibre's positioning transform, so
-      // scaling it directly (the old bug) yanked the pin off its coordinate on
-      // hover — impossible to click. Keep the outer element untouched and animate
-      // an inner bubble instead, so hover only grows the pin in place.
-      const el = document.createElement("div");
-      el.className = "trip-map-marker";
-      el.style.cssText = "width:28px;height:28px;cursor:pointer;";
-      const bubble = document.createElement("div");
-      bubble.style.cssText = `
-        width:28px;height:28px;border-radius:50%;background:${color};
-        border:2px solid white;display:flex;align-items:center;justify-content:center;
-        font-size:12px;box-shadow:0 2px 6px rgba(0,0,0,0.3);
-        transition:transform 0.15s ease;transform-origin:center;
-      `;
-      bubble.textContent = emoji;
-      el.appendChild(bubble);
-      el.addEventListener("mouseenter", () => {
-        bubble.style.transform = "scale(1.3)";
-      });
-      el.addEventListener("mouseleave", () => {
-        bubble.style.transform = "scale(1)";
-      });
-
-      const popup = new maplibregl.Popup({ offset: 16 }).setHTML(`
-        <div style="font-family: system-ui; padding: 4px 0;">
-          <div style="font-weight: 600; font-size: 13px;">${item.title}</div>
-          <div style="font-size: 11px; color: #666; margin-top: 2px;">
-            Day ${item.day_index} ${item.starts_at ? `· ${item.starts_at}` : ""}
-          </div>
-          ${item.cost_amount ? `<div style="font-size: 12px; color: var(--brand-500, #4F46E5); margin-top: 4px; font-weight: 600;">${item.cost_currency ?? "MYR"} ${Number(item.cost_amount).toLocaleString()}</div>` : ""}
-        </div>
-      `);
-
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat([lng, lat])
-        .setPopup(popup)
-        .addTo(map);
-
-      markers.push(marker);
-    });
-
-    // Fit bounds to show all markers
-    if (markers.length > 1) {
+    const draw = () => {
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
       const bounds = new maplibregl.LngLatBounds();
-      markers.forEach((m) => bounds.extend(m.getLngLat()));
-      map.fitBounds(bounds, { padding: 60, maxZoom: 15 });
-    }
+      day.places.forEach((p, i) => {
+        const color = KIND_COLORS[p.kind] ?? KIND_COLORS.activity;
+        const popup = new maplibregl.Popup({ offset: 18, closeButton: false }).setHTML(
+          `<div style="font:600 13px system-ui">${i + 1}. ${p.title}</div>` +
+            `<div style="font:11px system-ui;color:#667;margin-top:2px">${p.starts_at ? p.starts_at + " · " : ""}${p.kind}</div>`,
+        );
+        const marker = new maplibregl.Marker({ element: markerEl(i, color) })
+          .setLngLat([p.lng, p.lat])
+          .setPopup(popup)
+          .addTo(map);
+        markersRef.current.push(marker);
+        bounds.extend([p.lng, p.lat]);
+      });
 
-    return () => {
-      markers.forEach((m) => m.remove());
+      const line = {
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: day.places.map((p) => [p.lng, p.lat]) },
+        properties: {},
+      } as RouteData;
+      const src = map.getSource("route") as maplibregl.GeoJSONSource | undefined;
+      if (src) {
+        src.setData(line);
+      } else {
+        map.addSource("route", { type: "geojson", data: line });
+        map.addLayer({
+          id: "route",
+          type: "line",
+          source: "route",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": "#0F766E", "line-width": 3, "line-dasharray": [1, 1.6] },
+        });
+      }
+      if (day.places.length) map.fitBounds(bounds, { padding: 56, maxZoom: 15, duration: 600 });
     };
-  }, [items, center]);
 
-  if (!results) return null;
+    if (map.isStyleLoaded()) draw();
+    else map.once("load", draw);
+  }, [activeDay, payload]);
 
+  if (!results || failed || (!payload && items.length === 0)) return null;
+
+  const day = payload?.days.find((d) => d.day === activeDay);
   return (
     <div className={className}>
-      <h3 className="flex items-center gap-2 text-lg font-semibold mb-3">
+      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
         <Navigation className="h-5 w-5 text-[var(--brand-500)]" />
         Map
       </h3>
       <div className="surface-card overflow-hidden p-0">
-        <div ref={mapRef} className="w-full h-[300px] sm:h-[380px] lg:h-[440px] rounded-[var(--r-lg)]" />
-        <div className="p-3 flex flex-wrap gap-2 border-t border-[var(--border)]">
-          {Object.entries(KIND_COLORS).map(([kind, color]) => (
-            <span key={kind} className="flex items-center gap-1 text-[0.65rem] text-[var(--muted)]">
-              <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
-              {kind}
-            </span>
-          ))}
-        </div>
+        {payload && (
+          <div className="flex flex-wrap gap-1 border-b border-[var(--border)] px-3 py-2">
+            {payload.days.map((d) => (
+              <button
+                key={d.day}
+                type="button"
+                onClick={() => setActiveDay(d.day)}
+                className={cn(
+                  "rounded-[var(--r-pill)] px-2.5 py-1 text-xs font-medium transition-colors",
+                  d.day === activeDay
+                    ? "bg-[var(--brand-500)] text-white"
+                    : "bg-[var(--bg)] text-[var(--muted)] hover:text-[var(--text)]",
+                )}
+              >
+                Day {d.day}
+              </button>
+            ))}
+          </div>
+        )}
+        <div ref={mapRef} className="h-[300px] w-full sm:h-[380px] lg:h-[440px]" />
+        {day && day.legs.length > 0 && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-[var(--border)] px-3 py-2 text-[0.7rem] text-[var(--muted)]">
+            {day.legs.map((lg, i) => (
+              <span key={i} className="inline-flex items-center gap-1">
+                {lg.mode === "walk" ? <Footprints className="h-3 w-3" /> : <Bus className="h-3 w-3" />}
+                {short(day.places[i]?.title ?? "")} → {short(day.places[i + 1]?.title ?? "")}
+                <span className="font-medium text-[var(--text)]">~{lg.minutes} min {lg.mode}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

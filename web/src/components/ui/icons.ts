@@ -28,6 +28,7 @@ export {
   Briefcase,
   Buildings as Building2,
   Bus,
+  PersonSimpleWalk as Footprints,
   CalendarBlank as Calendar,
   Check,
   CheckCircle,
