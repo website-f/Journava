@@ -298,15 +298,18 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
             <h4 className="text-sm font-semibold">{group.title}</h4>
             <p className="text-[0.7rem] text-[var(--muted)]">{group.blurb}</p>
           </div>
-          <div className="grid gap-3 lg:grid-cols-2">
+          {/* Mobile: a horizontal snap-rail (consistent with Stays/Food/Places).
+              Desktop (lg+): a denser 2-column grid. */}
+          <div className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6 lg:mx-0 lg:grid lg:grid-cols-2 lg:overflow-visible lg:px-0 lg:pb-0">
             {group.options.map((option, index) => (
-              <FlightCard
-                key={option.id}
-                option={option}
-                index={index}
-                badges={badgesFor.get(option.id) ?? []}
-                onBook={() => setBooking(option)}
-              />
+              <div key={option.id} className="w-[17rem] shrink-0 snap-start lg:w-auto lg:shrink">
+                <FlightCard
+                  option={option}
+                  index={index}
+                  badges={badgesFor.get(option.id) ?? []}
+                  onBook={() => setBooking(option)}
+                />
+              </div>
             ))}
           </div>
         </div>

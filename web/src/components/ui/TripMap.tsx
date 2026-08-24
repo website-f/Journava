@@ -73,6 +73,7 @@ export function TripMap({ className }: TripMapProps) {
 
   const [payload, setPayload] = useState<MapPayload | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [activeDay, setActiveDay] = useState<number | null>(null);
 
   const { destination, items } = useMemo(() => {
@@ -98,6 +99,7 @@ export function TripMap({ className }: TripMapProps) {
       return;
     }
     setFailed(false);
+    setLoading(true);
     api
       .post<MapPayload>("/trip/map", { destination, items })
       .then((res) => {
@@ -109,7 +111,8 @@ export function TripMap({ className }: TripMapProps) {
         setPayload(res);
         setActiveDay((d) => d ?? res.days[0]?.day ?? 1);
       })
-      .catch(() => !cancelled && setFailed(true));
+      .catch(() => !cancelled && setFailed(true))
+      .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
@@ -204,6 +207,24 @@ export function TripMap({ className }: TripMapProps) {
   }, [activeDay, payload]);
 
   if (!results || failed || (!payload && items.length === 0)) return null;
+
+  // Honest loading state — never a blank map box while geocoding runs.
+  if (!payload && loading) {
+    return (
+      <div className={className}>
+        <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
+          <Navigation className="h-5 w-5 text-[var(--brand-500)]" />
+          Map
+        </h3>
+        <div className="grid h-[300px] place-items-center rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] text-sm text-[var(--muted)] sm:h-[380px]">
+          <span className="inline-flex items-center gap-2">
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--brand-500)] border-t-transparent" />
+            Mapping your itinerary…
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   const day = payload?.days.find((d) => d.day === activeDay);
   return (

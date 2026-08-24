@@ -67,9 +67,8 @@ _UA = "Journava/1.0 (travel planner; contact fitri@craveasia.com)"
 _WALK_M_PER_MIN = 80.0  # ~4.8 km/h
 _TRANSIT_M_PER_MIN = 500.0  # ~30 km/h — used past the walkable threshold
 _WALK_LIMIT_M = 2500.0
-
-# Nominatim asks for <= 1 req/s; serialize keyless geocodes behind this lock.
-_nominatim_lock = asyncio.Lock()
+#: Kinds that aren't a place to pin on the map.
+_SKIP_KINDS = {"flight", "transport"}
 
 
 class MapItem(BaseModel):
@@ -124,39 +123,70 @@ async def _geocode_maptiler(query: str, key: str, proximity: tuple[float, float]
 
 
 #: Drop a geocode this far from the trip city — a match on the wrong continent
-#: (Nominatim's top hit for an ambiguous name) is worse than no pin at all.
+#: (a geocoder's top hit for an ambiguous name) is worse than no pin at all.
 _MAX_FROM_CITY_M = 500_000.0
 
 
-async def _geocode_nominatim(query: str, proximity: tuple[float, float] | None) -> list[float] | None:
-    # Nominatim's free search has no proximity param, so pull several candidates
-    # and pick the one nearest the trip city — the reliable way to beat a
-    # same-named place on another continent.
-    params = {"q": query, "format": "jsonv2", "limit": 5 if proximity else 1}
-    async with _nominatim_lock:  # honour the 1 req/s policy
-        async with httpx.AsyncClient(timeout=_TIMEOUT, headers={"User-Agent": _UA}) as client:
-            r = await client.get("https://nominatim.openstreetmap.org/search", params=params)
-            r.raise_for_status()
-            rows = r.json() or []
-        await asyncio.sleep(1.1)
-    if not rows:
+async def _geocode_photon(query: str, proximity: tuple[float, float] | None) -> list[float] | None:
+    # Photon (OSM-based, komoot) allows parallel requests — so the whole
+    # itinerary geocodes in ~2s instead of ~1/s serially. Its lat/lon bias is
+    # soft, so we still pull several candidates and pick the one nearest the trip
+    # city, dropping anything implausibly far.
+    params: dict[str, Any] = {"q": query, "limit": 8 if proximity else 1}
+    if proximity:
+        params["lat"], params["lon"] = proximity[0], proximity[1]
+    async with httpx.AsyncClient(timeout=_TIMEOUT, headers={"User-Agent": _UA}) as client:
+        r = await client.get("https://photon.komoot.io/api/", params=params)
+        r.raise_for_status()
+        feats = (r.json() or {}).get("features") or []
+    if not feats:
+        return None
+    coords = [f["geometry"]["coordinates"] for f in feats if (f.get("geometry") or {}).get("coordinates")]
+    if not coords:
         return None
     if not proximity:
-        return [float(rows[0]["lon"]), float(rows[0]["lat"])]
+        return [float(coords[0][0]), float(coords[0][1])]  # [lng, lat]
     best, best_d = None, None
-    for row in rows:
-        lat, lng = float(row["lat"]), float(row["lon"])
-        d = _haversine_m((lat, lng), proximity)
+    for lng, lat in coords:
+        d = _haversine_m((float(lat), float(lng)), proximity)
         if best_d is None or d < best_d:
-            best, best_d = [lng, lat], d
+            best, best_d = [float(lng), float(lat)], d
     if best is None or (best_d is not None and best_d > _MAX_FROM_CITY_M):
         return None  # nearest candidate is implausibly far → drop it
     return best
 
 
+async def _geocode_city(name: str, key: str | None) -> list[float] | None:
+    """Geocode the trip city itself → [lng, lat], cached.
+
+    Uses an importance-ranked source so an ambiguous name resolves to the famous
+    city, not a same-named village (Photon's top hit for "Bangkok" is a village
+    in Indonesia; Nominatim ranks the Thai capital first). MapTiler when keyed.
+    """
+    ckey = f"geocity:{'mt' if key else 'osm'}:{name.lower().strip()}"
+
+    async def produce() -> list[float] | None:
+        try:
+            if key:
+                return await _geocode_maptiler(name, key, None)
+            async with httpx.AsyncClient(timeout=_TIMEOUT, headers={"User-Agent": _UA}) as client:
+                r = await client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={"q": name, "format": "jsonv2", "limit": 1},
+                )
+                r.raise_for_status()
+                rows = r.json() or []
+            return [float(rows[0]["lon"]), float(rows[0]["lat"])] if rows else None
+        except Exception as exc:  # noqa: BLE001
+            logger.info("city geocode failed for %r: %s", name, exc)
+            return None
+
+    return await cache.cached(ckey, produce, ttl=settings.cache_ttl_long)
+
+
 async def _geocode(query: str, key: str | None, proximity: tuple[float, float] | None) -> list[float] | None:
-    """Cached geocode → [lng, lat]. MapTiler when keyed, else Nominatim."""
-    provider = "mt" if key else "osm"
+    """Cached geocode → [lng, lat]. MapTiler when keyed, else Photon (parallel)."""
+    provider = "mt" if key else "photon"
     prox = f"{proximity[0]:.2f},{proximity[1]:.2f}" if proximity else "none"
     ckey = f"geo:{provider}:{prox}:{query.lower().strip()}"
 
@@ -164,7 +194,7 @@ async def _geocode(query: str, key: str | None, proximity: tuple[float, float] |
         try:
             if key:
                 return await _geocode_maptiler(query, key, proximity)
-            return await _geocode_nominatim(query, proximity)
+            return await _geocode_photon(query, proximity)
         except Exception as exc:  # noqa: BLE001
             logger.info("geocode failed for %r: %s", query, exc)
             return None
@@ -190,7 +220,7 @@ async def trip_map(body: MapRequest) -> dict[str, Any]:
     provider = "maptiler" if key else "osm"
     city_name = _resolve_city(body.destination)
 
-    city = await _geocode(city_name, key, None)
+    city = await _geocode_city(city_name, key)
     if not city:
         return {"configured": False, "provider": provider, "reason": "could not geocode destination"}
     proximity = (city[1], city[0])  # (lat, lng) for biasing subsequent lookups
@@ -198,9 +228,9 @@ async def trip_map(body: MapRequest) -> dict[str, Any]:
     # Geocode each place, biased toward the city. MapTiler tolerates parallelism;
     # Nominatim is serialized by its lock inside _geocode.
     async def locate(item: MapItem) -> dict[str, Any] | None:
-        kind = item.kind or "activity"
-        if kind == "flight":
-            return None  # a flight isn't a place on the map
+        kind = (item.kind or "activity").lower()
+        if kind in _SKIP_KINDS:
+            return None  # a flight/transfer isn't a place on the map
         name = _clean_title(item.title)
         if not name:
             return None

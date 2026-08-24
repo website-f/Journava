@@ -232,15 +232,24 @@ export function ScopedResults({
   const destination = (results.chief?.data as { destination?: string } | undefined)?.destination;
   const panelsRef = useRef<HTMLDivElement>(null);
 
-  // Default the display currency to the plan's native currency (once), so prices
-  // aren't converted until the traveller picks a different one from the switcher.
+  // Default the display currency to the TRAVELLER'S currency (once) — their
+  // budget/profile currency, not whatever a crawled fare happened to be priced
+  // in. A KLIA→Tokyo fare crawled in USD must show as MYR (converted via live
+  // FX by <Money>), never flip the whole page to USD. The switcher still lets
+  // them view any currency.
   const setDisplay = useCurrency((s) => s.setDisplay);
   const initedCurrency = useRef(false);
   useEffect(() => {
     if (initedCurrency.current) return;
-    const flightCur = results.flight?.options?.find((o) => o.price_currency)?.price_currency;
+    const chief = results.chief?.data as Record<string, unknown> | undefined;
     const budgetCur = (results.budget?.data as Record<string, unknown> | undefined)?.currency;
-    const cur = flightCur ?? (typeof budgetCur === "string" ? budgetCur : undefined);
+    // Priority: explicit trip budget currency → chief's resolved currency →
+    // a flight fare's currency only as a last resort.
+    const flightCur = results.flight?.options?.find((o) => o.price_currency)?.price_currency;
+    const cur =
+      (typeof budgetCur === "string" ? budgetCur : undefined) ??
+      (typeof chief?.budget_currency === "string" ? (chief.budget_currency as string) : undefined) ??
+      flightCur;
     if (cur) {
       setDisplay(cur.toUpperCase());
       initedCurrency.current = true;
