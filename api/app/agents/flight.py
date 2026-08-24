@@ -329,6 +329,12 @@ class FlightAgent(BaseAgent):
         if depart == "flexible" or not candidates:
             return []  # Atlas needs a concrete date; Camofox/Amadeus still run.
 
+        from app.core import chaos
+
+        if chaos.atlas_down():
+            self.emit("waiting", "CHAOS: Atlas outage injected — falling back to research")
+            return []
+
         api_key = await _atlas_key()
         ret = str(request.end_date) if request.end_date else None
         gateways = list(candidates[:4])

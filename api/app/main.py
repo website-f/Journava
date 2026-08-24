@@ -36,6 +36,8 @@ from app.policy import router as policy_router
 from app.runtime.router import router as runtime_router
 from app.saved import router as saved_router
 from app.intel import router as intel_router
+from app.content import router as content_router
+from app.chaos_lab import router as chaos_router
 from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
 from app.supplier.router import router as supplier_router
@@ -168,6 +170,8 @@ app.include_router(guardian_router)
 app.include_router(demo_router)
 app.include_router(saved_router)
 app.include_router(intel_router)
+app.include_router(content_router)
+app.include_router(chaos_router)
 
 
 # --------------------------------------------------------------------------- #

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2, Check, Plus, Compass, Utensils } from "@/components/ui/icons";
+import { Briefcase, AlertTriangle, Zap, TrendingUp, Cloud, Calendar, Clock, GripHorizontal, Plane, ShieldAlert, ShieldCheck, Sparkles, Trash2, Newspaper, ArrowUp, ArrowDown, CheckCircle2, Check, Plus, Compass, Utensils, Copy } from "@/components/ui/icons";
 import { Button, Badge, EmptyState, LoadingOverlay, OptionCard, Select, Skeleton, confirm } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
 import { Money } from "@/components/ui/Money";
@@ -136,6 +136,7 @@ export function MyTrip() {
       <CompleteItineraryCard results={results} setTrip={setTrip} />
       <ItinerarySection results={results} setTrip={setTrip} />
       <BackupRail results={results} setTrip={setTrip} />
+      <TripStoryCard results={results} />
       {/* The full plan — flights, stays, food, places, visa, insurance — so the
           saved trip shows everything the agents produced, not just the summary. */}
       <div className="mt-8">
@@ -445,12 +446,6 @@ function LocalIntelCard() {
     }
   };
 
-  const crowdTone: Record<string, string> = {
-    low: "bg-[color-mix(in_srgb,var(--success)_18%,transparent)] text-[var(--success)]",
-    medium: "bg-[color-mix(in_srgb,var(--warning)_18%,transparent)] text-[var(--warning)]",
-    high: "bg-[color-mix(in_srgb,var(--danger,#dc2626)_18%,transparent)] text-[var(--danger,#dc2626)]",
-  };
-
   return (
     <section className="mt-8">
       <div className="surface-card p-5">
@@ -469,16 +464,44 @@ function LocalIntelCard() {
         {intel && (
           <div className="mt-5 space-y-4">
             {!!intel.places.length && (
-              <div className="space-y-1.5">
-                {intel.places.map((p, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm">
-                    <span className={cn("shrink-0 rounded-[var(--r-pill)] px-2 py-0.5 text-[0.6rem] font-medium uppercase capitalize", crowdTone[p.crowd_level] ?? "bg-[var(--bg)] text-[var(--muted)]")}>
-                      {p.crowd_level}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                    {p.best_time && <span className="shrink-0 text-xs text-[var(--muted)]">best: {p.best_time}</span>}
-                  </div>
-                ))}
+              <div>
+                <p className="mb-2 text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Crowd heatmap · best time to go
+                </p>
+                <div className="space-y-2">
+                  {intel.places.map((p, i) => {
+                    const lvl = (p.crowd_level || "").toLowerCase();
+                    const fill = lvl === "high" ? 100 : lvl === "medium" ? 62 : lvl === "low" ? 28 : 45;
+                    const color =
+                      lvl === "high"
+                        ? "var(--danger,#dc2626)"
+                        : lvl === "medium"
+                          ? "var(--warning)"
+                          : "var(--success)";
+                    return (
+                      <div key={i} className="flex items-center gap-2.5">
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium">{p.name}</span>
+                        <div
+                          className="h-2 w-16 shrink-0 overflow-hidden rounded-full bg-[var(--border)] sm:w-24"
+                          title={`${p.crowd_level} crowds`}
+                        >
+                          <div className="h-full rounded-full transition-all" style={{ width: `${fill}%`, background: color }} />
+                        </div>
+                        <span className="w-12 shrink-0 text-right text-[0.6rem] uppercase capitalize" style={{ color }}>
+                          {p.crowd_level}
+                        </span>
+                        {p.best_time && (
+                          <span className="hidden w-24 shrink-0 truncate text-[0.65rem] text-[var(--muted)] sm:inline" title={p.best_time}>
+                            🕑 {p.best_time}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-[0.6rem] text-[var(--muted)]">
+                  Shorter green bars are quieter — visit at the “best time” to dodge the crowd.
+                </p>
               </div>
             )}
             <div className="grid gap-3 sm:grid-cols-2">
@@ -857,6 +880,108 @@ function BackupRail({
           );
         })}
       </div>
+    </section>
+  );
+}
+
+type TripStory = {
+  title?: string;
+  story?: string;
+  captions?: { platform: string; text: string }[];
+  hashtags?: string[];
+  destination?: string;
+};
+
+/**
+ * Generative trip content (hackathon direction 08). Turns the real plan into a
+ * shareable story + ready-to-post captions + hashtags — the inverse of the
+ * social-link ingestion, grounded in the actual destination/itinerary.
+ */
+function TripStoryCard({ results }: { results: Record<string, AgentPlanResult> }) {
+  const [story, setStory] = useState<TripStory | null>(null);
+  const [busy, setBusy] = useState(false);
+  const hasTrip = Boolean((results.chief?.data as { destination?: string } | undefined)?.destination);
+  if (!hasTrip) return null;
+
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ content?: TripStory; error?: string }>("/content/story", { results });
+      if (r.content?.story) setStory(r.content);
+      else toast.error(r.error || "Couldn't write the story.");
+    } catch {
+      toast.error("Couldn't write the story right now.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = (text: string) => {
+    navigator.clipboard?.writeText(text).then(
+      () => toast.success("Copied to clipboard."),
+      () => toast.error("Couldn't copy."),
+    );
+  };
+
+  return (
+    <section className="surface-card mb-6 p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <Sparkles className="h-5 w-5 text-[var(--accent)]" />
+        <h3 className="text-base font-semibold">Share your trip</h3>
+      </div>
+      <p className="mb-3 text-sm text-[var(--muted)]">
+        Let the agents write a shareable story and ready-to-post captions from your actual plan.
+      </p>
+
+      {!story ? (
+        <Button variant="secondary" size="sm" loading={busy} onClick={() => void generate()}>
+          <Sparkles className="h-4 w-4" /> Generate a story
+        </Button>
+      ) : (
+        <div className="space-y-3">
+          <div className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="font-[family-name:var(--font-display)] text-sm font-semibold">{story.title}</p>
+              <button
+                onClick={() => copy(`${story.title}\n\n${story.story}`)}
+                className="inline-flex items-center gap-1 text-[0.65rem] text-[var(--brand-500)] hover:underline"
+              >
+                <Copy className="h-3 w-3" /> Copy
+              </button>
+            </div>
+            <p className="whitespace-pre-line text-xs leading-relaxed text-[var(--muted)]">{story.story}</p>
+          </div>
+
+          {(story.captions ?? []).map((c) => (
+            <div key={c.platform} className="rounded-[var(--r-md)] border border-[var(--border)] p-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[0.6rem] font-semibold uppercase tracking-wide text-[var(--accent)]">{c.platform}</span>
+                <button
+                  onClick={() => copy(`${c.text}\n\n${(story.hashtags ?? []).join(" ")}`)}
+                  className="inline-flex items-center gap-1 text-[0.65rem] text-[var(--brand-500)] hover:underline"
+                >
+                  <Copy className="h-3 w-3" /> Copy
+                </button>
+              </div>
+              <p className="text-xs">{c.text}</p>
+            </div>
+          ))}
+
+          {(story.hashtags ?? []).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {story.hashtags!.map((h) => (
+                <span key={h} className="rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] px-2 py-0.5 text-[0.65rem] text-[var(--brand-600)]">
+                  {h}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <button onClick={() => void generate()} disabled={busy} className="text-xs text-[var(--muted)] hover:underline">
+            Regenerate
+          </button>
+        </div>
+      )}
     </section>
   );
 }

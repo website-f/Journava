@@ -37,6 +37,7 @@ export {
   Clock,
   Cloud,
   Compass,
+  Copy,
   Cpu,
   CreditCard,
   DownloadSimple as Download,

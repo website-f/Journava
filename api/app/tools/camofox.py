@@ -507,6 +507,10 @@ async def read_many(
 
 async def available() -> bool:
     """Check if the Camofox Browser service is reachable."""
+    from app.core import chaos
+
+    if chaos.camofox_down():  # resilience testing — simulate a browser outage
+        return False
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
             resp = await client.get(f"{_base()}/health")

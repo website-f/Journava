@@ -121,13 +121,20 @@ async def publish(body: PublishRequest, agency: dict = Depends(require_agency)) 
     return {"property": prop, "listing": listing, "live": True, "city": body.city}
 
 
-_PRICE_SYSTEM = """You are a hotel Yield/Revenue agent. Given a room, its current \
-price, and comparable market prices you crawled, recommend a competitive nightly \
-price that maximises revenue without pricing the room out. Be specific and honest.
+_PRICE_SYSTEM = """You are a hotel Yield / Revenue-management agent. Recommend a \
+nightly price that maximises REVENUE with demand-based DYNAMIC pricing — not just \
+matching competitors. Rules:
+- Raise the price when occupancy is high, it's peak season, or there are events / \
+  festivals / holidays in the city.
+- Cut the price to fill rooms when occupancy is low or it's off-peak.
+- Never drift so far from comparable rates that the room won't sell.
+Be specific and honest; if a signal is missing, say so in the rationale.
 
 Respond ONLY as JSON:
 {"recommended_price": number, "currency": "MYR", "comp_low": number|null, \
-"comp_high": number|null, "delta_pct": number, "rationale": "1-2 sentences"}"""
+"comp_high": number|null, "delta_pct": number, "occupancy_pct": number|null, \
+"demand_level": "low"|"moderate"|"high", "drivers": ["short factor", ...max 4], \
+"rationale": "1-2 sentences"}"""
 
 
 async def _listing_row(listing_id: str) -> dict[str, Any] | None:
@@ -145,9 +152,32 @@ async def _listing_row(listing_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def _occupancy_pct(listing_id: str) -> float | None:
+    """Sold vs allocated across the listing's channels — the demand signal that
+    makes pricing dynamic (yield management) rather than a static comp match."""
+    pool = await db.get_pool()
+    if pool is None:
+        return None
+    import uuid as _uuid
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT COALESCE(SUM(allocated), 0) AS alloc, COALESCE(SUM(sold), 0) AS sold
+                   FROM channel_inventory WHERE listing_id = $1""",
+                _uuid.UUID(listing_id),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.info("occupancy lookup skipped: %s", exc)
+        return None
+    alloc = float(row["alloc"]) if row and row["alloc"] else 0.0
+    if alloc <= 0:
+        return None
+    return round(100.0 * float(row["sold"]) / alloc, 1)
+
+
 @router.post("/price/{listing_id}")
 async def price(listing_id: str, agency: dict = Depends(require_agency)) -> dict[str, Any]:
-    """Yield agent: crawl comps for the city + recommend a competitive price."""
+    """Yield agent: dynamic price from comps + occupancy + live demand (events)."""
     row = await _listing_row(listing_id)
     if not row:
         return {"error": "Listing not found."}
@@ -155,19 +185,31 @@ async def price(listing_id: str, agency: dict = Depends(require_agency)) -> dict
     current = float(row["price_amount"]) if row.get("price_amount") is not None else None
     currency = row.get("price_currency") or "MYR"
 
-    comps = ""
+    occupancy = await _occupancy_pct(listing_id)
+    comps = demand = ""
     try:
         res = await discover.crawl_sources([f"hotel room price per night {city}", f"{city} hotel rates tonight"])
-        comps = (res or {}).get("text", "")[:3000]
+        comps = (res or {}).get("text", "")[:2600]
     except Exception as exc:  # noqa: BLE001
         logger.info("price comp crawl skipped: %s", exc)
+    try:
+        # Live demand: events/festivals/holidays that should push the price up.
+        res2 = await discover.crawl_sources([f"{city} events festivals this month", f"{city} public holidays peak travel season"])
+        demand = (res2 or {}).get("text", "")[:1800]
+    except Exception as exc:  # noqa: BLE001
+        logger.info("price demand crawl skipped: %s", exc)
 
     user = (
         f"Room: {row.get('title')} at {row.get('property')} in {city}. "
         f"Current price: {currency} {current if current is not None else 'unset'}/night.\n"
-        f"Comparable market data crawled:\n{comps or '(none available — use your knowledge of ' + city + ')'}"
+        f"Occupancy (sold/allocated across channels): {occupancy if occupancy is not None else 'unknown'}%.\n"
+        f"Comparable market rates crawled:\n{comps or '(none — use your knowledge of ' + city + ')'}\n\n"
+        f"Live demand signals (events / season) crawled:\n{demand or '(none available)'}"
     )
-    out = {"recommended_price": current or 300, "currency": currency, "comp_low": None, "comp_high": None, "delta_pct": 0, "rationale": ""}
+    out: dict[str, Any] = {
+        "recommended_price": current or 300, "currency": currency, "comp_low": None, "comp_high": None,
+        "delta_pct": 0, "occupancy_pct": occupancy, "demand_level": "moderate", "drivers": [], "rationale": "",
+    }
     try:
         raw = await llm.complete(
             [{"role": "system", "content": _PRICE_SYSTEM}, {"role": "user", "content": user}],
@@ -181,7 +223,8 @@ async def price(listing_id: str, agency: dict = Depends(require_agency)) -> dict
     except Exception as exc:  # noqa: BLE001
         logger.info("price recommend fell back: %s", exc)
     out["current_price"] = current
-    out["sourced"] = bool(comps)
+    out["occupancy_pct"] = occupancy  # trust the measured value over the LLM's echo
+    out["sourced"] = bool(comps or demand)
     return out
 
 

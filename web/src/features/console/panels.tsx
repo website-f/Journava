@@ -929,7 +929,7 @@ type SupplierProperty = { id: string; name: string; city: string; kind: string; 
 type Visibility = { cities: string[]; live_rooms: number; appeared_in_searches: number; leads: number };
 type Draft = { name: string; city: string; kind: string; room_title: string; description: string; perks: string[]; suggested_price: number; price_currency: string; capacity: number; halal_friendly: boolean };
 type Lead = { id: string; status: string; note: string | null; traveler_email: string | null; property_name: string | null; listing_title: string | null };
-type PriceRec = { recommended_price: number; currency: string; comp_low: number | null; comp_high: number | null; delta_pct: number; rationale: string; current_price: number | null; sourced: boolean };
+type PriceRec = { recommended_price: number; currency: string; comp_low: number | null; comp_high: number | null; delta_pct: number; rationale: string; current_price: number | null; sourced: boolean; occupancy_pct?: number | null; demand_level?: string; drivers?: string[] };
 
 const inputCls = "w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]";
 
@@ -1044,7 +1044,14 @@ export function ConsoleListings() {
                         <span className="font-semibold text-[var(--brand-500)]">Recommend {prices[l.id].currency} {prices[l.id].recommended_price.toLocaleString()}</span>
                         {prices[l.id].delta_pct ? <span className={cn("ml-2 text-xs", prices[l.id].delta_pct > 0 ? "text-[var(--success)]" : "text-[var(--warning)]")}>{prices[l.id].delta_pct > 0 ? "+" : ""}{prices[l.id].delta_pct}%</span> : null}
                         {prices[l.id].comp_low != null && <span className="ml-2 text-xs text-[var(--muted)]">comp {prices[l.id].currency} {prices[l.id].comp_low}–{prices[l.id].comp_high}</span>}
+                        {prices[l.id].occupancy_pct != null && <span className="ml-2 text-xs text-[var(--muted)]">occ {prices[l.id].occupancy_pct}%</span>}
+                        {prices[l.id].demand_level && <span className={cn("ml-2 rounded-[var(--r-pill)] px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase", prices[l.id].demand_level === "high" ? "bg-[color-mix(in_srgb,var(--danger,#dc2626)_16%,transparent)] text-[var(--danger,#dc2626)]" : prices[l.id].demand_level === "low" ? "bg-[color-mix(in_srgb,var(--success)_16%,transparent)] text-[var(--success)]" : "bg-[var(--bg)] text-[var(--muted)]")}>{prices[l.id].demand_level} demand</span>}
                         <p className="mt-0.5 text-xs text-[var(--muted)]">{prices[l.id].rationale}{!prices[l.id].sourced ? " (estimate)" : ""}</p>
+                        {(prices[l.id].drivers ?? []).length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {prices[l.id].drivers!.map((d) => <span key={d} className="rounded-[var(--r-pill)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{d}</span>)}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
