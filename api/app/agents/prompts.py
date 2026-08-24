@@ -183,10 +183,13 @@ def flight_messages(request: TripRequest, profile: TravelerProfile) -> list[dict
 # --------------------------------------------------------------------------- #
 
 HOTEL_SYSTEM = """\
-You are Journava's Hotel Agent. Generate realistic hotel options for the \
-destination and dates. Consider the traveler's preferences for ranking.
+You are Journava's Hotel Agent. Recommend hotels for the destination and dates, \
+GROUNDED in the RESEARCH provided (a live web crawl of booking sites).
 
 Rules:
+- Prefer REAL hotel names, areas and realistic nightly prices you can see in the
+  research; only fall back to your own knowledge when the research is thin, and
+  say so in the reasoning. Never invent a hotel the research contradicts.
 - Halal preference = soft signal for hotels (halal breakfast option); never a hard filter on accommodation.
 - Accessibility = hard filter — if the traveler has accessibility needs, ONLY return accessible rooms.
 - Return 4-5 options with a one-sentence reasoning for each explaining "Why this hotel?"
@@ -201,6 +204,9 @@ Search hotels:
 - Guests: {guests}
 - Budget preference: {budget} {currency}
 - Traveler profile: {profile}
+
+RESEARCH (live crawl — use the real names/prices you see, cite nothing you didn't):
+{research}
 
 Return a JSON object:
 {{
@@ -225,7 +231,9 @@ Return a JSON object:
 """
 
 
-def hotel_messages(request: TripRequest, profile: TravelerProfile) -> list[dict[str, str]]:
+def hotel_messages(
+    request: TripRequest, profile: TravelerProfile, research: str = ""
+) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": HOTEL_SYSTEM},
         {
@@ -237,6 +245,7 @@ def hotel_messages(request: TripRequest, profile: TravelerProfile) -> list[dict[
                 guests=request.travellers,
                 budget=request.budget_amount or "no limit",
                 currency=request.budget_currency or profile.budget_currency,
+                research=research or "(no live results — use your best knowledge)",
                 profile=_profile_summary(profile),
             ),
         },

@@ -180,21 +180,40 @@ class HotelAgent(BaseAgent):
         """LLM-generate hotel options, cache via Redis."""
 
         cache_key = (
-            f"hotel:{destination}:{request.start_date}:{request.end_date}:{request.travellers}"
+            f"hotel:v2:{destination}:{request.start_date}:{request.end_date}:{request.travellers}"
         )
 
-        async def producer() -> list[dict[str, Any]]:
+        async def producer() -> dict[str, Any]:
+            from app.tools import discover
+
+            # Ground the agent in a live crawl of booking sites — real names,
+            # areas and nightly prices instead of invented ones.
+            research = ""
             try:
-                messages = hotel_messages(request, profile)
+                self.emit("working", f"Crawling live hotel rates in {destination}")
+                res = await discover.crawl_sources(
+                    [
+                        f"best hotels in {destination} price per night",
+                        f"{destination} hotels booking {request.travellers} guests near city centre",
+                    ]
+                )
+                research = (res or {}).get("text", "")[:3500]
+            except Exception as exc:  # noqa: BLE001 — a missing crawl never breaks the agent
+                logger.info("hotel research crawl skipped: %s", exc)
+            try:
+                messages = hotel_messages(request, profile, research=research)
                 raw_text = await complete(messages, response_format={"type": "json_object"})
                 data = json.loads(raw_text)
-                return data.get("options", [])
+                return {"options": data.get("options", []), "sourced": bool(research)}
             except (LLMUnavailableError, json.JSONDecodeError) as exc:
                 logger.warning("Hotel LLM failed: %s", exc)
                 self.emit("waiting", f"LLM unavailable: {type(exc).__name__}")
-                return self._mock_options(destination)
+                return {"options": self._mock_options(destination), "sourced": False}
 
-        raw_options = await cached(cache_key, producer, ttl=settings.cache_ttl_short)
+        payload = await cached(cache_key, producer, ttl=settings.cache_ttl_short)
+        # Backward-compatible with any old list-shaped cache entries.
+        raw_options = payload.get("options", []) if isinstance(payload, dict) else (payload or [])
+        sourced = payload.get("sourced", False) if isinstance(payload, dict) else False
 
         options: list[Option] = []
         for opt in raw_options or []:
@@ -202,8 +221,8 @@ class HotelAgent(BaseAgent):
                 title = opt.get("title", "Hotel")
                 url = opt.get("booking_url") or opt.get("url")
                 link = url or _hotel_link(title, destination)
-                # LLM-generated unless it carried a real crawled URL.
-                src = "camofox" if url else "llm"
+                # Grounded in the live crawl → tag it as researched, not invented.
+                src = "camofox" if (sourced or url) else "llm"
                 options.append(
                     Option(
                         id=opt.get("id", f"HT{len(options) + 1:03d}"),
