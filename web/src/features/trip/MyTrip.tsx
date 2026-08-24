@@ -757,7 +757,6 @@ function CompleteItineraryCard({
           const on = picked.has(s.title);
           const isFood = s.kind === "restaurant";
           const Icon = isFood ? Utensils : Compass;
-          const price = s.price_amount != null ? `${s.price_currency ?? ""} ${Number(s.price_amount).toLocaleString()}`.trim() : null;
           const rating = s.raw?.rating;
           return (
             <button
@@ -785,7 +784,11 @@ function CompleteItineraryCard({
                   <span className="min-w-0 truncate text-xs font-medium">{s.title}</span>
                 </span>
                 <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.65rem] text-[var(--muted)]">
-                  {price && <span className="font-medium text-[var(--brand-500)]">{price}</span>}
+                  {s.price_amount != null && (
+                    <span className="font-medium text-[var(--brand-500)]">
+                      <Money amount={s.price_amount} currency={s.price_currency ?? "MYR"} />
+                    </span>
+                  )}
                   {rating != null && rating !== "" && <span className="text-[var(--accent)]">★ {rating}</span>}
                   {isFood && s.halal_confidence && <span className="capitalize">{String(s.halal_confidence).replace(/_/g, " ")}</span>}
                 </span>
@@ -862,16 +865,21 @@ function BackupRail({
         {backup.map((b) => {
           const isFood = b.kind === "restaurant";
           const Icon = isFood ? Utensils : Compass;
-          const price = b.price_amount != null ? `${b.price_currency ?? ""} ${Number(b.price_amount).toLocaleString()}`.trim() : null;
           return (
             <div key={b.title} className="flex w-[13.5rem] shrink-0 snap-start flex-col rounded-[var(--r-md)] border border-[var(--border)] p-3">
               <span className="flex items-center gap-1.5">
                 <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
                 <span className="min-w-0 flex-1 truncate text-xs font-medium">{b.title}</span>
               </span>
-              {(b.reasoning || price) && (
+              {(b.reasoning || b.price_amount != null) && (
                 <span className="mt-1 line-clamp-2 flex-1 text-[0.65rem] text-[var(--muted)]">
-                  {price ? `${price} · ` : ""}{b.reasoning}
+                  {b.price_amount != null && (
+                    <>
+                      <Money amount={b.price_amount} currency={b.price_currency ?? "MYR"} />
+                      {b.reasoning ? " · " : ""}
+                    </>
+                  )}
+                  {b.reasoning}
                 </span>
               )}
               <button
@@ -1675,7 +1683,7 @@ function DayItinerary({
                 )}
                 {item.cost_amount != null && (
                   <span className="font-medium text-[var(--brand-500)]">
-                    {item.cost_currency ?? "MYR"} {Number(item.cost_amount).toLocaleString()}
+                    <Money amount={item.cost_amount} currency={item.cost_currency ?? "MYR"} />
                   </span>
                 )}
               </div>
