@@ -121,15 +121,25 @@ TOTAL_AGENT_INVOCATIONS = 1 + len(PARALLEL_NODES) + len(ENRICHMENT_NODES) + len(
 
 #: Minimum score before the Critic triggers a retry.
 CRITIC_THRESHOLD = 0.6
-CRITIC_PROMPT = """You are the Journava Critic agent. Score these results against the goal.
+CRITIC_PROMPT = """You are the Journava Critic agent. Judge how well these results \
+serve the goal — especially whether the RANKING (the top options actually shown) \
+is the right order for THIS traveller.
 
 GOAL: {goal}
 
-RESULTS SUMMARY:
+RESULTS (top options in current rank order):
 {summary}
 
+Then pick the single weakest agent and one concrete way to re-order its options \
+to better serve the goal — choose a `priority`:
+- "budget"  → the traveller is price-sensitive; cheapest that still qualifies first
+- "nonstop" → minimise stops / journey time
+- "halal"   → surface halal-certified/verified first
+- "rating"  → highest-rated / most-corroborated first
+- "none"    → ranking is already fine
+
 Respond in JSON only:
-{{"score": 0.0-1.0, "weakest_agent": "flight|hotel|research|weather_risk|visa|emergency|crowd|risk_advisory", "critique": "brief reason"}}"""
+{{"score": 0.0-1.0, "weakest_agent": "flight|hotel|research|weather_risk|visa|emergency|crowd|risk_advisory", "priority": "budget|nonstop|halal|rating|none", "critique": "brief reason"}}"""
 
 
 # --------------------------------------------------------------------------- #
@@ -277,24 +287,44 @@ def _node(slug: str):
     return run_node
 
 
+def _rank_lines(result: dict[str, Any]) -> str:
+    """A compact view of an agent's TOP options in current rank order, so the
+    critic scores the actual ranking rather than a truncated data blob."""
+    opts = result.get("options") or []
+    if not opts:
+        return str(result.get("data", {}))[:160]
+    bits: list[str] = []
+    for o in opts[:4]:
+        raw = o.get("raw") or {}
+        parts = [str(o.get("title", ""))[:40]]
+        if o.get("price_amount") is not None:
+            parts.append(f"{o.get('price_currency', '')}{o.get('price_amount')}")
+        if raw.get("stops") is not None:
+            parts.append(f"{raw.get('stops')}stop")
+        if o.get("halal_confidence"):
+            parts.append(str(o.get("halal_confidence")))
+        if o.get("bookable"):
+            parts.append("bookable")
+        bits.append(" ".join(parts))
+    return " | ".join(bits)
+
+
 async def _critique(
     request: TripRequest,
     results: dict[str, Any],
     candidates: tuple[str, ...] = PARALLEL_NODES,
-) -> tuple[float, str | None, str]:
+) -> tuple[float, str | None, str, str]:
     """Score the combined Tier 1 results against the goal.
 
-    Returns (score, weakest_agent_slug, critique_text). A failing critic scores
-    1.0 so an unavailable LLM never blocks a plan.
+    Returns (score, weakest_agent_slug, critique_text, priority). A failing
+    critic scores 1.0 so an unavailable LLM never blocks a plan.
     """
     lines: list[str] = []
     for slug in candidates:
         result = results.get(slug)
         if not result:
             continue
-        lines.append(
-            f"- {slug}: {result.get('summary', 'n/a')} | data={str(result.get('data', {}))[:200]}"
-        )
+        lines.append(f"- {slug}: {result.get('summary', 'n/a')} | {_rank_lines(result)}")
     prompt = CRITIC_PROMPT.format(goal=request.goal, summary="\n".join(lines))
 
     try:
@@ -309,18 +339,55 @@ async def _critique(
         weakest = parsed.get("weakest_agent")
         if weakest not in candidates:
             weakest = None
-        return score, weakest, parsed.get("critique", "")
+        priority = str(parsed.get("priority") or "none")
+        return score, weakest, parsed.get("critique", ""), priority
     except Exception as exc:  # noqa: BLE001
         logger.info("Critic unavailable (%s) — passing Tier 1 through", exc)
-        return 1.0, None, ""
+        return 1.0, None, "", "none"
+
+
+_HALAL_RANK = {"certified": 3, "verified": 3, "likely": 2, "muslim_friendly": 2, "unverified": 1}
+
+
+def _rerank_by_priority(options: list[dict[str, Any]], priority: str) -> list[dict[str, Any]]:
+    """Deterministically re-order an agent's EXISTING options by the critic's
+    chosen priority — no re-crawl, no second LLM call. This is what makes the
+    critic genuinely improve the ranking instead of just scoring it."""
+    if not options or priority in ("none", ""):
+        return options
+
+    def price(o: dict[str, Any]) -> float:
+        return float(o["price_amount"]) if o.get("price_amount") is not None else 1e12
+
+    def stops(o: dict[str, Any]) -> int:
+        return int((o.get("raw") or {}).get("stops") or 0)
+
+    def rating(o: dict[str, Any]) -> float:
+        try:
+            return float((o.get("raw") or {}).get("rating") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def halal(o: dict[str, Any]) -> int:
+        return _HALAL_RANK.get(str(o.get("halal_confidence") or "").lower(), 0)
+
+    keys = {
+        "budget": lambda o: (price(o), stops(o)),
+        "nonstop": lambda o: (stops(o), float((o.get("raw") or {}).get("duration_hours") or 99), price(o)),
+        "halal": lambda o: (-halal(o), price(o)),
+        "rating": lambda o: (-rating(o), price(o)),
+    }
+    key = keys.get(priority)
+    return sorted(options, key=key) if key else options
 
 
 async def _critic_node(state: GraphState) -> dict[str, Any]:
-    """The Tier 1 → Tier 2 barrier: score, then refine the weakest agent.
+    """The Tier 1 → Tier 2 barrier: score, then genuinely improve the weakest
+    agent — present in `results` before any Tier 2/3 agent reads it.
 
-    Being a real node (rather than a pass after the whole graph finished) is
-    what makes the Reflexion loop meaningful — the refined result is present in
-    `results` before any Tier 2 or Tier 3 agent reads it.
+    For an agent with options (flight/hotel/research) the critic's `priority`
+    re-orders the EXISTING options deterministically (instant, no re-crawl). For
+    a light LLM-only agent (visa/crowd/…) a critique-guided re-run still helps.
     """
     if _clock.cancelled:
         return {}
@@ -328,13 +395,13 @@ async def _critic_node(state: GraphState) -> dict[str, Any]:
 
     request, results = state["request"], state["results"]
     candidates = tuple(state.get("critic_candidates") or PARALLEL_NODES)
-    score, weakest, critique = await _critique(request, results, candidates)
+    score, weakest, critique, priority = await _critique(request, results, candidates)
     passed = score >= CRITIC_THRESHOLD
     sse.publish(
         "chief",
         "active",
         f"Critic: score={score:.2f} — {'passed' if passed else 'refinement needed'}",
-        data={"score": score, "weakest_agent": weakest, "critique": critique},
+        data={"score": score, "weakest_agent": weakest, "critique": critique, "priority": priority},
     )
 
     update: dict[str, Any] = {
@@ -350,6 +417,7 @@ async def _critic_node(state: GraphState) -> dict[str, Any]:
                     "score": score,
                     "weakest_agent": weakest,
                     "critique": critique,
+                    "priority": priority,
                     "threshold": CRITIC_THRESHOLD,
                     "retried": False,
                 },
@@ -357,23 +425,40 @@ async def _critic_node(state: GraphState) -> dict[str, Any]:
         }
     }
 
-    # Re-running a crawl-heavy agent is either a cache-served no-op or a full
-    # re-crawl — both cost wall-clock without reliably changing the ranking, and
-    # they block all of Tier 2 while they run. Keep Reflexion for the cheap
-    # LLM-only agents, where a critique-guided second pass genuinely helps.
-    _NO_RERUN = {"flight", "research", "hotel"}
-    if passed or not weakest or weakest in _NO_RERUN:
+    if passed or not weakest:
         return update
 
+    weak_result = results.get(weakest) or {}
+    weak_options = weak_result.get("options") or []
+
+    # Agent HAS a ranked list → re-order it deterministically to the priority.
+    if weak_options and priority not in ("none", ""):
+        reranked = _rerank_by_priority(weak_options, priority)
+        if reranked and reranked != weak_options:
+            improved = {**weak_result, "options": reranked}
+            # Point the top ranking bucket at the new leader so summary cards agree.
+            data = dict(improved.get("data") or {})
+            ranking = dict(data.get("ranking") or {})
+            ranking["best_value"] = reranked[0].get("id", ranking.get("best_value"))
+            if ranking:
+                data["ranking"] = ranking
+                improved["data"] = data
+            improved["warnings"] = [*(improved.get("warnings") or []), f"Critic re-ranked by {priority}."]
+            update["results"][weakest] = improved
+            update["results"][CRITIC_NODE]["data"]["retried"] = True
+            sse.publish(weakest, "active", f"Critic re-ranked {weakest} by {priority}")
+        return update
+
+    # Light LLM-only agent → a critique-guided re-run genuinely adds detail.
     sse.publish("chief", "working", f"Critic: re-running {weakest} — {critique}")
     try:
-        improved = await REGISTRY[weakest](
+        improved_res = await REGISTRY[weakest](
             request,
             state["profile"],
             caused_by=CRITIC_NODE,
             context={**results, "critique": critique, "critic_score": score},
         )
-        update["results"][weakest] = improved.model_dump(mode="json")
+        update["results"][weakest] = improved_res.model_dump(mode="json")
         update["results"][CRITIC_NODE]["data"]["retried"] = True
         sse.publish(weakest, "active", "Critic refinement complete")
     except Exception as exc:  # noqa: BLE001
