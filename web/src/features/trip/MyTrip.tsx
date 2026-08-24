@@ -1138,6 +1138,22 @@ function TripHeader({
   onDelete?: () => void;
 }) {
   const countdown = results ? countdownLabel(tripStartDate(results)) : null;
+  const [sharing, setSharing] = useState(false);
+
+  const share = async () => {
+    setSharing(true);
+    try {
+      const r = await api.post<{ url: string }>("/trip/share", { results });
+      const url = r.url.startsWith("http") ? r.url : `${window.location.origin}${r.url}`;
+      await navigator.clipboard?.writeText(url).catch(() => {});
+      toast.success("Public link copied — anyone can open this plan.");
+    } catch {
+      toast.error("Couldn't create a share link.");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   return (
     <header className="flex flex-wrap items-start justify-between gap-3 pt-2 pb-6">
       <div className="min-w-0">
@@ -1152,6 +1168,12 @@ function TripHeader({
             <Clock className="h-4 w-4" />
             {countdown}
           </span>
+        )}
+        {results && (
+          <Button variant="secondary" size="sm" loading={sharing} onClick={() => void share()}>
+            <Copy className="h-4 w-4" />
+            Share
+          </Button>
         )}
         {onDelete && (
           <Button variant="ghost" size="sm" onClick={onDelete}>

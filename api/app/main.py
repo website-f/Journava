@@ -414,6 +414,25 @@ async def build_itinerary(request: ItineraryBuild) -> dict[str, object]:
     return {"trip": updated}
 
 
+class TripShare(BaseModel):
+    results: dict[str, object] | None = None
+
+
+@app.post(f"{settings.api_prefix}/trip/share", tags=["trip"])
+async def share_trip(request: TripShare) -> dict[str, object]:
+    """Create a public, read-only share link for the trip — friends open the
+    interactive plan with no account (reuses the shared-plan view + story)."""
+    from app.shared import create_shared
+
+    snap = request.results or (await trip_store.load_trip_durable() or {})
+    if not snap:
+        raise HTTPException(status_code=404, detail="No trip to share yet.")
+    dest = ((snap.get("chief") or {}).get("data") or {}).get("destination") or "Your trip"
+    token = await create_shared(snapshot=snap, title=str(dest))
+    base = (settings.public_base_url or "").rstrip("/")
+    return {"token": token, "url": f"{base}/s/{token}" if base else f"/s/{token}"}
+
+
 class BudgetOptimize(BaseModel):
     budget_amount: float
     currency: str | None = None
