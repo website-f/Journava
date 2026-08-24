@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     )
     llm_temperature: float = 0.3
     llm_timeout_seconds: int = 60
+    #: Optional reliable/paid model used as a LAST resort for critical-path agents
+    #: (chief/flight/itinerary/critic) when the free chain is exhausted, so the
+    #: core plan never degrades to mock under free-tier throttling. Unset = off.
+    llm_premium_model: str | None = None
     #: Multimodal model used by the assistant when the user attaches an image.
     #: Pixtral is on Mistral's free tier, keeping vision within the roster.
     llm_vision_model: str = "mistral/pixtral-12b-2409"

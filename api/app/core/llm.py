@@ -74,6 +74,22 @@ def _note_ollama_down() -> None:
     _ollama_down_until = time.monotonic() + _OLLAMA_COOLDOWN_SECONDS
 
 
+#: Agents whose output the plan most depends on — they get the premium last resort.
+_CRITICAL_AGENTS = {"chief", "flight", "itinerary", "critic", "hotel"}
+
+#: model name -> monotonic time when it may be used again (per-model circuit breaker).
+_MODEL_COOLDOWN: dict[str, float] = {}
+
+
+def _model_cooling(model: str) -> bool:
+    until = _MODEL_COOLDOWN.get(model)
+    return bool(until and time.monotonic() < until)
+
+
+def _cool_model(model: str, seconds: float) -> None:
+    _MODEL_COOLDOWN[model] = time.monotonic() + max(5.0, min(float(seconds), 300.0))
+
+
 async def complete(
     messages: list[Message],
     *,
@@ -108,6 +124,15 @@ async def complete(
 
     # Build the candidate chain
     candidates = await _build_chain()
+    # For critical-path agents, append a reliable premium model as a last resort
+    # so the core plan never falls all the way through to mock under throttling.
+    if settings.llm_premium_model and agent in _CRITICAL_AGENTS:
+        candidates = [*candidates, {"model": settings.llm_premium_model, "provider_id": None, "api_key": None}]
+    # Skip models still cooling down from a recent 429 — hammering a throttled
+    # model just burns latency + inflates the error rate. If that would leave
+    # nothing, keep the full list (better a throttled try than none).
+    warm = [c for c in candidates if not _model_cooling(c["model"])]
+    candidates = warm or candidates
     if not candidates:
         # Nothing usable. Try the local fallback once, then fail fast — this is
         # what keeps an unconfigured install responsive instead of grinding
@@ -189,6 +214,10 @@ async def complete(
             # a rate-limited one should be rested, and a flaky one retried.
             status, cooldown = _classify_failure(exc)
             await _mark(provider_id, status, err_msg, cooldown=cooldown)
+            # Also rest the specific MODEL (covers env-fallback models that have
+            # no provider_id and so aren't cooled by the pool above).
+            if status == "rate_limited":
+                _cool_model(litellm_model, cooldown or 45)
 
             if status == "rate_limited":
                 logger.warning("LLM %s rate-limited — rotating", litellm_model)
