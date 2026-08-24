@@ -155,6 +155,7 @@ SCOPES: dict[str, Scope] = {
             ),
             panels=(
                 "summary",
+                "intelligence",
                 "flights",
                 "hotels",
                 "activities",

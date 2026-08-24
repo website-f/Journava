@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/icons";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Badge, Button, OptionCard } from "@/components/ui";
+import { Badge, Button, OptionCard, Skeleton } from "@/components/ui";
 import { Money, CurrencySwitcher } from "@/components/ui/Money";
 import { useCurrency } from "@/lib/money";
 import { cn } from "@/lib/cn";
@@ -43,6 +43,7 @@ import type { AgentPlanResult, PlanOption, PlanResults, Scope, VideoReview } fro
 /** Per-section label + a recognizable icon, for the jump-bar and headers. */
 const SECTION_META: Record<string, { label: string; Icon: IconType }> = {
   summary: { label: "Overview", Icon: Sparkles },
+  intelligence: { label: "Intelligence", Icon: TrendingUp },
   flights: { label: "Flights", Icon: Plane },
   hotels: { label: "Stays", Icon: Building2 },
   dining: { label: "Food", Icon: Utensils },
@@ -410,6 +411,8 @@ function Panel({
   switch (name) {
     case "summary":
       return <SummaryPanel results={results} onOpenTrip={onOpenTrip} />;
+    case "intelligence":
+      return <TravelIntelPanel results={results} />;
     case "flights":
       return results.flight ? <FlightResults result={results.flight} /> : null;
     case "hotels":
@@ -510,6 +513,110 @@ function SummaryPanel({
           Critic scored this {critic.score.toFixed(2)}
           {critic.retried ? " and re-ran the weakest agent." : "."}
         </p>
+      )}
+    </section>
+  );
+}
+
+interface TravelIntel {
+  verdict?: "book_now" | "wait" | "flexible";
+  confidence?: "high" | "medium" | "low";
+  price_trend?: "rising" | "stable" | "falling";
+  book_by?: string;
+  demand?: "low" | "moderate" | "high";
+  reason?: string;
+  cheaper_window?: string | null;
+  savings_hint?: string | null;
+}
+
+/**
+ * Predictive Travel Intelligence — "book now or wait?" (hackathon direction 06,
+ * Data & Analytics). An agent reasons over the fare spread, crowd, weather and
+ * dates the mesh already gathered and returns a forward-looking call with a
+ * confidence and the signals behind it.
+ */
+function TravelIntelPanel({ results }: { results: PlanResults }) {
+  const [intel, setIntel] = useState<TravelIntel | null>(null);
+  const [state, setState] = useState<"loading" | "done" | "empty">("loading");
+
+  useEffect(() => {
+    let live = true;
+    setState("loading");
+    api
+      .post<{ intel?: TravelIntel; error?: string }>("/intel/predict", { results })
+      .then((r) => {
+        if (!live) return;
+        if (r.intel?.verdict) {
+          setIntel(r.intel);
+          setState("done");
+        } else {
+          setState("empty");
+        }
+      })
+      .catch(() => live && setState("empty"));
+    return () => {
+      live = false;
+    };
+  }, [results]);
+
+  if (state === "empty") return null;
+
+  const verdictMeta = {
+    book_now: { label: "Book now", tone: "success", blurb: "Prices look set to rise — lock it in." },
+    wait: { label: "You can wait", tone: "warning", blurb: "Holding a little longer likely pays off." },
+    flexible: { label: "You're flexible", tone: "brand", blurb: "Dates are movable — here's the smart play." },
+  }[intel?.verdict ?? "flexible"];
+  const toneCls: Record<string, string> = {
+    success: "border-[var(--success)]/40 bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-[var(--success)]",
+    warning: "border-[var(--warning)]/40 bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] text-[var(--warning)]",
+    brand: "border-[var(--brand-500)]/40 bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-[var(--brand-600)]",
+  };
+  const trendArrow = { rising: "↑", stable: "→", falling: "↓" }[intel?.price_trend ?? "stable"];
+
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold">
+        <TrendingUp className="h-5 w-5 text-[var(--brand-500)]" />
+        Travel intelligence
+        <span className="rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-[var(--accent)]">
+          Predictive
+        </span>
+      </h3>
+
+      {state === "loading" ? (
+        <div className="surface-card p-4">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="mt-2 h-4 w-full" />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className={cn("flex items-center gap-3 rounded-[var(--r-md)] border p-3", toneCls[verdictMeta.tone])}>
+            <TrendingUp className="h-6 w-6 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">
+                {verdictMeta.label}
+                {intel?.confidence && (
+                  <span className="ml-2 text-[0.7rem] font-medium opacity-80">{intel.confidence} confidence</span>
+                )}
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--text)] opacity-80">{intel?.reason || verdictMeta.blurb}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <ReportTile label="Price trend" value={`${trendArrow} ${intel?.price_trend ?? "—"}`} />
+            <ReportTile label="Book by" value={intel?.book_by || "—"} />
+            <ReportTile label="Demand" value={intel?.demand ?? "—"} />
+            <ReportTile label="Cheaper window" value={intel?.cheaper_window || "these dates"} />
+          </div>
+
+          {intel?.savings_hint && (
+            <p className="flex items-center gap-1.5 text-xs text-[var(--brand-600)]">
+              <Sparkles className="h-3.5 w-3.5" />
+              {intel.savings_hint}
+            </p>
+          )}
+        </div>
       )}
     </section>
   );
