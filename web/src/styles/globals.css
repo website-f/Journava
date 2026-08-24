@@ -110,8 +110,13 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   /* Height of the sticky top bar — also the scroll-padding for anchor jumps. */
   --top-bar: 3.5rem;
-  /* Clearance the floating bottom nav needs from the end of page content. */
-  --nav-clearance: 7rem;
+  /* Clearance the floating bottom nav needs from the end of page content.
+     The nav is a floating pill (~5.5rem incl. the raised Home button) that sits
+     `--safe-bottom + 0.85rem` off the bottom, so the clearance must include the
+     safe-area inset — otherwise the last section hides behind the pill on phones
+     with a home indicator. Plus generous breathing room so content never crowds
+     the nav. */
+  --nav-clearance: calc(var(--safe-bottom) + 8.5rem);
 
   /* Typography — faces are self-hosted from /public/fonts (declared above).
      The fallback stacks still matter: they are what renders during `swap`. */
