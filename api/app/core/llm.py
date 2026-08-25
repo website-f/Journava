@@ -86,8 +86,14 @@ def _model_cooling(model: str) -> bool:
     return bool(until and time.monotonic() < until)
 
 
-def _cool_model(model: str, seconds: float) -> None:
-    _MODEL_COOLDOWN[model] = time.monotonic() + max(5.0, min(float(seconds), 300.0))
+def _cool_model(model: str, seconds: Any) -> None:
+    # `seconds` may arrive as a timedelta (from _classify_failure) or a number.
+    # Coercing a timedelta with float() raised and crashed the whole agent under
+    # rate-limits — the real reason research/other agents came back empty.
+    from datetime import timedelta
+
+    secs = seconds.total_seconds() if isinstance(seconds, timedelta) else float(seconds or 0)
+    _MODEL_COOLDOWN[model] = time.monotonic() + max(5.0, min(secs or 45.0, 300.0))
 
 
 async def complete(

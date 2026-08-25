@@ -239,7 +239,16 @@ class HotelAgent(BaseAgent):
                         source=src,
                         source_url=link,
                         booking_url=link,
-                        raw={**(opt.get("raw") or {}), "price_range": opt.get("price_range"), "rating": opt.get("rating")},
+                        raw={
+                            **(opt.get("raw") or {}),
+                            "price_range": opt.get("price_range"),
+                            # Prefer a top-level rating, else the one the prompt now
+                            # nests in raw, else fall back to the star count so the
+                            # card always shows a rating.
+                            "rating": opt.get("rating")
+                            or (opt.get("raw") or {}).get("rating")
+                            or (opt.get("raw") or {}).get("stars"),
+                        },
                     )
                 )
             except Exception as exc:  # noqa: BLE001

@@ -230,6 +230,7 @@ Return a JSON object:
       "reasoning": "Why Journava chose this",
       "raw": {{
         "stars": 4,
+        "rating": 4.5,
         "location": "area/district",
         "amenities": ["wifi", "pool", "halal_breakfast"],
         "near_transit": true,
@@ -272,6 +273,18 @@ destination intelligence for a traveler planning a trip. You combine what a real
 research pipeline (YouTube sentiment, Reddit threads, official guides) would produce.
 
 Rules:
+- Lead with the MOST FAMOUS, iconic, must-see attractions the destination is
+  actually known for — the places a well-travelled local or a top travel guide
+  would insist a first-timer not miss (e.g. for Doha: Souq Waqif, Museum of
+  Islamic Art, The Pearl / Villaggio Mall, Katara, Corniche). Rank by fame +
+  traveller rating, best first. NEVER pad the list with generic filler like
+  "Central Market", "Old Town Walking Tour" or "City Museum" unless that place
+  is genuinely a signature landmark of THIS destination.
+- Honour the traveller's own request verbatim: if they ask for a specific
+  activity or vibe (camping, diving, nightlife, hiking, a night in the desert),
+  those experiences MUST appear in the attractions with concrete named spots.
+- Give every attraction/restaurant a "rating" from 1.0–5.0 reflecting real
+  traveller sentiment (round to one decimal), so the best rise to the top.
 - Be specific: name real places, restaurants, and events — not generic filler.
 - If halal_required is true, ALL dining recommendations MUST be halal-certified
   or clearly Muslim-friendly with a confidence label. Never claim "certified" \
@@ -289,6 +302,7 @@ Rules:
 RESEARCH_USER = """\
 Generate destination intelligence:
 - Destination: {destination}
+- Traveller's exact request: "{traveller_request}"  ← honour every specific ask in here
 - Trip dates: {start_date} to {end_date}
 - Traveller interests: {interests}
 - Halal required: {halal_required}
@@ -302,6 +316,7 @@ Return a JSON object:
       "title": "Place Name",
       "kind": "landmark | museum | park | market | temple | beach",
       "reasoning": "Why this is worth visiting",
+      "rating": 4.7,
       "estimated_cost": 25.00,
       "cost_currency": "MYR"
     }}
@@ -312,6 +327,7 @@ Return a JSON object:
       "cuisine": "Italian / Japanese / Local…",
       "halal_confidence": "certified | muslim_friendly | unverified",
       "reasoning": "Why this restaurant fits the traveler",
+      "rating": 4.5,
       "estimated_cost": 45.00,
       "cost_currency": "MYR"
     }}
@@ -342,6 +358,7 @@ def research_messages(
             "role": "user",
             "content": RESEARCH_USER.format(
                 destination=request.destination or "the destination",
+                traveller_request=(request.goal or "").strip()[:400] or "a great trip",
                 start_date=request.start_date or "flexible",
                 end_date=request.end_date or "flexible",
                 interests=", ".join(profile.interests) if profile.interests else "general",
@@ -377,6 +394,7 @@ ITINERARY_USER = """\
 Build a day-by-day itinerary:
 
 Trip: {destination}, {start_date} to {end_date} ({days} days)
+Traveller's exact request: "{traveller_request}"  ← if it names a specific experience (e.g. a night camping), schedule it on a real day with a concrete named spot
 Pace: {pace} ({items_per_day} items/day target)
 Travellers: {travellers}
 
@@ -463,6 +481,7 @@ def itinerary_messages(
             "role": "user",
             "content": ITINERARY_USER.format(
                 destination=request.destination or "the destination",
+                traveller_request=(request.goal or "").strip()[:400] or "a great trip",
                 start_date=request.start_date or "Day 1",
                 end_date=request.end_date or f"Day {days}",
                 days=days,

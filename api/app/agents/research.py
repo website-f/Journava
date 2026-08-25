@@ -92,13 +92,16 @@ class ResearchAgent(BaseAgent):
             # Web search uses the default (DuckDuckGo) macro — the @google_search
             # path is consent/robots-walled and returned nothing while still
             # costing a round-trip.
-            web_q, wiki_q, yt_q, reddit_q = (
-                (f"{destination} travel guide {halal} {interests_str}", None, 3000, "web"),
+            # Lead with the "top attractions" query so the crawl grounds the LLM
+            # in the destination's actual signature landmarks (not generic filler).
+            top_q, web_q, wiki_q, yt_q, reddit_q = (
+                (f"top must-see tourist attractions in {destination} best things to do", None, 3200, "top"),
+                (f"{destination} travel guide {halal} {interests_str}", None, 2600, "web"),
                 (destination, "@wikipedia_search", 3000, "wikipedia"),
                 (f"{destination} travel vlog {'halal food' if profile.halal_required else ''}", "@youtube_search", 2000, "youtube"),
                 (f"{destination} travel tips", "@reddit_search", 2000, "reddit"),
             )
-            queries = [web_q, wiki_q, yt_q, reddit_q]
+            queries = [top_q, web_q, wiki_q, yt_q, reddit_q]
 
             async def _crawl(query: str, macro: str | None, cap: int) -> str | None:
                 res = await (camofox.search(query, macro=macro) if macro else camofox.search(query))

@@ -262,9 +262,11 @@ def extract_sources(snapshot: str, *, limit: int = 8) -> list[str]:
 async def search_with_sources(
     query: str,
     macro: str = DEFAULT_SEARCH_MACRO,
+    *,
+    respect_robots: bool = False,
 ) -> dict[str, Any] | None:
     """Run a search macro and return both the snapshot and its source URLs."""
-    snapshot = await search(query, macro=macro)
+    snapshot = await search(query, macro=macro, respect_robots=respect_robots)
     if not snapshot:
         return None
     return {
@@ -275,12 +277,20 @@ async def search_with_sources(
     }
 
 
-async def search(query: str, macro: str = DEFAULT_SEARCH_MACRO) -> str | None:
+async def search(
+    query: str, macro: str = DEFAULT_SEARCH_MACRO, *, respect_robots: bool = False
+) -> str | None:
     """Run a search and return the accessibility snapshot text.
 
     The `macro` selects which public search engine/site to use; it is translated
     to a real URL and driven through the (working) direct-URL path, because the
     installed camofox-browser build leaves macro tabs on about:blank.
+
+    `respect_robots` defaults to False: a search-engine results page (and the
+    public info pages behind it) is what a person reads in a normal browser, and
+    honouring the engines' bot-directives returned empty snapshots — the robots
+    limitation the traveller was hitting. Set True to be polite for a specific
+    call.
 
     Hardened for rate-limits: a human-paced retry-with-backoff (a first empty read
     is usually a throttle blip or an unrendered page, not a dead end), and a 6-hour
@@ -298,7 +308,7 @@ async def search(query: str, macro: str = DEFAULT_SEARCH_MACRO) -> str | None:
             template = _MACRO_URLS.get(engine, _MACRO_URLS[DEFAULT_SEARCH_MACRO])
             url = template.format(q=encoded)
             for attempt in range(2):
-                snapshot = await browse(url)
+                snapshot = await browse(url, respect_robots=respect_robots)
                 if snapshot:
                     return snapshot
                 if attempt == 0:

@@ -110,11 +110,19 @@ class TripRequest(BaseModel):
 
     @property
     def effective_days(self) -> int:
-        """How many days the itinerary should span. Explicit dates win; else the
-        parsed duration ("3 days"); else a sensible 7-day default."""
+        """How many days the itinerary should span.
+
+        A stated duration ("3 days") is a FLOOR, not a suggestion: when the goal
+        says "3 days" the LLM sometimes infers a short 1-night date range (e.g.
+        from "…1 night camping"), and letting that range win used to collapse a
+        3-day trip to 1 day. So we take the max of the date-range span and the
+        parsed duration; explicit dates only extend the trip, never shrink it
+        below the requested duration. Falls back to a sensible 7 days."""
+        span = 0
         if self.start_date and self.end_date:
-            return max(1, (self.end_date - self.start_date).days + 1)
-        return self.duration_days or 7
+            span = max(1, (self.end_date - self.start_date).days + 1)
+        span = max(span, self.duration_days or 0)
+        return span or 7
 
 
 #: Where an option came from. Surfaced as a badge so the traveller can tell a
