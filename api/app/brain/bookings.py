@@ -31,13 +31,17 @@ from app.core import db
 
 logger = logging.getLogger(__name__)
 
-Stage = Literal["draft", "price_confirmed", "ordered", "paying", "paid", "ticketed", "failed"]
+Stage = Literal[
+    "draft", "price_confirmed", "ordered", "paying", "paid", "ticketed", "failed",
+    # Post-disruption states set by the automated recovery flow (auto_rebook).
+    "refunded", "cancelled", "rebooked",
+]
 
 #: Stages from which a payment may still be attempted.
 PAYABLE_STAGES = frozenset({"ordered"})
 
 #: Terminal stages — nothing further happens without a new search.
-TERMINAL_STAGES = frozenset({"ticketed", "failed"})
+TERMINAL_STAGES = frozenset({"ticketed", "failed", "refunded", "cancelled", "rebooked"})
 
 
 def _row_to_public(row: dict[str, Any]) -> dict[str, Any]:

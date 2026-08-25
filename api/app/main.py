@@ -58,7 +58,7 @@ from app.core import (
     vault_probes,
 )
 from app.core.settings import settings
-from app.graph import booking_flow, scopes
+from app.graph import auto_rebook, booking_flow, scopes
 from app.graph.disruption import handle_disruption
 from app.graph.supervisor import cancel_run as _cancel_plan_run
 from app.graph.supervisor import run_plan
@@ -1630,6 +1630,32 @@ async def booking_status(booking_row_id: str) -> dict[str, object]:
         raise HTTPException(
             status_code=409, detail={"code": exc.code, "message": str(exc)}
         ) from exc
+
+
+class AutoRecoverRequest(BaseModel):
+    #: Force a status for a deterministic demo ("delayed" | "cancelled" |
+    #: "on_time"); omit to check the real flight status.
+    simulate: str | None = None
+    #: A delay this long (minutes) or a cancellation triggers recovery.
+    threshold_minutes: int = 90
+    #: False = preview only (detect + choose best alternative, no refund/rebook).
+    execute: bool = True
+
+
+@app.post(f"{settings.api_prefix}/flights/booking/{{booking_row_id}}/auto-recover", tags=["flights"])
+async def booking_auto_recover(booking_row_id: str, request: AutoRecoverRequest) -> dict[str, object]:
+    """Autonomous disruption recovery for a booked flight: detect a delay/
+    cancellation, pick the best alternative, refund the old booking and book the
+    replacement — returning a step-by-step report of everything done."""
+    try:
+        return await auto_rebook.auto_recover(
+            booking_row_id,
+            simulate=request.simulate,
+            threshold_minutes=request.threshold_minutes,
+            execute=request.execute,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- #

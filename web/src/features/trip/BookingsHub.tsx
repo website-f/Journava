@@ -10,7 +10,12 @@ import {
   ShoppingCart,
   Ticket,
   X,
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
 } from "@/components/ui/icons";
+import { toast } from "sonner";
 import { Button, EmptyState, Skeleton } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
@@ -66,6 +71,7 @@ export function BookingsHub({ mode }: { mode: "pending" | "payments" }) {
   const qc = useQueryClient();
   const [resume, setResume] = useState<FlightBooking | null>(null);
   const [receipt, setReceipt] = useState<FlightBooking | null>(null);
+  const [recover, setRecover] = useState<FlightBooking | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["bookings"],
@@ -156,6 +162,9 @@ export function BookingsHub({ mode }: { mode: "pending" | "payments" }) {
                       Check ticket status
                     </Button>
                   )}
+                  <Button variant="secondary" size="sm" onClick={() => setRecover(b)}>
+                    <RefreshCw className="h-4 w-4" /> Flight disrupted?
+                  </Button>
                   <Button variant="secondary" size="sm" onClick={() => setReceipt(b)}>
                     View receipt
                   </Button>
@@ -176,7 +185,145 @@ export function BookingsHub({ mode }: { mode: "pending" | "payments" }) {
         />
       )}
       {receipt && <ReceiptDialog booking={receipt} onClose={() => setReceipt(null)} />}
+      {recover && (
+        <AutoRecoverDialog
+          booking={recover}
+          onClose={() => {
+            setRecover(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+type RecoverStep = { step: string; ok: boolean; detail: string };
+type RecoverReport = {
+  disrupted: boolean;
+  summary: string;
+  steps: RecoverStep[];
+  refund?: { amount: number; pct: number; currency: string; mode: string; rationale?: string };
+  new_booking_ok?: boolean;
+};
+
+/**
+ * Autonomous disruption recovery, shown as it happens. Pick "check real status"
+ * or force a delay/cancellation (the demo path); the agent then detects, picks
+ * the best alternative, refunds the old fare and rebooks — and every step it
+ * took is listed, so nothing happens off-screen.
+ */
+function AutoRecoverDialog({ booking, onClose }: { booking: FlightBooking; onClose: () => void }) {
+  const [running, setRunning] = useState(false);
+  const [report, setReport] = useState<RecoverReport | null>(null);
+
+  const run = async (simulate: string | null) => {
+    setRunning(true);
+    setReport(null);
+    try {
+      const res = await api.post<RecoverReport>(`/flights/booking/${booking.id}/auto-recover`, {
+        simulate,
+        execute: true,
+      });
+      setReport(res);
+    } catch {
+      toast.error("Recovery couldn't run — try again.");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay asChild>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm" />
+        </Dialog.Overlay>
+        <Dialog.Content asChild>
+          <motion.div
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className={cn(
+              "fixed left-1/2 top-1/2 z-[81] max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto",
+              "rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-6 shadow-[var(--shadow-2)]",
+            )}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <Dialog.Title className="font-[family-name:var(--font-display)] text-lg">Flight recovery</Dialog.Title>
+                <Dialog.Description className="text-xs text-[var(--muted)]">
+                  {booking.route ?? "Flight"} · your agent handles the whole recovery
+                </Dialog.Description>
+              </div>
+              <Dialog.Close asChild>
+                <Button variant="ghost" size="icon" aria-label="Close">
+                  <X className="h-4 w-4" />
+                </Button>
+              </Dialog.Close>
+            </div>
+
+            {!report && (
+              <div className="mt-4 space-y-3">
+                <p className="text-sm text-[var(--muted)]">
+                  Check the live status, or simulate a disruption to see the agent detect it, refund this
+                  fare and rebook the best alternative — automatically.
+                </p>
+                <div className="grid gap-2">
+                  <Button loading={running} onClick={() => void run(null)}>
+                    <RefreshCw className="h-4 w-4" /> Check real status &amp; recover
+                  </Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant="secondary" size="sm" disabled={running} onClick={() => void run("delayed")}>
+                      Simulate delay
+                    </Button>
+                    <Button variant="secondary" size="sm" disabled={running} onClick={() => void run("cancelled")}>
+                      Simulate cancellation
+                    </Button>
+                  </div>
+                </div>
+                {running && (
+                  <p className="flex items-center gap-2 text-xs text-[var(--brand-600)]">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Agent working — detecting, refunding, rebooking…
+                  </p>
+                )}
+              </div>
+            )}
+
+            {report && (
+              <div className="mt-4 space-y-3">
+                <ol className="space-y-2">
+                  {report.steps.map((s, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm">
+                      {s.ok ? (
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--success)]" weight="fill" />
+                      ) : (
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--warning)]" weight="fill" />
+                      )}
+                      <span>
+                        <span className="font-semibold capitalize">{s.step}</span> — {s.detail}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <div
+                  className={cn(
+                    "rounded-[var(--r-md)] border-l-2 p-3 text-sm",
+                    report.disrupted
+                      ? "border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)]"
+                      : "border-[var(--success)] bg-[color-mix(in_srgb,var(--success)_10%,transparent)]",
+                  )}
+                >
+                  {report.summary}
+                </div>
+                <Button className="w-full" variant="secondary" onClick={onClose}>
+                  Done
+                </Button>
+              </div>
+            )}
+          </motion.div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
