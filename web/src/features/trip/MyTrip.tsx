@@ -1594,6 +1594,14 @@ function ItinerarySection({
     toast.success(`Moved “${item.title}” to Day ${toDay}.`);
   };
 
+  // Inline-edit a stop's time and cost (tap the row's edit button).
+  const editItem = (item: ItineraryItem, patch: Partial<ItineraryItem>) => {
+    const next = items.map((i) =>
+      i.day_index === item.day_index && i.title === item.title ? { ...i, ...patch } : i,
+    );
+    void persist(next);
+  };
+
   const refine = async () => {
     setRefining(true);
     try {
@@ -1674,6 +1682,7 @@ function ItinerarySection({
               onReorder={(from, to) => reorderDay(dayIndex, from, to)}
               onRemove={(title) => void removeItem(title)}
               onMoveToDay={moveToDay}
+              onEdit={editItem}
               itemKey={itemKey}
               isDone={isDone}
               onToggle={toggle}
@@ -1691,6 +1700,7 @@ function DayItinerary({
   onReorder,
   onRemove,
   onMoveToDay,
+  onEdit,
   itemKey,
   isDone,
   onToggle,
@@ -1701,11 +1711,14 @@ function DayItinerary({
   onReorder: (from: number, to: number) => void;
   onRemove: (title: string) => void;
   onMoveToDay: (item: ItineraryItem, toDay: number) => void;
+  onEdit: (item: ItineraryItem, patch: Partial<ItineraryItem>) => void;
   itemKey: (item: ItineraryItem) => string;
   isDone: (key: string) => boolean;
   onToggle: (key: string) => void;
 }) {
   const [drag, setDrag] = useState<number | null>(null);
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Partial<ItineraryItem>>({});
   const dayDone = dayItems.filter((i) => isDone(itemKey(i))).length;
   return (
     <div>
@@ -1757,20 +1770,69 @@ function DayItinerary({
               <p className={cn("truncate text-sm font-medium leading-tight", done && "text-[var(--muted)] line-through")}>
                 {item.title}
               </p>
-              <div className="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-[var(--muted)]">
-                <span className="uppercase tracking-wide">{item.kind}</span>
-                {item.starts_at && (
-                  <span className="tabular-nums">
-                    · {item.starts_at}
-                    {item.ends_at ? `–${item.ends_at}` : ""}
-                  </span>
-                )}
-                {item.cost_amount != null && (
-                  <span className="font-medium text-[var(--brand-500)]">
-                    · <Money amount={item.cost_amount} currency={item.cost_currency ?? "MYR"} />
-                  </span>
-                )}
-              </div>
+              {editKey === key ? (
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  <input
+                    type="time"
+                    aria-label="Start time"
+                    value={draft.starts_at ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, starts_at: e.target.value }))}
+                    className="rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.65rem]"
+                  />
+                  <span className="text-[0.6rem] text-[var(--muted)]">–</span>
+                  <input
+                    type="time"
+                    aria-label="End time"
+                    value={draft.ends_at ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, ends_at: e.target.value }))}
+                    className="rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.65rem]"
+                  />
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    aria-label="Cost"
+                    placeholder="cost"
+                    value={draft.cost_amount == null ? "" : String(draft.cost_amount)}
+                    onChange={(e) => setDraft((d) => ({ ...d, cost_amount: e.target.value === "" ? null : Number(e.target.value) }))}
+                    className="w-16 rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.65rem]"
+                  />
+                  <span className="text-[0.6rem] text-[var(--muted)]">{item.cost_currency ?? "MYR"}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onEdit(item, draft);
+                      setEditKey(null);
+                    }}
+                    className="rounded-[var(--r-pill)] bg-[var(--brand-500)] px-2 py-0.5 text-[0.6rem] font-semibold text-white"
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditKey(key);
+                    setDraft({ starts_at: item.starts_at, ends_at: item.ends_at, cost_amount: item.cost_amount });
+                  }}
+                  title="Edit time & cost"
+                  className="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-[var(--muted)] hover:text-[var(--brand-500)]"
+                >
+                  <span className="uppercase tracking-wide">{item.kind}</span>
+                  {item.starts_at && (
+                    <span className="tabular-nums">
+                      · {item.starts_at}
+                      {item.ends_at ? `–${item.ends_at}` : ""}
+                    </span>
+                  )}
+                  {item.cost_amount != null && (
+                    <span className="font-medium text-[var(--brand-500)]">
+                      · <Money amount={item.cost_amount} currency={item.cost_currency ?? "MYR"} />
+                    </span>
+                  )}
+                  <span className="text-[0.6rem] opacity-60">✎</span>
+                </button>
+              )}
             </div>
 
             {/* Compact, horizontal move controls — keeps each row thin. */}
