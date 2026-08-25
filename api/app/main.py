@@ -1176,9 +1176,10 @@ async def place_video(q: str, city: str = "") -> dict[str, object]:
     """
     from urllib.parse import quote
 
+    from app.mapping import _resolve_city
     from app.tools import youtube
 
-    query = f"{q} {city}".strip()
+    query = f"{q} {_resolve_city(city)}".strip()  # IATA (NRT) → city (Tokyo)
     vids = await youtube.search_videos(f"{query} travel", max_results=1)
     if vids:
         v = vids[0]
@@ -1193,6 +1194,45 @@ async def place_video(q: str, city: str = "") -> dict[str, object]:
         "title": None,
         "source": "search",
     }
+
+
+@app.get(f"{settings.api_prefix}/places/image", tags=["places"])
+async def place_image(q: str, city: str = "") -> dict[str, object]:
+    """A representative photo thumbnail for a place — keyless via Openverse
+    (CC-licensed image search), falling back to the Wikipedia lead image. Cached
+    24h so a card only ever resolves once."""
+    import httpx
+
+    from app.core.cache import cached
+    from app.mapping import _resolve_city
+
+    query = f"{q} {_resolve_city(city)}".strip()  # IATA (NRT) → city (Tokyo)
+    ckey = f"placeimg:{query.lower()}"
+
+    async def produce() -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=8.0, headers={"User-Agent": "Journava/1.0"}) as client:
+                r = await client.get(
+                    "https://api.openverse.org/v1/images/",
+                    params={"q": query, "page_size": 1, "mature": "false"},
+                )
+                if r.status_code == 200:
+                    results = (r.json() or {}).get("results") or []
+                    if results:
+                        return results[0].get("thumbnail") or results[0].get("url")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("openverse image miss for %r: %s", query, exc)
+        try:  # Wikipedia lead image (famous landmarks have one)
+            from app.tools import imagery
+
+            img = await imagery.destination_image(q)
+            if img:
+                return img
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("wikipedia image miss for %r: %s", q, exc)
+        return None
+
+    return {"image": await cached(ckey, produce, ttl=settings.cache_ttl_long)}
 
 
 # --------------------------------------------------------------------------- #

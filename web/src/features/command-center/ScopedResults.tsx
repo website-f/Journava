@@ -637,7 +637,7 @@ function Panel({ name, results }: { name: string; results: PlanResults }) {
     case "flights":
       return results.flight ? <FlightResults result={results.flight} /> : null;
     case "hotels":
-      return <OptionsPanel result={results.hotel} title="Stays" icon={Building2} />;
+      return <OptionsPanel result={results.hotel} title="Stays" icon={Building2} city={city} />;
     case "dining":
       return (
         <PlacesSection
@@ -827,12 +827,14 @@ function OptionsPanel({
   icon: Icon,
   filter,
   extra,
+  city,
 }: {
   result?: AgentPlanResult;
   title: string;
   icon: IconType;
   filter?: (option: PlanOption) => boolean;
   extra?: AgentPlanResult;
+  city?: string;
 }) {
   const own = result?.options ?? [];
   const extras = extra?.options ?? [];
@@ -854,7 +856,7 @@ function OptionsPanel({
       */}
       <Rail card="16.5rem" cols={2} colsLg={3} aria-label={title}>
         {options.map((option) => (
-          <PlaceCard key={option.id} option={option} />
+          <PlaceCard key={option.id} option={option} city={city} />
         ))}
       </Rail>
       {(result?.warnings ?? []).length > 0 && (

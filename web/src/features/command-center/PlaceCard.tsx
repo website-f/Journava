@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink, ShoppingCart, Video } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { SourceBadge } from "@/components/ui/SourceBadge";
@@ -22,6 +22,22 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
   const isStay = option.kind === "hotel";
   const canVideo = option.kind === "activity" || option.kind === "restaurant";
   const [videoLoading, setVideoLoading] = useState(false);
+
+  // A real photo of the place — resolved lazily (keyless Openverse/Wikipedia).
+  const [image, setImage] = useState<string | null>((option.raw as { image?: string })?.image ?? null);
+  useEffect(() => {
+    if (image) return;
+    let cancelled = false;
+    api
+      .get<{ image: string | null }>(
+        `/places/image?q=${encodeURIComponent(option.title)}&city=${encodeURIComponent(city ?? "")}`,
+      )
+      .then((r) => !cancelled && r.image && setImage(r.image))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [option.title, city]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const seeVideo = async () => {
     setVideoLoading(true);
@@ -59,7 +75,16 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
       : raw.price_range || null;
 
   return (
-    <div className="surface-card flex h-full flex-col p-4 transition-colors hover:border-[var(--brand-400)]">
+    <div className="surface-card flex h-full flex-col overflow-hidden p-4 transition-colors hover:border-[var(--brand-400)]">
+      {image && (
+        <img
+          src={image}
+          alt={option.title}
+          loading="lazy"
+          onError={() => setImage(null)}
+          className="-mx-4 -mt-4 mb-3 h-28 w-[calc(100%+2rem)] max-w-none object-cover"
+        />
+      )}
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-sm font-semibold">{option.title}</p>
         {price && (
