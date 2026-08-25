@@ -14,8 +14,10 @@ import {
   Trash2,
   Share,
   Users2,
+  Scales,
 } from "@/components/ui/icons";
 import { ShareCollabDialog } from "@/features/trip/ShareCollab";
+import { useCompareStore, MAX_COMPARE } from "@/stores/compareStore";
 import {
   Badge,
   Button,
@@ -418,6 +420,11 @@ function TripCard({
     }
   };
 
+  const compareIds = useCompareStore((s) => s.ids);
+  const addCompare = useCompareStore((s) => s.add);
+  const removeCompare = useCompareStore((s) => s.remove);
+  const inCompare = savedId ? compareIds.includes(savedId) : false;
+
   const f = summary?.flights;
   return (
     <div className="surface-card group pressable relative overflow-hidden p-0 hover:border-[var(--brand-400)] hover:shadow-[var(--shadow-2)]">
@@ -474,6 +481,24 @@ function TripCard({
           <p className="text-[0.7rem] text-[var(--muted)]">
             {f.atlas} Atlas · {f.research} research · {f.picked ? "one picked" : "none picked yet"}
           </p>
+        )}
+
+        {savedId && (
+          <button
+            onClick={() => {
+              if (inCompare) removeCompare(savedId);
+              else if (!addCompare(savedId)) toast.error(`Compare holds up to ${MAX_COMPARE} trips.`);
+            }}
+            className={cn(
+              "pressable flex w-full items-center justify-center gap-1.5 rounded-[var(--r-md)] border px-3 py-2 text-xs font-semibold",
+              inCompare
+                ? "border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-[var(--brand-600)]"
+                : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--brand-400)] hover:text-[var(--brand-600)]",
+            )}
+          >
+            <Scales className="h-3.5 w-3.5" weight={inCompare ? "fill" : "regular"} />
+            {inCompare ? "In comparison" : "Add to compare"}
+          </button>
         )}
 
         {savedId && f && f.count > 0 && (

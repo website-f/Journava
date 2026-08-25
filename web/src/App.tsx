@@ -29,6 +29,9 @@ const TripHub = lazy(() =>
 const AccountHub = lazy(() =>
   import("@/features/account/AccountHub").then((m) => ({ default: m.AccountHub })),
 );
+const ComparePage = lazy(() =>
+  import("@/features/compare/ComparePage").then((m) => ({ default: m.ComparePage })),
+);
 // B2B desktop console — its own full-screen shell (no PWA bottom nav), served to
 // agency/corporate users. Split out so consumers never download it.
 const ConsoleApp = lazy(() =>
@@ -130,6 +133,7 @@ export function App() {
               <Route path="/trip" element={<TripHub />} />
               <Route path="/agents" element={<AgentControl />} />
               <Route path="/account" element={<AccountHub />} />
+              <Route path="/compare" element={<ComparePage />} />
 
               {/* Legacy deep links → consolidated hubs (roles enforced inside). */}
               <Route path="/history" element={<Navigate to="/trip?tab=history" replace />} />

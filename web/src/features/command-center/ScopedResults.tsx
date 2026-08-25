@@ -49,6 +49,8 @@ import { PlacesSection } from "./PlacesSection";
 import { VideoCarousel } from "@/components/ui/VideoCarousel";
 import type { AgentPlanResult, ItineraryItem, PlanOption, PlanResults, Scope, VideoReview } from "@/lib/types";
 import { usePlanStore } from "@/stores/planStore";
+import { useCompareStore, MAX_COMPARE } from "@/stores/compareStore";
+import { Scales } from "@/components/ui/icons";
 
 /** Per-section label + a recognizable icon, for the jump-bar and headers. */
 const SECTION_META: Record<string, { label: string; Icon: IconType }> = {
@@ -289,6 +291,35 @@ export function ScopedResults({
   const critic = results.critic?.data as { score?: number; retried?: boolean } | undefined;
   const scopeLabel = (results._scope as { label?: string } | undefined)?.label ?? scope.label;
   const trip = useTripActions(results);
+
+  // Add-to-compare: a planned result isn't saved yet, so persist it (as a
+  // result) to get a stable id, then drop that id in the comparison cart.
+  const addCompare = useCompareStore((s) => s.add);
+  const [comparing, setComparing] = useState(false);
+  const [compared, setCompared] = useState(false);
+  const addToCompare = async () => {
+    setComparing(true);
+    try {
+      const dest = (results.chief?.data as { destination?: string } | undefined)?.destination;
+      const saved = await api.post<{ id: string }>("/saved", {
+        kind: "result",
+        scope: (results._scope as { slug?: string } | undefined)?.slug ?? scope.slug,
+        destination: dest,
+        results,
+      });
+      if (addCompare(saved.id)) {
+        setCompared(true);
+        toast.success("Added to comparison — open Compare to weigh them.");
+      } else {
+        toast.error(`Compare holds up to ${MAX_COMPARE} trips.`);
+      }
+    } catch {
+      toast.error("Couldn't add this to the comparison.");
+    } finally {
+      setComparing(false);
+    }
+  };
+
   // The hero already leads with the destination and the chief's summary, so the
   // separate "summary" panel repeated both. Drop it from the section list.
   const bodyPanels = panels.filter((panel) => panel !== "summary");
@@ -305,6 +336,10 @@ export function ScopedResults({
         <Button variant="ghost" size="sm" onClick={onAskAgain}>
           <RotateCcw className="h-4 w-4" />
           Ask again
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => void addToCompare()} disabled={comparing || compared}>
+          <Scales className="h-4 w-4" weight={compared ? "fill" : "regular"} />
+          {compared ? "In compare" : "Compare"}
         </Button>
         <div className="min-w-0 flex-1" />
         <CurrencySwitcher className="h-9 w-[6.5rem] text-xs" />

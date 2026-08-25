@@ -10,6 +10,7 @@ import { Button } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { BottomNav } from "./BottomNav";
 import { AssistiveTouch } from "./AssistiveTouch";
+import { CompareTray } from "./CompareTray";
 
 /**
  * App shell — a slim glass top bar, the page content, and one floating glass
@@ -151,6 +152,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </main>
 
       <BottomNav />
+      <CompareTray />
       <AssistiveTouch />
     </div>
   );
