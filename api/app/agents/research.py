@@ -678,19 +678,33 @@ class ResearchAgent(BaseAgent):
             for vid in re.findall(r"tiktok\.com/(?:embed|video|v)/(\d{6,})", haystack):
                 seen.setdefault(vid, f"https://www.tiktok.com/embed/v2/{vid}")
 
-            return [
-                {
+            # Enrich each clip via TikTok's public oEmbed — gives a real thumbnail
+            # + caption/author (the cards were thumbnail-less before). Best-effort,
+            # in parallel, so a slow/blocked oEmbed never stalls the plan.
+            import httpx
+
+            async def _enrich(vid: str, watch: str) -> dict[str, Any]:
+                thumb, title = None, "TikTok review"
+                try:
+                    async with httpx.AsyncClient(timeout=6.0) as client:
+                        r = await client.get("https://www.tiktok.com/oembed", params={"url": watch})
+                        if r.status_code == 200:
+                            j = r.json()
+                            thumb = j.get("thumbnail_url")
+                            title = (j.get("title") or j.get("author_name") or title)[:110]
+                except Exception:  # noqa: BLE001
+                    pass
+                return {
                     "platform": "tiktok",
                     "id": vid,
-                    "title": "TikTok review",
-                    "thumbnail": None,
+                    "title": title,
+                    "thumbnail": thumb,
                     "views": 0,
-                    # Official embeddable iframe player.
                     "embed_url": f"https://www.tiktok.com/player/v1/{vid}?music_info=1&description=1",
                     "watch_url": watch,
                 }
-                for vid, watch in list(seen.items())[:3]
-            ]
+
+            return await asyncio.gather(*(_enrich(v, w) for v, w in list(seen.items())[:3]))
         except Exception as exc:  # noqa: BLE001 — TikTok is strictly best-effort
             logger.debug("TikTok lookup failed: %s", exc)
             return []
