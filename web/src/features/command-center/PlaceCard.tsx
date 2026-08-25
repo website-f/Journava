@@ -26,15 +26,29 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
   const seeVideo = async () => {
     setVideoLoading(true);
     const fallback = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${option.title} ${city ?? ""} travel`)}`;
-    // Open the tab synchronously (avoids popup-blockers), then redirect it once resolved.
-    const tab = window.open("about:blank", "_blank", "noopener,noreferrer");
+    // Open the tab synchronously so the click gesture beats popup-blockers, then
+    // redirect it once resolved. IMPORTANT: do NOT pass "noopener" here — with it
+    // window.open returns null, leaving an un-redirectable blank tab (the bug).
+    // We sever the opener manually instead.
+    const tab = window.open("", "_blank");
+    if (tab) {
+      try {
+        tab.opener = null;
+      } catch {
+        /* cross-origin guard — safe to ignore */
+      }
+    }
+    const go = (url: string) => {
+      if (tab) tab.location.href = url;
+      else window.open(url, "_blank"); // popup was blocked — try a fresh open
+    };
     try {
       const res = await api.get<{ url: string }>(
         `/places/video?q=${encodeURIComponent(option.title)}&city=${encodeURIComponent(city ?? "")}`,
       );
-      if (tab) tab.location.href = res.url || fallback;
+      go(res.url || fallback);
     } catch {
-      if (tab) tab.location.href = fallback;
+      go(fallback);
     } finally {
       setVideoLoading(false);
     }

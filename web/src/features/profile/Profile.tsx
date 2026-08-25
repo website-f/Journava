@@ -356,7 +356,7 @@ export function Profile() {
       {(dirty || save.loading) && (
         <div
           className="glass-strong sticky z-20 mt-8 flex items-center gap-3 rounded-[var(--r-lg)] p-3 shadow-[var(--shadow-2)]"
-          style={{ bottom: "calc(var(--safe-bottom) + 4.75rem)" }}
+          style={{ bottom: "calc(var(--safe-bottom) + 6.75rem)" }}
         >
           <p className="min-w-0 flex-1 text-xs text-[var(--muted)]">Unsaved changes</p>
           <Button loading={save.loading} onClick={() => void save.run()}>

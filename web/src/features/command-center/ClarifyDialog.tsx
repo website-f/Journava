@@ -69,6 +69,9 @@ export function ClarifyDialog({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             className={cn(
               "fixed left-1/2 top-1/2 z-[86] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2",
+              // Cap to the viewport and scroll inside — otherwise the calendar
+              // popover pushes the centred dialog off the bottom of the screen.
+              "max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain",
               "rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-6 shadow-[var(--shadow-2)]",
             )}
           >
@@ -186,6 +189,7 @@ export function ClarifyDialog({
                       if (r.start) setDateIdx(null); // exact dates win over a chip
                     }}
                     placeholder="Choose on the calendar"
+                    inline
                   />
                 </div>
               )}

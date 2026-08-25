@@ -32,6 +32,7 @@ export function DateRangePicker({
   min,
   className,
   autoOpen = false,
+  inline = false,
 }: {
   value: DateRange;
   onChange: (next: DateRange) => void;
@@ -41,6 +42,9 @@ export function DateRangePicker({
   className?: string;
   /** Open the panel on mount — handy inside a "when?" prompt. */
   autoOpen?: boolean;
+  /** Render the calendar in-flow (not an absolute popover) so it can't overflow
+   *  a scrollable container like a dialog — the container scrolls to reveal it. */
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(autoOpen);
   const wrap = useRef<HTMLDivElement>(null);
@@ -90,7 +94,12 @@ export function DateRangePicker({
       </button>
 
       {open && (
-        <div className="absolute z-[90] mt-2 rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-3 shadow-[var(--shadow-2)]">
+        <div
+          className={cn(
+            "mt-2 rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-3 shadow-[var(--shadow-2)]",
+            inline ? "w-full" : "absolute z-[90]",
+          )}
+        >
           <Calendar mode={mode} value={value} onChange={onChange} min={min} />
           <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-2">
             <button
