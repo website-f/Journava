@@ -105,9 +105,30 @@ def _similar_cards(entries: list[dict[str, Any]], seen: set[str]) -> list[dict[s
     return out
 
 
+#: Iconic destinations to surface to travellers who haven't searched them yet —
+#: an eye-catching "for you" that's about DISCOVERY, not their own history.
+_POPULAR: list[tuple[str, str]] = [
+    ("Tokyo", "Neon nights, ancient temples and the world's best food"),
+    ("Bali", "Rice terraces, surf breaks and beach clubs"),
+    ("Istanbul", "Where Europe meets Asia — bazaars, mosques, Bosphorus"),
+    ("Dubai", "Desert safaris, sky-high views and gold souks"),
+    ("Paris", "Art, cafés and the Eiffel Tower at golden hour"),
+    ("Seoul", "K-pop energy, palaces and midnight street food"),
+    ("Bangkok", "Temples, floating markets and rooftop bars"),
+    ("Doha", "Souq Waqif, Museum of Islamic Art and desert dunes"),
+    ("Cappadocia", "Hot-air balloons over fairy-chimney valleys"),
+    ("Kyoto", "Bamboo groves, geisha districts and zen gardens"),
+    ("Santorini", "White-washed cliffs over a caldera sunset"),
+]
+
+
 async def build(user_id: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
-    recs: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    """A discovery-first 'for you': destinations the traveller has NOT searched
+    yet — similar-to-their-trips first, then iconic places — each with a photo
+    thumbnail so the home reads like a travel magazine, not a history log."""
+    import asyncio
+
+    from app.tools.photos import place_photo
 
     try:
         entries = await history.list_entries(limit=15)
@@ -115,37 +136,54 @@ async def build(user_id: str | None = None, limit: int = 5) -> list[dict[str, An
         logger.debug("recommendations: history read failed: %s", exc)
         entries = []
 
-    for entry in entries:
-        goal = (entry.get("goal") or "").strip()
-        if not goal:
-            continue
-        key = goal.lower()[:48]
-        if key in seen:
-            continue
+    searched = " ".join(
+        ((e.get("destination") or "") + " " + (e.get("goal") or "")).lower() for e in entries
+    )
+
+    cards: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(dest: str, subtitle: str, kind: str) -> None:
+        dest = dest.strip()
+        key = dest.lower()
+        if not dest or key in seen or key in searched:
+            return  # skip anything they've already searched
         seen.add(key)
-        recs.append(
+        cards.append(
             {
-                "id": entry.get("id"),
-                "kind": "recent",
-                "title": goal[:90],
-                "subtitle": "Pick up where you left off",
-                "scope": entry.get("scope") or "full_trip",
-                "goal": goal,
-                "icon": "history",
+                "kind": kind,
+                "title": dest,
+                "subtitle": subtitle,
+                "scope": "full_trip",
+                "goal": f"Plan a full trip to {dest}",
+                "destination": dest,
+                "icon": "explore",
             }
         )
-        if len(recs) >= limit:
-            break
 
-    # "Because you explored Japan, try Korea" — placed after the recents.
+    # 1) "You loved Japan → try Korea" — discovery grounded in their own trips.
     for card in _similar_cards(entries, seen):
-        if len(recs) >= limit:
-            break
-        recs.append({**card})
+        _add(card["title"].replace("Try ", ""), card["subtitle"], "similar")
 
-    for starter in _STARTERS:
-        if len(recs) >= limit:
+    # 2) Iconic places they haven't looked at yet.
+    for name, tagline in _POPULAR:
+        if len(cards) >= limit:
             break
-        recs.append({**starter, "goal": ""})
+        if tagline:
+            _add(name, tagline, "discover")
 
-    return recs[:limit]
+    cards = cards[:limit]
+
+    # Resolve a photo thumbnail for each, in parallel (keyless Wikipedia lead
+    # image; cached). A miss just leaves the card image-less.
+    images = await asyncio.gather(
+        *(place_photo(f"{c['destination']} travel landmark") for c in cards),
+        return_exceptions=True,
+    )
+    for card, img in zip(cards, images):
+        card["image"] = img if isinstance(img, str) else None
+
+    # Brand-new account with no history still gets the starters as a fallback.
+    if not cards:
+        return [{**s, "goal": s.get("goal", "")} for s in _STARTERS][:limit]
+    return cards

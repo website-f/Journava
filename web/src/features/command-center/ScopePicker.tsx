@@ -60,28 +60,68 @@ export function ScopePicker({
   const rest = scopes.filter((scope) => scope.slug !== HERO_SCOPE);
 
   return (
-    <div className="mx-auto w-full max-w-5xl">
-      <header className="pt-6 pb-8 text-center">
-        <h2 className="font-[family-name:var(--font-display)] text-3xl tracking-tight md:text-4xl">
-          Where to next?
-        </h2>
-        <p className="mx-auto mt-2 max-w-xl text-[var(--muted)]">
-          Travel, run by agents. Pick what you need — the agents that matter run,
-          and the ones that don&rsquo;t stay out of the way.
-        </p>
-      </header>
+    <div className="mx-auto w-full max-w-5xl space-y-8">
+      {/* 1) Ask one thing — a compact icon grid (icon + short name), the fastest
+            way in for a single question. */}
+      <section>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+          Ask one thing
+        </h3>
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-5 lg:grid-cols-6">
+          {rest.map((scope, index) => (
+            <ScopeTile key={scope.slug} scope={scope} index={index} onPick={onPick} />
+          ))}
+        </div>
+      </section>
 
-      {hero && <HeroCard scope={hero} onPick={onPick} />}
-
-      <h3 className="mt-10 mb-3 text-sm font-semibold text-[var(--muted)]">
-        Or ask one thing
-      </h3>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {rest.map((scope, index) => (
-          <ScopeCard key={scope.slug} scope={scope} index={index} onPick={onPick} />
-        ))}
-      </div>
+      {/* 2) The full trip — the hero, given its own designed section. */}
+      {hero && (
+        <section>
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+            Or plan the whole trip
+          </h3>
+          <HeroCard scope={hero} onPick={onPick} />
+        </section>
+      )}
     </div>
+  );
+}
+
+/** Compact icon tile: a rounded icon over a short label — a phone-native grid. */
+function ScopeTile({
+  scope,
+  index,
+  onPick,
+}: {
+  scope: Scope;
+  index: number;
+  onPick: (s: Scope) => void;
+}) {
+  const Icon = ICONS[scope.icon] ?? Compass;
+  return (
+    <motion.button
+      type="button"
+      onClick={() => onPick(scope)}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.03, duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+      title={scope.description}
+      className={cn(
+        "group flex flex-col items-center gap-1.5 rounded-[var(--r-md)] p-2 text-center",
+        "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+      )}
+    >
+      <span
+        className={cn(
+          "grid h-14 w-14 place-items-center rounded-[var(--r-lg)]",
+          "bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] text-[var(--brand-600)]",
+          "transition-all group-hover:bg-[var(--brand-500)] group-hover:text-white group-hover:shadow-[var(--shadow-1)]",
+        )}
+      >
+        <Icon className="h-6 w-6" />
+      </span>
+      <span className="text-[0.7rem] font-medium leading-tight text-[var(--text)]">{scope.label}</span>
+    </motion.button>
   );
 }
 
@@ -132,50 +172,3 @@ function HeroCard({ scope, onPick }: { scope: Scope; onPick: (s: Scope) => void 
   );
 }
 
-function ScopeCard({
-  scope,
-  index,
-  onPick,
-}: {
-  scope: Scope;
-  index: number;
-  onPick: (s: Scope) => void;
-}) {
-  const Icon = ICONS[scope.icon] ?? Compass;
-  return (
-    <motion.button
-      type="button"
-      onClick={() => onPick(scope)}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.04, duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
-      className={cn(
-        "surface-card group flex h-full flex-col p-4 text-left",
-        "transition-all duration-[var(--dur)] ease-[var(--ease)]",
-        "hover:border-[var(--brand-400)] hover:shadow-[var(--shadow-2)]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
-      )}
-    >
-      <div className="flex items-center gap-2.5">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[var(--r-sm)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] text-[var(--brand-500)]">
-          <Icon className="h-[18px] w-[18px]" />
-        </span>
-        <h4 className="min-w-0 text-sm font-semibold">{scope.label}</h4>
-      </div>
-
-      <p className="mt-2.5 flex-1 text-xs leading-relaxed text-[var(--muted)]">
-        {scope.description}
-      </p>
-
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-[0.65rem] text-[var(--muted)]">
-          <Badge>{scope.agent_count} agents</Badge>
-          {durationLabel(scope.estimate_seconds)}
-        </span>
-        <span className="text-xs font-medium text-[var(--brand-500)] transition-transform duration-[var(--dur)] group-hover:translate-x-0.5">
-          →
-        </span>
-      </div>
-    </motion.button>
-  );
-}

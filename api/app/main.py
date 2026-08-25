@@ -356,6 +356,29 @@ async def get_trip() -> dict[str, object]:
     return {"trip": trip}
 
 
+@app.get(f"{settings.api_prefix}/trip/ready", tags=["trip"])
+async def trip_ready() -> dict[str, object]:
+    """The most recent completed full-trip plan (from history) — so the home can
+    show a 'your plan is ready to view' banner after a background run finishes and
+    pings the traveller. Returns {ready: null} when there's nothing recent."""
+    from app.brain import history
+
+    try:
+        entries = await history.list_entries(limit=10)
+    except Exception:  # noqa: BLE001 — never break the home
+        return {"ready": None}
+    for e in entries:
+        if (e.get("scope") or "") == "full_trip" and (e.get("destination") or e.get("goal")):
+            return {
+                "ready": {
+                    "id": e.get("id"),
+                    "destination": e.get("destination"),
+                    "goal": e.get("goal"),
+                }
+            }
+    return {"ready": None}
+
+
 class TripSave(BaseModel):
     results: dict[str, object]
 
@@ -1201,38 +1224,11 @@ async def place_image(q: str, city: str = "") -> dict[str, object]:
     """A representative photo thumbnail for a place — keyless via Openverse
     (CC-licensed image search), falling back to the Wikipedia lead image. Cached
     24h so a card only ever resolves once."""
-    import httpx
-
-    from app.core.cache import cached
     from app.mapping import _resolve_city
+    from app.tools.photos import place_photo
 
     query = f"{q} {_resolve_city(city)}".strip()  # IATA (NRT) → city (Tokyo)
-    ckey = f"placeimg:{query.lower()}"
-
-    async def produce() -> str | None:
-        try:
-            async with httpx.AsyncClient(timeout=8.0, headers={"User-Agent": "Journava/1.0"}) as client:
-                r = await client.get(
-                    "https://api.openverse.org/v1/images/",
-                    params={"q": query, "page_size": 1, "mature": "false"},
-                )
-                if r.status_code == 200:
-                    results = (r.json() or {}).get("results") or []
-                    if results:
-                        return results[0].get("thumbnail") or results[0].get("url")
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("openverse image miss for %r: %s", query, exc)
-        try:  # Wikipedia lead image (famous landmarks have one)
-            from app.tools import imagery
-
-            img = await imagery.destination_image(q)
-            if img:
-                return img
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("wikipedia image miss for %r: %s", q, exc)
-        return None
-
-    return {"image": await cached(ckey, produce, ttl=settings.cache_ttl_long)}
+    return {"image": await place_photo(query)}
 
 
 # --------------------------------------------------------------------------- #

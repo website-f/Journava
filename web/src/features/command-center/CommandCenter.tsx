@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { usePlanStore } from "@/stores/planStore";
 import type { Scope } from "@/lib/types";
-import { PersonalHome } from "@/features/home/PersonalHome";
+import { PersonalHome, ForYou } from "@/features/home/PersonalHome";
 import { ScopePicker } from "./ScopePicker";
 import { ScopedConsole } from "./ScopedConsole";
 import { ScopedResults } from "./ScopedResults";
@@ -254,18 +254,14 @@ export function CommandCenter() {
 
       {phase === "pick" && (
         <div className="space-y-9">
-          <PersonalHome
+          <PersonalHome />
+          <ScopePicker scopes={scopes} onPick={pickScope} />
+          <ForYou
             onLaunch={(slug, goal) => {
               resetInputs(goal ?? "");
               setSearchParams({ scope: slug });
             }}
           />
-          <div className="mx-auto w-full max-w-5xl">
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Or choose a mode
-            </h2>
-            <ScopePicker scopes={scopes} onPick={pickScope} />
-          </div>
         </div>
       )}
 
