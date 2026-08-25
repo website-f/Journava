@@ -34,6 +34,7 @@ from app.itinerary import router as itinerary_router
 from app.monitor import router as monitor_router
 from app.policy import router as policy_router
 from app.runtime.router import router as runtime_router
+from app.collab import router as collab_router
 from app.saved import router as saved_router
 from app.intel import router as intel_router
 from app.content import router as content_router
@@ -179,6 +180,7 @@ app.include_router(negotiation_router)
 app.include_router(guardian_router)
 app.include_router(demo_router)
 app.include_router(saved_router)
+app.include_router(collab_router)
 app.include_router(intel_router)
 app.include_router(content_router)
 app.include_router(chaos_router)

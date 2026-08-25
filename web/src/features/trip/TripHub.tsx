@@ -12,7 +12,10 @@ import {
   ShoppingCart,
   Loader2,
   Trash2,
+  Share,
+  Users2,
 } from "@/components/ui/icons";
+import { ShareCollabDialog } from "@/features/trip/ShareCollab";
 import {
   Badge,
   Button,
@@ -100,6 +103,7 @@ export function TripHub() {
 
 const TRIP_TABS = [
   { value: "trips", label: "Trips", icon: Briefcase },
+  { value: "shared", label: "Shared with me", icon: Users2 },
   { value: "orders", label: "Orders", icon: ShoppingCart },
   { value: "payments", label: "Payments", icon: CreditCard },
   { value: "history", label: "History", icon: HistoryIcon },
@@ -131,6 +135,9 @@ function TripTabs({ onOpen }: { onOpen: (r: PlanResults) => void }) {
       <TabsContent value="trips">
         <TripsGallery onOpen={onOpen} />
       </TabsContent>
+      <TabsContent value="shared">
+        <SharedWithMe onOpen={onOpen} />
+      </TabsContent>
       <TabsContent value="orders">
         <BookingsHub mode="pending" />
       </TabsContent>
@@ -154,6 +161,7 @@ type SavedTrip = {
 function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
   const setResults = usePlanStore((s) => s.setResults);
   const [opening, setOpening] = useState<string | null>(null);
+  const [share, setShare] = useState<SavedTrip | null>(null);
   const qc = useQueryClient();
 
   // Only trips the traveller CONFIRMED ("Add to my trip") — not every search.
@@ -242,7 +250,99 @@ function TripsGallery({ onOpen }: { onOpen: (r: PlanResults) => void }) {
           savedId={t.id}
           onClick={() => void openTrip(t)}
           onDelete={() => void deleteTrip(t)}
+          onShare={() => setShare(t)}
         />
+      ))}
+      {share && (
+        <ShareCollabDialog
+          savedId={share.id}
+          title={share.destination || share.title || "Trip"}
+          onClose={() => setShare(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Trips other people have shared with the signed-in user (viewer or editor). */
+function SharedWithMe({ onOpen }: { onOpen: (r: PlanResults) => void }) {
+  const setResults = usePlanStore((s) => s.setResults);
+  const [opening, setOpening] = useState<string | null>(null);
+  const { data, isLoading } = useQuery({
+    queryKey: ["shared-with-me"],
+    queryFn: () =>
+      api.get<{ trips: Array<{ id: string; title: string; destination: string | null; role: string; owner: string; created_at: string | null }> }>(
+        "/trips/shared-with-me",
+      ).then((d) => d.trips),
+  });
+
+  const open = async (id: string) => {
+    setOpening(id);
+    try {
+      const full = await api.get<{ scope: string; results: PlanResults }>(`/saved/${id}`);
+      if (!full.results) {
+        toast.error("That trip couldn't be opened.");
+        return;
+      }
+      setResults(full.results, full.scope);
+      await api.post("/trip/save", { results: full.results }).catch(() => {});
+      onOpen(full.results);
+    } catch {
+      toast.error("Could not open that trip.");
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  const trips = data ?? [];
+  if (isLoading) {
+    return (
+      <div className="grid gap-4 py-2 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-40 w-full rounded-[var(--r-xl)]" />
+        ))}
+      </div>
+    );
+  }
+  if (trips.length === 0) {
+    return (
+      <div className="py-10">
+        <EmptyState
+          icon={<Users2 className="h-10 w-10" />}
+          title="Nothing shared with you yet"
+          description="When someone invites you to a trip, it appears here — open it to view or, if they made you an editor, help plan it."
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-4 py-2 sm:grid-cols-2 lg:grid-cols-3">
+      {trips.map((t) => (
+        <div key={t.id} className="surface-card relative overflow-hidden p-0">
+          <button
+            onClick={() => void open(t.id)}
+            disabled={opening === t.id}
+            className="block w-full text-left disabled:opacity-70"
+          >
+            <div className="relative flex h-28 items-end p-4" style={{ background: bandFor(t.destination || t.title || t.id) }}>
+              <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-black/5" />
+              <span className="relative truncate font-[family-name:var(--font-display)] text-xl font-bold text-white drop-shadow">
+                {t.destination || t.title || "Trip"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2 p-4">
+              <span className="truncate text-xs text-[var(--muted)]">Shared by {t.owner}</span>
+              <span className="shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-2 py-0.5 text-[0.65rem] font-semibold capitalize text-[var(--brand-600)]">
+                {t.role === "editor" ? "Can edit" : "Can view"}
+              </span>
+            </div>
+          </button>
+          {opening === t.id && (
+            <span className="absolute inset-0 grid place-items-center bg-[var(--surface)]/70">
+              <Loader2 className="h-5 w-5 animate-spin text-[var(--brand-500)]" />
+            </span>
+          )}
+        </div>
       ))}
     </div>
   );
@@ -274,6 +374,7 @@ function TripCard({
   savedId,
   onClick,
   onDelete,
+  onShare,
 }: {
   title: string;
   subtitle?: string;
@@ -287,6 +388,7 @@ function TripCard({
   savedId?: string;
   onClick: () => void;
   onDelete?: () => void;
+  onShare?: () => void;
 }) {
   const [thumb, setThumb] = useState<string | null>(thumbKey ? thumbCache.get(thumbKey) ?? null : null);
   useEffect(() => {
@@ -415,6 +517,25 @@ function TripCard({
         )}
       </div>
 
+      {onShare && savedId && (
+        <button
+          aria-label="Share trip"
+          data-fixed-size
+          onClick={(event) => {
+            event.stopPropagation();
+            onShare();
+          }}
+          className={cn(
+            "tap-target absolute right-12 top-3 grid h-8 w-8 place-items-center rounded-full",
+            "bg-black/40 text-white shadow backdrop-blur-sm",
+            "transition-[background-color,opacity] duration-[var(--dur)] hover:bg-[var(--brand-500)]",
+            "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100",
+            "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+          )}
+        >
+          <Share className="h-4 w-4" />
+        </button>
+      )}
       {onDelete && (
         <button
           aria-label="Remove trip"

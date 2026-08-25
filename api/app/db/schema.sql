@@ -532,6 +532,23 @@ CREATE TABLE IF NOT EXISTS saved_results (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS saved_results_user_idx ON saved_results (user_id, created_at DESC);
+
+-- Trip collaboration: the author of a saved trip invites people (by email) to
+-- view or edit it. A row links (once they exist) to a user; until then it waits
+-- on the email so an invite sent before signup still lands when they register.
+CREATE TABLE IF NOT EXISTS trip_collaborators (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    saved_id    UUID NOT NULL REFERENCES saved_results(id) ON DELETE CASCADE,
+    email       TEXT NOT NULL,                    -- invited email (lowercased)
+    user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+    role        TEXT NOT NULL DEFAULT 'viewer',   -- viewer | editor
+    status      TEXT NOT NULL DEFAULT 'invited',  -- invited | accepted
+    invited_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (saved_id, email)
+);
+CREATE INDEX IF NOT EXISTS trip_collab_user_idx ON trip_collaborators (user_id);
+CREATE INDEX IF NOT EXISTS trip_collab_saved_idx ON trip_collaborators (saved_id);
 ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'result';
 -- When a proactive trip notification (e.g. a countdown) was last sent, so the
 -- reminder loop pings each trip once instead of every cycle.
