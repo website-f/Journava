@@ -40,7 +40,10 @@ class Settings(BaseSettings):
         "groq/openai/gpt-oss-20b,openrouter/openai/gpt-oss-20b:free,mistral/mistral-small-latest"
     )
     llm_temperature: float = 0.3
-    llm_timeout_seconds: int = 60
+    # 60s was far too long for a free-tier chain firing ~16 concurrent calls: a
+    # throttled primary wasted a full minute before failover. 25s + the per-model
+    # 90s cooldown keeps the burst from repeatedly hammering a 429'd provider.
+    llm_timeout_seconds: int = 25
     #: Optional reliable/paid model used as a LAST resort for critical-path agents
     #: (chief/flight/itinerary/critic) when the free chain is exhausted, so the
     #: core plan never degrades to mock under free-tier throttling. Unset = off.

@@ -2,6 +2,10 @@ import {
   Activity,
   ArrowLeft,
   Bus,
+  Train,
+  Car,
+  Taxi,
+  Footprints,
   Building2,
   Calendar,
   CheckCircle2,
@@ -682,7 +686,7 @@ function Panel({ name, results }: { name: string; results: PlanResults }) {
     case "risk":
       return <RiskPanel results={results} />;
     case "transport":
-      return <DataPanel result={results.transport} title="Getting around" icon={Bus} collapsible />;
+      return <TransportPanel result={results.transport} />;
     case "visa":
       return <VisaPanel result={results.visa} />;
     case "insurance":
@@ -701,11 +705,7 @@ function Panel({ name, results }: { name: string; results: PlanResults }) {
         </div>
       );
     case "shopping":
-      return results.shopping?.options?.length ? (
-        <OptionsPanel result={results.shopping} title="Shopping" icon={ShoppingCart} city={city} />
-      ) : (
-        <DataPanel result={results.shopping} title="Shopping" icon={ShoppingCart} collapsible />
-      );
+      return <ShoppingPanel result={results.shopping} city={city} />;
     case "payment":
       return (
         <DataPanel result={results.payment} title="Money & payments" icon={CreditCard} collapsible />
@@ -1513,6 +1513,183 @@ function TabooBlock({ label, value }: { label: string; value: unknown }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/** Shopping — market cards WITH photos, plus the analysis (must-buy, where
+ *  locals go, bargaining) and a red "avoid / scams" block. */
+function ShoppingPanel({ result, city }: { result?: AgentPlanResult; city?: string }) {
+  if (!result) return null;
+  const options = result.options ?? [];
+  const data = (result.data ?? {}) as Record<string, unknown>;
+  const asList = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).map(String) : []);
+  const scams = [...asList(data.scam_warnings), ...asList(data.avoid)];
+  const mustBuy = asList(data.must_buy);
+  const bargaining = asList(data.bargaining_tips);
+  const whereLocals = typeof data.where_locals_go === "string" ? data.where_locals_go : "";
+  const dutyFree = typeof data.duty_free === "string" ? data.duty_free : "";
+  if (options.length === 0 && scams.length === 0 && mustBuy.length === 0) {
+    return <DataPanel result={result} title="Shopping" icon={ShoppingCart} collapsible />;
+  }
+  return (
+    <section>
+      <SectionHeader icon={<ShoppingCart className="h-[1.15rem] w-[1.15rem]" />} title="Shopping" count={options.length} hint={result.summary} />
+      {options.length > 0 && (
+        <Rail card="16.5rem" cols={2} colsLg={3} aria-label="Shopping">
+          {options.map((o) => (
+            <PlaceCard key={o.id} option={o} city={city} />
+          ))}
+        </Rail>
+      )}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {mustBuy.length > 0 && <InfoList label="What to buy" items={mustBuy} />}
+        {bargaining.length > 0 && <InfoList label="Bargaining" items={bargaining} />}
+        {whereLocals && (
+          <div className="min-w-0 rounded-[var(--r-md)] border border-[var(--border)] p-3 sm:col-span-2">
+            <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">Where locals go</p>
+            <p className="text-[0.8125rem]">{whereLocals}</p>
+          </div>
+        )}
+        {scams.length > 0 && (
+          <div className="sm:col-span-2">
+            <TabooBlock label="Avoid · common scams" value={scams} />
+          </div>
+        )}
+        {dutyFree && (
+          <div className="min-w-0 rounded-[var(--r-md)] border border-[var(--border)] p-3 sm:col-span-2">
+            <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">Duty-free</p>
+            <p className="text-[0.8125rem]">{dutyFree}</p>
+          </div>
+        )}
+      </div>
+      {(result.data?.sources as Array<{ title?: string; url: string }> | undefined)?.length ? (
+        <div className="mt-3">
+          <SourceLinks sources={result.data!.sources as Array<{ title?: string; url: string }>} label="Sources" />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function InfoList({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div className="min-w-0 rounded-[var(--r-md)] border border-[var(--border)] p-3">
+      <p className="mb-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">{label}</p>
+      <ul className="space-y-1">
+        {items.map((it, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-[0.8125rem] leading-snug">
+            <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-[var(--brand-500)]" />
+            {it}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const TRANSPORT_ICON: Record<string, IconType> = {
+  bus: Bus,
+  train: Train,
+  metro: Train,
+  tram: Train,
+  subway: Train,
+  domestic_flight: Plane,
+  flight: Plane,
+  taxi: Taxi,
+  rideshare: Car,
+  car: Car,
+  walk: Footprints,
+};
+
+function transportIcon(mode: string): IconType {
+  const key = mode.toLowerCase().split(/[ |/]/)[0];
+  return TRANSPORT_ICON[key] ?? Bus;
+}
+
+/** Transport — organized by leg (airport / inter-city / local) with a mode icon
+ *  and the pay/cost/duration facts laid out, instead of a raw text dump. */
+function TransportPanel({ result }: { result?: AgentPlanResult }) {
+  if (!result) return null;
+  const data = (result.data ?? {}) as Record<string, unknown>;
+  const airport = Array.isArray(data.airport_transfer) ? (data.airport_transfer as Record<string, unknown>[]) : [];
+  const inter = Array.isArray(data.inter_city) ? (data.inter_city as Record<string, unknown>[]) : [];
+  const local = (data.local_transit && typeof data.local_transit === "object" ? data.local_transit : null) as Record<string, unknown> | null;
+  const tips = typeof data.tips === "string" ? data.tips : "";
+  const links = (data.booking_links as Array<{ title?: string; url: string }> | undefined) ?? [];
+
+  const Row = ({ m, extras }: { m: Record<string, unknown>; extras: [string, unknown][] }) => {
+    const Icon = transportIcon(String(m.mode ?? ""));
+    return (
+      <div className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--border)] p-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] text-[var(--brand-500)]">
+          <Icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium capitalize">{String(m.mode ?? "transport").replace(/[_|]/g, " · ")}</p>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[0.7rem] text-[var(--muted)]">
+            {extras.map(([k, v]) =>
+              v == null || v === "" ? null : (
+                <span key={k}>
+                  <span className="uppercase tracking-wide">{k}</span> <span className="text-[var(--text)]">{String(v)}</span>
+                </span>
+              ),
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <section>
+      <SectionHeader icon={<Bus className="h-[1.15rem] w-[1.15rem]" />} title="Getting around" hint={result.summary} />
+      {tips && (
+        <div className="mb-3 flex items-start gap-2 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] p-3 text-[0.8125rem]">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--brand-500)]" />
+          {tips}
+        </div>
+      )}
+      <div className="space-y-4">
+        {airport.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">Airport transfer</p>
+            <div className="space-y-2">
+              {airport.map((m, i) => (
+                <Row key={i} m={m} extras={[["cost", m.cost_usd != null ? `$${m.cost_usd}` : ""], ["mins", m.duration_min], ["pay", m.how_to_pay]]} />
+              ))}
+            </div>
+          </div>
+        )}
+        {inter.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">Between cities</p>
+            <div className="space-y-2">
+              {inter.map((m, i) => (
+                <Row key={i} m={m} extras={[["route", m.route], ["pay", m.how_to_pay]]} />
+              ))}
+            </div>
+          </div>
+        )}
+        {local && (
+          <div>
+            <p className="mb-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">Getting around locally</p>
+            <Row
+              m={{ mode: local.primary ?? "local transit" }}
+              extras={[
+                ["day pass", local.day_pass_usd != null ? `$${local.day_pass_usd}` : ""],
+                ["pay", local.payment],
+                ["apps", Array.isArray(local.apps) ? (local.apps as unknown[]).join(", ") : local.apps],
+              ]}
+            />
+          </div>
+        )}
+      </div>
+      {links.length > 0 && (
+        <div className="mt-3">
+          <SourceLinks sources={links} label="Book tickets & passes" />
+        </div>
+      )}
+    </section>
   );
 }
 

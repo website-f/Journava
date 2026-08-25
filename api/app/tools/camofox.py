@@ -33,6 +33,7 @@ import asyncio
 import logging
 import random
 import re
+import time
 import urllib.parse
 import urllib.robotparser
 import uuid
@@ -92,7 +93,11 @@ _DDG_REDIRECT = re.compile(r"[?&]uddg=([^&]+)")
 # is our own concurrency, not per-host politeness. Three slots serialized those
 # 30 crawls into ~10 waves (minutes); 8 keeps the browser server comfortable
 # while cutting the crawl-bound phases roughly linearly.
-_MAX_CONCURRENT_PAGES = 8
+# A full-trip plan fires ~28 page fetches across 17 agents in one wave; 8 slots
+# forced ~3.5 serial crawl waves (the dominant slowdown). 16 roughly halves the
+# crawl-bound wall clock — the crawls hit many different hosts, so per-host
+# rate-limits aren't the constraint; the browser server's capacity is.
+_MAX_CONCURRENT_PAGES = 16
 _page_slots = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
 
 #: Human think-time between actions, in seconds (§8 item 3). Widened so pacing
@@ -308,7 +313,9 @@ async def search(
             template = _MACRO_URLS.get(engine, _MACRO_URLS[DEFAULT_SEARCH_MACRO])
             url = template.format(q=encoded)
             for attempt in range(2):
-                snapshot = await browse(url, respect_robots=respect_robots)
+                # Text research crawls don't need the deep poll/scroll a fare
+                # metasearch does — fewer attempts + scrolls cuts ~5-7s/page.
+                snapshot = await browse(url, respect_robots=respect_robots, attempts=2, scrolls=1)
                 if snapshot:
                     return snapshot
                 if attempt == 0:
@@ -515,18 +522,28 @@ async def read_many(
     return list(await asyncio.gather(*(one(target) for target in targets)))
 
 
+#: Memoize the health probe briefly — a full plan calls available() 12-15 times
+#: across agents; without this each is a fresh 5s-timeout round-trip.
+_AVAIL_CACHE: dict[str, Any] = {"until": 0.0, "value": False}
+
+
 async def available() -> bool:
-    """Check if the Camofox Browser service is reachable."""
+    """Check if the Camofox Browser service is reachable (memoized ~20s)."""
     from app.core import chaos
 
     if chaos.camofox_down():  # resilience testing — simulate a browser outage
         return False
+    now = time.monotonic()
+    if now < _AVAIL_CACHE["until"]:
+        return bool(_AVAIL_CACHE["value"])
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
             resp = await client.get(f"{_base()}/health")
-            return resp.status_code == 200
+            ok = resp.status_code == 200
     except Exception:  # noqa: BLE001
-        return False
+        ok = False
+    _AVAIL_CACHE.update(until=now + 20.0, value=ok)
+    return ok
 
 
 # --------------------------------------------------------------------------- #

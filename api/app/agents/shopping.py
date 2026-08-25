@@ -26,8 +26,10 @@ Respond in JSON:
  "must_buy": ["specific item locals/tourists recommend"],
  "where_locals_go": "the spots locals recommend over tourist traps",
  "duty_free": "airport duty-free info",
- "scam_warnings": ["warning"]}
-Prefer specific, named places from the research over generic advice."""
+ "bargaining_tips": ["how hard to haggle, opening counter-offer %, when it's rude"],
+ "avoid": ["what NOT to buy / tourist-trap streets / fake-goods risks"],
+ "scam_warnings": ["3–5 SPECIFIC common tourist scams HERE — e.g. rigged taxi meters, 'closed shop → my cousin's shop', fake antiques/saffron, gem/carpet cons, inflated 'tourist price' — each concrete and actionable"]}
+Prefer specific, named places from the research over generic advice. Be concrete about scams and rip-offs — travellers value 'what to avoid' as much as 'what to buy'."""
 
 USER = (
     "Destination: {destination}\n"
