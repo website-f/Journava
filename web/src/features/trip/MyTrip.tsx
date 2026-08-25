@@ -1582,6 +1582,18 @@ function ItinerarySection({
     void persist(next);
   };
 
+  // Move an item to a different day (e.g. a day-1 stop → day 3): flip its
+  // day_index and re-persist. This is the "swap which day" flexibility.
+  const totalDays = Math.max(1, ...items.map((i) => Number(i.day_index) || 1));
+  const moveToDay = (item: ItineraryItem, toDay: number) => {
+    if (toDay === item.day_index) return;
+    const next = items.map((i) =>
+      i.day_index === item.day_index && i.title === item.title ? { ...i, day_index: toDay } : i,
+    );
+    void persist(next);
+    toast.success(`Moved “${item.title}” to Day ${toDay}.`);
+  };
+
   const refine = async () => {
     setRefining(true);
     try {
@@ -1658,8 +1670,10 @@ function ItinerarySection({
               key={dayIndex}
               dayIndex={dayIndex}
               dayItems={dayItems}
+              totalDays={totalDays}
               onReorder={(from, to) => reorderDay(dayIndex, from, to)}
               onRemove={(title) => void removeItem(title)}
+              onMoveToDay={moveToDay}
               itemKey={itemKey}
               isDone={isDone}
               onToggle={toggle}
@@ -1673,16 +1687,20 @@ function ItinerarySection({
 function DayItinerary({
   dayIndex,
   dayItems,
+  totalDays,
   onReorder,
   onRemove,
+  onMoveToDay,
   itemKey,
   isDone,
   onToggle,
 }: {
   dayIndex: number;
   dayItems: ItineraryItem[];
+  totalDays: number;
   onReorder: (from: number, to: number) => void;
   onRemove: (title: string) => void;
+  onMoveToDay: (item: ItineraryItem, toDay: number) => void;
   itemKey: (item: ItineraryItem) => string;
   isDone: (key: string) => boolean;
   onToggle: (key: string) => void;
@@ -1757,6 +1775,22 @@ function DayItinerary({
 
             {/* Compact, horizontal move controls — keeps each row thin. */}
             <div className="flex shrink-0 items-center gap-0.5">
+              {/* Move this stop to a different day (e.g. Day 1 → Day 3). */}
+              {totalDays > 1 && (
+                <select
+                  aria-label="Move to day"
+                  title="Move to another day"
+                  value={item.day_index}
+                  onChange={(e) => onMoveToDay(item, Number(e.target.value))}
+                  className="mr-0.5 rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1 py-1 text-[0.65rem] text-[var(--muted)]"
+                >
+                  {Array.from({ length: totalDays }, (_, i) => i + 1).map((d) => (
+                    <option key={d} value={d}>
+                      D{d}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button
                 type="button"
                 aria-label="Move up"
