@@ -619,7 +619,17 @@ function AddToTripBar({ trip, onOpenTrip }: { trip: TripActions; onOpenTrip: () 
  *  the full plan (flights, stays, food, places, visa, insurance) — not just the
  *  itinerary/budget/weather cards. */
 export function TripExtraPanels({ results }: { results: PlanResults }) {
-  const panels = ["flights", "hotels", "activities", "dining", "visa", "insurance"];
+  const panels = [
+    "flights",
+    "hotels",
+    "activities",
+    "dining",
+    "shopping",
+    "transport",
+    "visa",
+    "insurance",
+    "practical",
+  ];
   return (
     <div className="space-y-10">
       {panels.map((panel) => (
@@ -691,7 +701,11 @@ function Panel({ name, results }: { name: string; results: PlanResults }) {
         </div>
       );
     case "shopping":
-      return <DataPanel result={results.shopping} title="Shopping" icon={ShoppingCart} collapsible />;
+      return results.shopping?.options?.length ? (
+        <OptionsPanel result={results.shopping} title="Shopping" icon={ShoppingCart} city={city} />
+      ) : (
+        <DataPanel result={results.shopping} title="Shopping" icon={ShoppingCart} collapsible />
+      );
     case "payment":
       return (
         <DataPanel result={results.payment} title="Money & payments" icon={CreditCard} collapsible />
@@ -1476,6 +1490,32 @@ function SocialPanel({ result }: { result?: AgentPlanResult }) {
  * arrive as closed rows showing their summary line, so the page is a scannable
  * list rather than a mile of prose the traveller has to scroll past.
  */
+/** Fields that are "don't do this" warnings — rendered in red, not as neutral info. */
+function isTaboo(key: string): boolean {
+  return /taboo|avoid|forbidden|restrict|do_?nt|don_?t|prohibited|warning|caution/i.test(key);
+}
+
+/** A taboo / "avoid" list, styled as a red warning so it reads as a rule, not a tip. */
+function TabooBlock({ label, value }: { label: string; value: unknown }) {
+  const items = Array.isArray(value) ? value.map((v) => String(v)) : [String(value)];
+  return (
+    <div className="min-w-0 rounded-[var(--r-md)] border border-[var(--danger)]/30 bg-[color-mix(in_srgb,var(--danger)_8%,transparent)] p-3">
+      <p className="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-[var(--danger)]">
+        <ShieldAlert className="h-3.5 w-3.5" weight="fill" />
+        {label}
+      </p>
+      <ul className="space-y-1">
+        {items.map((item, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-[0.8125rem] leading-snug text-[var(--danger)]">
+            <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-[var(--danger)]" />
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function DataPanel({
   result,
   title,
@@ -1525,14 +1565,18 @@ function DataPanel({
         </dl>
       )}
 
-      {complex.map(([key, value]) => (
-        <div key={key} className="min-w-0">
-          <p className="mb-1.5 text-[0.65rem] uppercase tracking-[0.1em] text-[var(--muted)]">
-            {key.replace(/_/g, " ")}
-          </p>
-          <FieldValue value={value} />
-        </div>
-      ))}
+      {complex.map(([key, value]) =>
+        isTaboo(key) ? (
+          <TabooBlock key={key} label={key.replace(/_/g, " ")} value={value} />
+        ) : (
+          <div key={key} className="min-w-0">
+            <p className="mb-1.5 text-[0.65rem] uppercase tracking-[0.1em] text-[var(--muted)]">
+              {key.replace(/_/g, " ")}
+            </p>
+            <FieldValue value={value} />
+          </div>
+        ),
+      )}
 
       {videos.length > 0 && <VideoCarousel videos={videos} />}
       {sources.length > 0 && <SourceLinks sources={sources} label="Sources" />}
