@@ -25,6 +25,8 @@ export {
   SealCheck as BadgeCheck,
   Robot as Bot,
   Brain,
+  Headset,
+  MapTrifold,
   Briefcase,
   Buildings as Building2,
   Bus,

@@ -42,6 +42,19 @@ export function PersonalHome() {
   const firstName = (user?.display_name ?? "traveller").split(" ")[0];
   const tripScope = activeTrip?._scope as ScopeMeta | undefined;
 
+  // Open the trip the traveller already sees on home — straight into its plan.
+  // The plan they're looking at may not have been "added" yet, so adopt it as
+  // the active trip first; then MyTrip (GET /trip) has something to show and we
+  // never bounce them back into the planner.
+  const openActiveTrip = async () => {
+    try {
+      if (activeTrip) await api.post("/trip/save", { results: activeTrip });
+    } catch {
+      /* still open — MyTrip falls back to whatever's active */
+    }
+    navigate("/trip?open=active");
+  };
+
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5">
       <PlanReadyBanner />
@@ -60,7 +73,7 @@ export function PersonalHome() {
 
       {activeTrip && (
         <button
-          onClick={() => navigate("/trip")}
+          onClick={() => void openActiveTrip()}
           className="pressable flex w-full items-center gap-4 overflow-hidden rounded-[var(--r-xl)] bg-[var(--brand-600)] p-4 text-left text-white shadow-[var(--shadow-2)]"
         >
           <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--r-md)] bg-white/12 ring-1 ring-inset ring-white/20">
@@ -118,14 +131,28 @@ function PlanReadyBanner() {
   if (!trip?.id) return null;
   const label = trip.destination || trip.goal || "your trip";
 
-  const view = () => {
+  const view = async () => {
     try {
       localStorage.setItem("journava:trip-viewed", trip.id ?? "");
     } catch {
       /* private mode */
     }
+    // Adopt this specific ready trip as the active trip (from its history
+    // snapshot), then open its plan directly — not the History list.
+    try {
+      if (trip.id) {
+        const full = await api.get<{ result_snapshot?: Record<string, unknown> }>(
+          `/history/searches/${trip.id}`,
+        );
+        if (full?.result_snapshot) {
+          await api.post("/trip/save", { results: full.result_snapshot });
+        }
+      }
+    } catch {
+      /* fall through — open whatever's active */
+    }
     setTrip(null);
-    navigate("/trip?tab=history");
+    navigate("/trip?open=active");
   };
 
   return (

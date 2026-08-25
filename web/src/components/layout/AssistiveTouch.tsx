@@ -1,5 +1,5 @@
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
-import { Sparkles } from "@/components/ui/icons";
+import { Headset } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 import { usePlanStore } from "@/stores/planStore";
 import { AssistantPanel } from "./AssistantPanel";
@@ -113,7 +113,7 @@ export function AssistiveTouch() {
             jobRunning && "ring-2 ring-[var(--brand-400)]",
           )}
         >
-          <Sparkles className="h-5 w-5" />
+          <Headset className="h-5 w-5" weight="fill" />
           {jobRunning && (
             <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[var(--brand-500)] ring-2 ring-[var(--bg)]" />
           )}

@@ -326,8 +326,8 @@ class FlightAgent(BaseAgent):
         returns inventory, so a full-trip search still yields bookable Atlas fares
         instead of an empty section.
         """
-        if depart == "flexible" or not candidates:
-            return []  # Atlas needs a concrete date; Camofox/Amadeus still run.
+        if not candidates:
+            return []  # No resolvable airport; Camofox/Amadeus still run.
 
         from app.core import chaos
 
@@ -337,7 +337,28 @@ class FlightAgent(BaseAgent):
 
         api_key = await _atlas_key()
         ret = str(request.end_date) if request.end_date else None
+
+        # A dateless ("flexible") trip still deserves bookable Atlas fares — the
+        # sandbox just needs a concrete date to price against. Search a sensible
+        # near-future default and flag the offers as indicative, instead of
+        # skipping Atlas entirely (which is what left a dateless Istanbul trip
+        # with zero bookable fares while a dated one returns them).
+        indicative = False
+        if depart == "flexible":
+            base = _date.today() + timedelta(days=_DEFAULT_LEAD_DAYS)
+            depart = base.isoformat()
+            span = int(request.duration_days) if (request.duration_days or 0) > 0 else 4
+            ret = (base + timedelta(days=span)).isoformat()
+            indicative = True
+            self.emit("working", f"No travel dates set — pricing Atlas for an indicative {depart}")
+
         gateways = list(candidates[:4])
+
+        def _flag(offers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            if indicative:
+                for offer in offers:
+                    offer.setdefault("raw", {})["indicative_date"] = depart
+            return offers
 
         async def _one(dest_code: str, dep: str, rt: str | None) -> tuple[str, list[dict[str, Any]]]:
             try:
@@ -375,18 +396,20 @@ class FlightAgent(BaseAgent):
         if merged:
             hits = sum(1 for _, offers in results if offers)
             self.emit("active", f"Atlas: {len(merged)} fare(s) across {hits} gateway(s)")
-            return merged
+            return _flag(merged)
 
         # 2) Nothing on the requested date — sandbox inventory is date-sparse, so
         #    shift the whole trip a day or two (as a flexible traveller would) and
-        #    retry the primary gateway. Each offer is flagged with its real date.
+        #    retry EVERY gateway (SAW as well as IST), stopping at the first hit.
+        #    Each offer is flagged with the real date it was found on.
         for dep, rt in _flex_trip_dates(depart, ret):
-            status, offers = await _one(gateways[0], dep, rt)
-            if offers:
-                for offer in offers:
-                    offer.setdefault("raw", {})["date_shifted_to"] = dep
-                self.emit("active", f"Atlas: none on {depart} — found {len(offers)} on {dep}")
-                return offers
+            for gw in gateways:
+                _status, offers = await _one(gw, dep, rt)
+                if offers:
+                    for offer in offers:
+                        offer.setdefault("raw", {})["date_shifted_to"] = dep
+                    self.emit("active", f"Atlas: none on {depart} — found {len(offers)} on {dep} via {gw}")
+                    return _flag(offers)
 
         self.emit("active", f"Atlas: no inventory to {request.destination or origin}")
         return []
@@ -1708,23 +1731,54 @@ def _commission_saved(options: list[Option]) -> dict[str, Any] | None:
     }
 
 
+#: Default lead time for a dateless trip — far enough out that fares/inventory
+#: exist, close enough to be a realistic "indicative" price.
+_DEFAULT_LEAD_DAYS = 21
+
+#: Airports that serve the same city/metro. When a destination resolves to any
+#: one of these, search them ALL — sandbox (and real) inventory is often only on
+#: the sister airport on a given date. "Istanbul" aliases to the single code IST,
+#: so without this a date where IST is empty never falls back to SAW.
+_METRO_AIRPORTS: dict[str, tuple[str, ...]] = {
+    "IST": ("IST", "SAW"), "SAW": ("IST", "SAW"),
+    "LHR": ("LHR", "LGW", "STN", "LTN"), "LGW": ("LHR", "LGW", "STN", "LTN"),
+    "STN": ("LHR", "LGW", "STN", "LTN"), "LTN": ("LHR", "LGW", "STN", "LTN"),
+    "NRT": ("NRT", "HND"), "HND": ("NRT", "HND"),
+    "KIX": ("KIX", "ITM"), "ITM": ("KIX", "ITM"),
+    "BKK": ("BKK", "DMK"), "DMK": ("BKK", "DMK"),
+    "JFK": ("JFK", "EWR", "LGA"), "EWR": ("JFK", "EWR", "LGA"), "LGA": ("JFK", "EWR", "LGA"),
+    "CDG": ("CDG", "ORY"), "ORY": ("CDG", "ORY"),
+    "PVG": ("PVG", "SHA"), "SHA": ("PVG", "SHA"),
+    "PEK": ("PEK", "PKX"), "PKX": ("PEK", "PKX"),
+    "CTU": ("CTU", "TFU"), "TFU": ("CTU", "TFU"),
+    "ICN": ("ICN", "GMP"), "GMP": ("ICN", "GMP"),
+    "TPE": ("TPE", "TSA"), "TSA": ("TPE", "TSA"),
+}
+
+
+def _expand_metro(code: str) -> tuple[str, ...]:
+    """A single IATA code → all airports serving that city (itself if solo)."""
+    return _METRO_AIRPORTS.get(code.upper(), (code.upper(),))
+
+
 def _dest_airports(value: str | None) -> tuple[str, ...]:
     """Resolve a destination into candidate IATA airports for Atlas/Amadeus.
 
-    A three-letter code or known city → one airport; a country/metro → its main
-    gateways in priority order; anything unrecognised → empty (Atlas is skipped).
+    A three-letter code or known city → its airport(s), fanned out to sister
+    airports of the same metro; a country/metro → its main gateways in priority
+    order; anything unrecognised → empty (Atlas is skipped).
     """
     if not value:
         return ()
     text = value.strip()
     if re.fullmatch(r"[A-Za-z]{3}", text):
-        return (text.upper(),)
+        return _expand_metro(text)
     candidates = _COUNTRY_CITY_AIRPORTS.get(text.lower())
     if candidates:
         return candidates
     code = _airport_code(text)
     if code and re.fullmatch(r"[A-Z]{3}", code):
-        return (code,)
+        return _expand_metro(code)
     return ()
 
 

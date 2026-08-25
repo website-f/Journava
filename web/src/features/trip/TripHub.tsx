@@ -57,15 +57,28 @@ function formatWhen(value: string | null): string {
  * bookings) sits in a second tab.
  */
 export function TripHub() {
+  const [params, setParams] = useSearchParams();
   const [openResults, setOpenResults] = useState<PlanResults | null>(null);
+  // `?open=active` deep-links straight into the active trip's detail (MyTrip
+  // reads GET /trip). Home's "active trip" card and the "plan ready" banner use
+  // it so a tap lands on the plan itself, not the gallery or History.
+  const openActive = params.get("open") === "active";
 
-  if (openResults) {
+  if (openActive || openResults) {
+    const back = () => {
+      setOpenResults(null);
+      if (openActive) {
+        const next = new URLSearchParams(params);
+        next.delete("open");
+        setParams(next, { replace: true });
+      }
+    };
     return (
       <Page width="xl">
         {/* A back affordance, not a breadcrumb: this is a push/pop navigation, so
             the control sits where a native back button would and nothing else
             competes with it at the top of the detail view. */}
-        <Button variant="ghost" size="sm" className="mb-3 -ml-2" onClick={() => setOpenResults(null)}>
+        <Button variant="ghost" size="sm" className="mb-3 -ml-2" onClick={back}>
           <ArrowLeft className="h-4 w-4" /> All trips
         </Button>
         <MyTrip />

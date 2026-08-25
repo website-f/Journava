@@ -5,6 +5,7 @@ import {
   Calendar,
   Cloud,
   Compass,
+  MapTrifold,
   Plane,
   Sparkles,
   Utensils,
@@ -126,7 +127,9 @@ function ScopeTile({
 }
 
 function HeroCard({ scope, onPick }: { scope: Scope; onPick: (s: Scope) => void }) {
-  const Icon = ICONS[scope.icon] ?? Sparkles;
+  // The whole-trip hero gets a fixed, distinctive mark (a folded travel map)
+  // rather than the generic sparkle every AI feature uses.
+  const Icon = MapTrifold;
   return (
     <motion.button
       type="button"

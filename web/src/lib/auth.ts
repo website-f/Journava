@@ -103,7 +103,11 @@ export async function fetchMe(): Promise<AuthUser | null> {
     credentials: "include",
   });
   if (!res.ok) return null;
-  return (await res.json()) as AuthUser;
+  const raw = (await res.json()) as AuthUser;
+  // `/auth/me` may omit `memberships` for a traveller with no orgs; normalise it
+  // so callers can rely on it being an array (a raw `.memberships[0]` used to
+  // crash the Account page on the session-restore path).
+  return { ...raw, memberships: raw.memberships ?? [] };
 }
 
 export async function logout(): Promise<void> {

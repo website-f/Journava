@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Sparkles, X, Plus, ArrowUp, CheckCircle2, Paperclip } from "@/components/ui/icons";
+import { Headset, X, Plus, ArrowUp, CheckCircle2, Paperclip } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { API_BASE, api } from "@/lib/api";
@@ -355,7 +355,7 @@ export function AssistantPanel({
         >
           <header className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-3">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-500)]">
-              <Sparkles className="h-4 w-4" />
+              <Headset className="h-4 w-4" weight="fill" />
             </span>
             <div className="min-w-0 flex-1">
               <Dialog.Title className="text-sm font-semibold">Journava AI</Dialog.Title>

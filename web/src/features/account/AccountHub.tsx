@@ -7,11 +7,10 @@ import {
   KeyRound,
   Zap,
   TrendingUp,
-  LogOut,
   ShieldCheck,
   type IconType,
 } from "@/components/ui/icons";
-import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from "@/components/ui";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui";
 import { Page } from "@/components/layout/Page";
 import { useAuth } from "@/providers/AuthProvider";
 import { Profile } from "@/features/profile/Profile";
@@ -99,12 +98,15 @@ export function AccountHub() {
 
 /** Who you're signed in as, what you're allowed to see, and the way out. */
 function IdentityCard() {
-  const { user, isPlatformAdmin, signOut } = useAuth();
+  const { user, isPlatformAdmin } = useAuth();
   if (!user) return null;
 
-  const name = user.display_name?.trim() || user.email.split("@")[0];
+  // Guard every field: on the session-restore path `/auth/me` can omit
+  // `memberships` (a plain traveller with no orgs), and a raw `.memberships[0]`
+  // / `.email.split()` there throws and trips the whole-page ErrorBoundary.
+  const name = user.display_name?.trim() || user.email?.split("@")[0] || "you";
   const initial = name.charAt(0).toUpperCase();
-  const org = user.memberships[0];
+  const org = user.memberships?.[0];
 
   return (
     <section className="mb-5 rounded-[var(--r-xl)] bg-[var(--brand-600)] p-4 text-white shadow-[var(--shadow-2)] sm:p-5">
@@ -116,24 +118,13 @@ function IdentityCard() {
           {initial}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h1 className="truncate font-[family-name:var(--font-display)] text-[1.2rem] font-bold leading-tight tracking-[-0.02em] sm:text-[1.35rem]">
-                {name}
-              </h1>
-              <p className="mt-0.5 truncate text-[0.8125rem] text-white/70">{user.email}</p>
-            </div>
-            {/* Icon-only on phones so the row never overflows; label returns ≥sm. */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void signOut()}
-              aria-label="Sign out"
-              className="shrink-0 text-white/80 hover:bg-white/10 hover:text-white"
-            >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Sign out</span>
-            </Button>
+          <div className="min-w-0">
+            {/* Sign-out lives only in the top bar (AppShell) — a second button
+                here was redundant. */}
+            <h1 className="truncate font-[family-name:var(--font-display)] text-[1.2rem] font-bold leading-tight tracking-[-0.02em] sm:text-[1.35rem]">
+              {name}
+            </h1>
+            <p className="mt-0.5 truncate text-[0.8125rem] text-white/70">{user.email}</p>
           </div>
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             {isPlatformAdmin && (

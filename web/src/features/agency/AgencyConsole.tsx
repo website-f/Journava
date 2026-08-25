@@ -117,11 +117,11 @@ export function AgencyConsole() {
         <h3 className="mb-2 text-lg font-semibold">Managed trips</h3>
         {loading ? (
           <p className="text-sm text-[var(--muted)]">Loading…</p>
-        ) : !data?.trips.length ? (
+        ) : !data?.trips?.length ? (
           <p className="text-sm text-[var(--muted)]">No trips yet — run a plan and it appears here.</p>
         ) : (
           <div className="space-y-2">
-            {data.trips.map((t) => (
+            {(data.trips ?? []).map((t) => (
               <div key={t.id} className="surface-card flex items-center gap-3 p-3">
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-500)]">
                   <Plane className="h-4 w-4" />
