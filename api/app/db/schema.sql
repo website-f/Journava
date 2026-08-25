@@ -240,7 +240,10 @@ CREATE INDEX IF NOT EXISTS search_history_created_idx
 -- The failover chain is determined by priority (lower = tried first).
 CREATE TABLE IF NOT EXISTS llm_providers (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name          TEXT NOT NULL UNIQUE,        -- "Groq", "OpenRouter", "DashScope", etc.
+    -- NOT unique on purpose: the pool holds MANY entries per provider so an
+    -- operator can pool several keys for the same provider/model (round-robin
+    -- across free-tier quotas). Rows are distinguished by id + masked_key.
+    name          TEXT NOT NULL,               -- "Groq", "OpenRouter", "DashScope", etc.
     litellm_model TEXT NOT NULL,               -- "groq/llama-3.3-70b-versatile"
     api_key       TEXT NOT NULL,               -- Fernet ciphertext (see core/vault.py)
     priority      INTEGER NOT NULL DEFAULT 0,  -- lower = tried first
@@ -268,6 +271,10 @@ ALTER TABLE llm_providers ADD COLUMN IF NOT EXISTS masked_key TEXT NOT NULL DEFA
 -- True once the key has been encrypted by the vault; false for legacy plaintext
 -- rows written before encryption existed, which are migrated on first read.
 ALTER TABLE llm_providers ADD COLUMN IF NOT EXISTS key_encrypted BOOLEAN NOT NULL DEFAULT FALSE;
+-- Drop the legacy UNIQUE(name): a second "Groq" (a different key, or the same
+-- model with a different key) used to violate it and surface as a spurious
+-- "database unavailable". The pool is meant to hold many entries per provider.
+ALTER TABLE llm_providers DROP CONSTRAINT IF EXISTS llm_providers_name_key;
 
 CREATE INDEX IF NOT EXISTS llm_providers_priority_idx
     ON llm_providers (enabled, priority, created_at);

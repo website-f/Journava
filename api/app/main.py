@@ -38,6 +38,7 @@ from app.saved import router as saved_router
 from app.intel import router as intel_router
 from app.content import router as content_router
 from app.chaos_lab import router as chaos_router
+from app.mapping import geo_router
 from app.mapping import router as mapping_router
 from app.pricewatch import router as pricewatch_router
 from app.expenses import router as expenses_router
@@ -182,6 +183,7 @@ app.include_router(intel_router)
 app.include_router(content_router)
 app.include_router(chaos_router)
 app.include_router(mapping_router)
+app.include_router(geo_router)
 app.include_router(pricewatch_router)
 app.include_router(expenses_router)
 
@@ -814,18 +816,24 @@ async def engine_create_provider(provider: ProviderCreate) -> dict[str, object]:
             detail=f"Key test failed ({verdict['status']}): {verdict['message']}",
         )
 
-    result = await llm_providers.create_provider(
-        name=provider.name,
-        litellm_model=provider.litellm_model,
-        api_key=provider.api_key,
-        priority=provider.priority,
-        enabled=provider.enabled,
-        max_rpm=provider.max_rpm,
-        max_rpd=provider.max_rpd,
-        max_tpd=provider.max_tpd,
-        status=verdict["status"],
-        status_detail=verdict["message"],
-    )
+    try:
+        result = await llm_providers.create_provider(
+            name=provider.name,
+            litellm_model=provider.litellm_model,
+            api_key=provider.api_key,
+            priority=provider.priority,
+            enabled=provider.enabled,
+            max_rpm=provider.max_rpm,
+            max_rpd=provider.max_rpd,
+            max_tpd=provider.max_tpd,
+            status=verdict["status"],
+            status_detail=verdict["message"],
+        )
+    except llm_providers.ProviderStoreError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider could not be saved: {exc}",
+        ) from exc
     if result is None:
         raise HTTPException(
             status_code=503,

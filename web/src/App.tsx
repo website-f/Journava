@@ -6,6 +6,7 @@ import { Skeleton, Spinner, ErrorBoundary } from "@/components/ui";
 import { CommandCenter } from "@/features/command-center/CommandCenter";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { useAuth } from "@/providers/AuthProvider";
+import { useGeolocateHome } from "@/hooks/useGeolocateHome";
 
 /*
  * Five destinations (bottom nav): Home (Command Center) · Research · Trip ·
@@ -66,6 +67,10 @@ export function App() {
   // keep the consumer PWA (they test traveller flows) but can still open
   // /console manually — ConsoleApp allows them through for support.
   const isB2B = isAgency;
+
+  // Auto-detect the traveller's location on first open (consumer PWA only) and
+  // pre-fill an empty home airport. One-shot, unobtrusive — see the hook.
+  useGeolocateHome(status === "authed" && !isB2B);
 
   // Public shared-plan link — renders for anyone, before the auth wall, so a
   // client with no account can open the interactive itinerary. Wrapped in a

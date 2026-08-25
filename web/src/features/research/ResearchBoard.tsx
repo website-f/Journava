@@ -4,9 +4,9 @@ import {
   Compass, Globe, ShieldAlert, Newspaper, ThumbsUp, ThumbsDown,
   TrendingUp, GitCompareArrows, BadgeCheck, ShieldQuestion, Save,
 } from "@/components/ui/icons";
-import { Button, EmptyState, OptionCard, Tabs, TabsList, TabsTrigger, TabsContent, Badge, Skeleton } from "@/components/ui";
+import { Button, EmptyState, Tabs, TabsList, TabsTrigger, TabsContent, Badge, Skeleton } from "@/components/ui";
 import { Page, PageHeader } from "@/components/layout/Page";
-import type { ItineraryItem, PlanOption } from "@/stores/planStore";
+import type { PlanOption } from "@/stores/planStore";
 import { useActiveTrip } from "@/hooks/useActiveTrip";
 import { recordOptionOutcome, recordOutcome } from "@/lib/outcomes";
 import { SavedResults } from "./SavedResults";
@@ -26,8 +26,10 @@ type Contradiction = {
 };
 
 /**
- * Research Board (spec §3.2). Tabbed destination intelligence — Flights, Hotels,
- * Itinerary, and Intelligence. Each pick shows reasoning ("Why this?").
+ * Research Board (spec §3.2). Destination *intelligence* only — the reasoning,
+ * social signal, halal verification and risk that agents surfaced for the active
+ * trip. Flights/hotels/itinerary live on the trip itself now, not here; this page
+ * is the "why", plus the operator's saved runs.
  */
 export function ResearchBoard() {
   return (
@@ -37,18 +39,18 @@ export function ResearchBoard() {
         title="Research"
         subtitle="Destination intelligence — not a chat blob. Every pick carries the reasoning behind it."
       />
-      <Tabs defaultValue="trip">
+      <Tabs defaultValue="intelligence">
         <StickyTabs>
           <TabsList>
-            <TabsTrigger value="trip">
-              <Compass className="h-4 w-4" /> This trip
+            <TabsTrigger value="intelligence">
+              <Compass className="h-4 w-4" /> Intelligence
             </TabsTrigger>
             <TabsTrigger value="saved">
               <Save className="h-4 w-4" /> Saved results
             </TabsTrigger>
           </TabsList>
         </StickyTabs>
-        <TabsContent value="trip">
+        <TabsContent value="intelligence">
           <TripResearch />
         </TabsContent>
         <TabsContent value="saved">
@@ -83,9 +85,6 @@ function TripResearch() {
   // trip, instead of an empty state the store happens not to know about.
   const { results, loading } = useActiveTrip();
 
-  const flights = results?.flight?.options ?? [];
-  const hotels = results?.hotel?.options ?? [];
-  const itinerary = results?.itinerary?.items ?? [];
   const weatherSummary = results?.weather_risk?.summary;
   const researchSummary = results?.research?.summary;
 
@@ -120,49 +119,7 @@ function TripResearch() {
   }
 
   return (
-    <Tabs defaultValue="flights">
-      {/* Offset by the outer strip's height so the two stack rather than overlap. */}
-      <StickyTabs offset={3.5}>
-        <TabsList>
-          <TabsTrigger value="flights">
-            Flights <Badge variant="brand">{flights.length}</Badge>
-          </TabsTrigger>
-          <TabsTrigger value="hotels">
-            Hotels <Badge variant="brand">{hotels.length}</Badge>
-          </TabsTrigger>
-          <TabsTrigger value="itinerary">
-            Itinerary <Badge variant="brand">{itinerary.length}</Badge>
-          </TabsTrigger>
-          <TabsTrigger value="intelligence">Intelligence</TabsTrigger>
-        </TabsList>
-      </StickyTabs>
-
-        <TabsContent value="flights">
-          {flights.length === 0 ? (
-            <p className="text-sm text-[var(--muted)] py-6">No flight options yet.</p>
-          ) : (
-            <PagedOptionCards items={flights} label="flight options" />
-          )}
-        </TabsContent>
-
-        <TabsContent value="hotels">
-          {hotels.length === 0 ? (
-            <p className="text-sm text-[var(--muted)] py-6">No hotel options yet.</p>
-          ) : (
-            <PagedOptionCards items={hotels} label="hotel options" />
-          )}
-        </TabsContent>
-
-        <TabsContent value="itinerary">
-          {itinerary.length === 0 ? (
-            <p className="text-sm text-[var(--muted)] py-6">No itinerary assembled yet.</p>
-          ) : (
-            <ItineraryTimeline items={itinerary} />
-          )}
-        </TabsContent>
-
-        <TabsContent value="intelligence">
-          <div className="space-y-4 py-4">
+    <div className="space-y-4 py-4">
             {/* Research Summary */}
             {researchSummary && (
               <div className="surface-card p-4">
@@ -275,9 +232,7 @@ function TripResearch() {
                 Kick off a trip from the Command Center — intelligence data arrives automatically.
               </p>
             )}
-          </div>
-        </TabsContent>
-      </Tabs>
+    </div>
   );
 }
 
@@ -327,31 +282,6 @@ function Pager({
         </div>
       )}
     </div>
-  );
-}
-
-function PagedOptionCards({
-  items,
-  label,
-  pageSize = 9,
-}: {
-  items: PlanOption[];
-  label: string;
-  pageSize?: number;
-}) {
-  const [page, setPage] = useState(0);
-  const pages = Math.max(1, Math.ceil(items.length / pageSize));
-  const p = Math.min(page, pages - 1);
-  const slice = items.slice(p * pageSize, p * pageSize + pageSize);
-  return (
-    <>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {slice.map((opt) => (
-          <OptionCard key={opt.id} option={opt} />
-        ))}
-      </div>
-      <Pager page={p} pages={pages} setPage={setPage} total={items.length} label={label} />
-    </>
   );
 }
 
@@ -629,52 +559,6 @@ function ResearchFeedback({ destination }: { destination: string }) {
           Thanks — written to the brain. Your next plan starts from this.
         </p>
       )}
-    </div>
-  );
-}
-
-// --------------------------------------------------------------------------- //
-// Itinerary timeline
-// --------------------------------------------------------------------------- //
-
-function ItineraryTimeline({ items }: { items: ItineraryItem[] }) {
-  // Group by day
-  const days = new Map<number, ItineraryItem[]>();
-  for (const item of items) {
-    const list = days.get(item.day_index) ?? [];
-    list.push(item);
-    days.set(item.day_index, list);
-  }
-
-  return (
-    <div className="space-y-6">
-      {Array.from(days.entries()).map(([dayIndex, dayItems]) => (
-        <section key={dayIndex}>
-          <h4 className="text-sm font-semibold mb-2 text-[var(--brand-500)]">
-            Day {dayIndex}
-          </h4>
-          <ol className="space-y-2 border-l-2 border-[var(--border)] pl-4 ml-2">
-            {dayItems.map((item, idx) => (
-              <li key={idx} className="relative">
-                <span className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-[var(--brand-400)]" />
-                <p className="text-sm font-medium">{item.title}</p>
-                <div className="flex items-center gap-2 text-xs text-[var(--muted)] mt-0.5">
-                  <Badge>{item.kind}</Badge>
-                  {item.starts_at && <span>{item.starts_at}{item.ends_at ? ` – ${item.ends_at}` : ""}</span>}
-                  {item.cost_amount != null && (
-                    <span className="text-[var(--brand-500)] font-medium">
-                      {item.cost_currency ?? "MYR"} {Number(item.cost_amount).toLocaleString()}
-                    </span>
-                  )}
-                </div>
-                {item.reasoning && (
-                  <p className="mt-0.5 text-xs text-[var(--muted)] italic">{item.reasoning}</p>
-                )}
-              </li>
-            ))}
-          </ol>
-        </section>
-      ))}
     </div>
   );
 }

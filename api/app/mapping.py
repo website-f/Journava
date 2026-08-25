@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app.agents.goal_parser import CITY_CODES
@@ -272,4 +272,154 @@ async def trip_map(body: MapRequest) -> dict[str, Any]:
         "located": len(located),
         "requested": len(body.items),
         "days": days,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Auto-detect the traveller's location on app open (reverse geocode).
+#
+# Keyless-first, mirroring the map: browser GPS → Nominatim reverse; if the
+# client sends no coordinates (permission denied), fall back to IP geolocation
+# off the forwarded client address. Purely a convenience to pre-fill the home
+# airport — never clobbers a value the traveller already chose (the frontend
+# gates on an empty field).
+# --------------------------------------------------------------------------- #
+
+geo_router = APIRouter(prefix=f"{settings.api_prefix}/geo", tags=["geo"])
+
+#: City name → IATA, so a detected city can pre-fill the home field with a real
+#: airport code the flight agent already understands ("Kuala Lumpur" → "KUL").
+_CITY_TO_IATA: dict[str, str] = {name.lower(): code for name, code in CITY_CODES.items()}
+
+#: Private/loopback ranges — IP geolocation is pointless for these (the demo runs
+#: on localhost), so we skip the lookup rather than return a bogus city.
+_PRIVATE_IP_PREFIXES = ("127.", "10.", "192.168.", "::1", "fc", "fd", "169.254.")
+
+
+def _iata_for_city(city: str) -> str | None:
+    return _CITY_TO_IATA.get((city or "").strip().lower())
+
+
+class ReverseGeoRequest(BaseModel):
+    lat: float | None = None
+    lon: float | None = None
+
+
+async def _reverse_nominatim(lat: float, lon: float) -> dict[str, Any] | None:
+    """(lat, lon) → {city, country, country_code} via keyless Nominatim reverse."""
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers={"User-Agent": _UA}) as client:
+            r = await client.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={
+                    "lat": lat,
+                    "lon": lon,
+                    "format": "jsonv2",
+                    "zoom": 10,  # city level
+                    "accept-language": "en",
+                },
+            )
+            r.raise_for_status()
+            data = r.json() or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.info("reverse geocode failed for %s,%s: %s", lat, lon, exc)
+        return None
+    addr = data.get("address") or {}
+    city = (
+        addr.get("city")
+        or addr.get("town")
+        or addr.get("village")
+        or addr.get("municipality")
+        or addr.get("county")
+        or addr.get("state")
+    )
+    country = addr.get("country")
+    if not city and not country:
+        return None
+    return {"city": city, "country": country, "country_code": (addr.get("country_code") or "").upper()}
+
+
+def _is_private_ip(ip: str) -> bool:
+    if not ip:
+        return True
+    if ip.startswith(_PRIVATE_IP_PREFIXES):
+        return True
+    # 172.16.0.0 – 172.31.255.255
+    if ip.startswith("172."):
+        try:
+            return 16 <= int(ip.split(".")[1]) <= 31
+        except (IndexError, ValueError):
+            return False
+    return False
+
+
+async def _ip_locate(ip: str) -> dict[str, Any] | None:
+    """Best-effort IP → city via keyless ip-api. Useless on localhost (skipped)."""
+    if _is_private_ip(ip):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            r = await client.get(
+                f"http://ip-api.com/json/{ip}",
+                params={"fields": "status,city,country,countryCode"},
+            )
+            r.raise_for_status()
+            data = r.json() or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.info("ip geolocation failed for %s: %s", ip, exc)
+        return None
+    if data.get("status") != "success":
+        return None
+    return {
+        "city": data.get("city"),
+        "country": data.get("country"),
+        "country_code": (data.get("countryCode") or "").upper(),
+    }
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+@geo_router.post("/reverse")
+async def geo_reverse(body: ReverseGeoRequest, request: Request) -> dict[str, Any]:
+    """Resolve the caller's location to a city (+ airport code when known)."""
+    result: dict[str, Any] | None = None
+    source: str | None = None
+
+    if body.lat is not None and body.lon is not None:
+        lat, lon = body.lat, body.lon
+
+        async def produce() -> dict[str, Any] | None:
+            return await _reverse_nominatim(lat, lon)
+
+        result = await cache.cached(
+            f"revgeo:{lat:.3f},{lon:.3f}", produce, ttl=settings.cache_ttl_long
+        )
+        source = "gps" if result else None
+
+    if not result:
+        result = await _ip_locate(_client_ip(request))
+        source = "ip" if result else source
+
+    if not result or not (result.get("city") or result.get("country")):
+        return {"detected": False}
+
+    city = result.get("city") or ""
+    country = result.get("country") or ""
+    iata = _iata_for_city(city) if city else None
+    return {
+        "detected": True,
+        "source": source,
+        "city": city,
+        "country": country,
+        "country_code": result.get("country_code"),
+        "iata": iata,
+        "label": ", ".join(p for p in (city, country) if p),
+        #: What to pre-fill the home-airport field with: a real IATA when we can
+        #: map the city, else the city name (the planner resolves either).
+        "home_value": iata or city,
     }

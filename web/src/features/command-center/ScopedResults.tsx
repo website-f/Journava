@@ -18,8 +18,10 @@ import {
   Leaf,
   MapPin,
   Plane,
+  Plus,
   RotateCcw,
   Save,
+  Trash2,
   ShieldAlert,
   ShieldCheck,
   ShoppingCart,
@@ -45,7 +47,8 @@ import { FlightResults } from "@/features/flights/FlightResults";
 import { PlaceCard } from "./PlaceCard";
 import { PlacesSection } from "./PlacesSection";
 import { VideoCarousel } from "@/components/ui/VideoCarousel";
-import type { AgentPlanResult, PlanOption, PlanResults, Scope, VideoReview } from "@/lib/types";
+import type { AgentPlanResult, ItineraryItem, PlanOption, PlanResults, Scope, VideoReview } from "@/lib/types";
+import { usePlanStore } from "@/stores/planStore";
 
 /** Per-section label + a recognizable icon, for the jump-bar and headers. */
 const SECTION_META: Record<string, { label: string; Icon: IconType }> = {
@@ -886,14 +889,135 @@ function OptionsPanel({
   );
 }
 
-function ItineraryPanel({ result }: { result?: AgentPlanResult }) {
-  const items = result?.items ?? [];
-  if (items.length === 0) return null;
+/** A draft stop carries a stable client id so edits/removes survive re-grouping
+ *  by day without a persisted primary key. */
+type DraftItem = ItineraryItem & { _id: string };
 
-  const days = new Map<number, typeof items>();
+let _draftSeq = 0;
+function _draftId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `it-${_draftSeq++}`;
+  }
+}
+
+function _seed(items: ItineraryItem[]): DraftItem[] {
+  return items.map((it) => ({ ...it, _id: _draftId() }));
+}
+
+/** Strip the client-only id before the draft goes back into the plan store. */
+function _bare(items: DraftItem[]): ItineraryItem[] {
+  return items.map((it) => {
+    const copy: Partial<DraftItem> = { ...it };
+    delete copy._id;
+    return copy as ItineraryItem;
+  });
+}
+
+/**
+ * Interactive itinerary (results view).
+ *
+ * The plan the agents return is a starting point, not a verdict — so this panel
+ * is fully editable *in memory*: retime a stop, re-cost it, move it to another
+ * day (Day 1 → Day 3), add a stop, or drop one. Edits stay on this screen (the
+ * results view is transient); "Add to my trip" persists the plan as it stands.
+ * A live spend total updates as costs change, so re-budgeting is visible.
+ */
+function ItineraryPanel({ result }: { result?: AgentPlanResult }) {
+  const source = result?.items ?? [];
+  const [items, setItems] = useState<DraftItem[]>(() => _seed(source));
+  const [edited, setEdited] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Partial<ItineraryItem>>({});
+
+  // The pristine plan (for "Reset to plan") and the last array we wrote back to
+  // the store (so we can ignore the echo of our own write and not clobber the
+  // draft). `hadItems` keeps the panel on screen after the last stop is removed,
+  // so an emptied day can still be rebuilt.
+  const originalRef = useRef<ItineraryItem[]>(source);
+  const syncedRef = useRef<ItineraryItem[] | null>(null);
+  const hadItems = useRef(source.length > 0);
+
+  // Re-seed only when a genuinely new plan arrives — never on the re-render our
+  // own write-back triggers (same array reference), which would wipe edits.
+  useEffect(() => {
+    const incoming = result?.items ?? [];
+    if (syncedRef.current && incoming === syncedRef.current) return;
+    originalRef.current = incoming;
+    hadItems.current = incoming.length > 0;
+    setItems(_seed(incoming));
+    setEdited(false);
+    setEditId(null);
+  }, [result]);
+
+  const currency = source.find((i) => i.cost_currency)?.cost_currency ?? "MYR";
+  const totalDays = Math.max(1, ...items.map((i) => Number(i.day_index) || 1));
+  const spend = items.reduce((sum, i) => sum + (Number(i.cost_amount) || 0), 0);
+
+  // Single write path: update local draft AND publish to the plan store, so the
+  // live budget, "Add to my trip", and Save all see the same edited itinerary.
+  const commit = (next: DraftItem[], markEdited = true) => {
+    setItems(next);
+    if (markEdited) setEdited(true);
+    const bare = _bare(next);
+    syncedRef.current = bare;
+    const store = usePlanStore.getState();
+    const cur = store.results;
+    if (cur?.itinerary) {
+      // A fresh top-level object so zustand notifies subscribers. PlanResults is
+      // an (unsound-by-design) intersection — its `_scope` clashes with the
+      // Record index signature when rebuilt via a literal — so the double cast
+      // is the honest way to say "this really is a PlanResults".
+      const nextResults = { ...cur, itinerary: { ...cur.itinerary, items: bare } };
+      store.setResults(nextResults as unknown as PlanResults);
+    }
+  };
+
+  const patch = (id: string, p: Partial<ItineraryItem>) =>
+    commit(items.map((i) => (i._id === id ? { ...i, ...p } : i)));
+  const removeItem = (id: string) => commit(items.filter((i) => i._id !== id));
+  const addToDay = (day: number) =>
+    commit([
+      ...items,
+      {
+        _id: _draftId(),
+        day_index: day,
+        kind: "activity",
+        title: "New stop",
+        starts_at: null,
+        ends_at: null,
+        reasoning: null,
+        cost_amount: null,
+        cost_currency: currency,
+        details: {},
+      },
+    ]);
+  const reset = () => {
+    setEditId(null);
+    commit(_seed(originalRef.current), false);
+    setEdited(false);
+  };
+
+  const beginEdit = (item: DraftItem) => {
+    setEditId(item._id);
+    setDraft({
+      title: item.title,
+      starts_at: item.starts_at,
+      ends_at: item.ends_at,
+      cost_amount: item.cost_amount,
+    });
+  };
+
+  if (!result || (!hadItems.current && items.length === 0)) return null;
+
+  const days = new Map<number, DraftItem[]>();
   for (const item of items) {
     days.set(item.day_index, [...(days.get(item.day_index) ?? []), item]);
   }
+  const dayList = [...days.entries()].sort(([a], [b]) => a - b);
+  // When every stop is removed the map is empty — still let the user add one.
+  if (dayList.length === 0) dayList.push([1, []]);
 
   return (
     <section>
@@ -902,62 +1026,191 @@ function ItineraryPanel({ result }: { result?: AgentPlanResult }) {
         title="Itinerary"
         count={items.length}
         hint={result?.summary}
+        action={
+          edited ? (
+            <button
+              type="button"
+              onClick={reset}
+              className="inline-flex items-center gap-1 rounded-[var(--r-pill)] border border-[var(--border)] px-2.5 py-1 text-[0.7rem] font-medium text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            >
+              <RotateCcw className="h-3 w-3" /> Reset to plan
+            </button>
+          ) : undefined
+        }
       />
+      <p className="mb-3 text-[0.7rem] leading-relaxed text-[var(--muted)]">
+        Tap a stop to set its time &amp; cost, use the day picker to move it (e.g. Day 1 → Day 3),
+        or add and remove stops. Changes stay on this screen until you add the trip.
+      </p>
       <div className="space-y-5">
-        {[...days.entries()]
-          .sort(([a], [b]) => a - b)
-          .map(([day, dayItems]) => (
-            <div key={day} className="surface-card overflow-hidden">
-              <div className="flex items-center gap-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--brand-400)_7%,transparent)] px-4 py-2.5">
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-[var(--brand-500)] text-[0.65rem] font-bold text-white tabular-nums">
-                  {day}
-                </span>
-                <h4 className="text-[0.8125rem] font-semibold">Day {day}</h4>
-                <span className="ml-auto text-[0.7rem] text-[var(--muted)] tabular-nums">
-                  {dayItems.length} {dayItems.length === 1 ? "stop" : "stops"}
-                </span>
-              </div>
-              <ol className="space-y-4 px-4 py-4">
-                {dayItems.map((item, index) => (
-                  <li key={index} className="relative pl-5">
-                    {/* The connector stops short on the last row so the timeline
-                        ends at the final stop instead of trailing into padding. */}
-                    {index < dayItems.length - 1 && (
-                      <span
-                        aria-hidden
-                        className="absolute left-[0.1875rem] top-3 bottom-[-1rem] w-px bg-[var(--border)]"
-                      />
-                    )}
+        {dayList.map(([day, dayItems]) => (
+          <div key={day} className="surface-card overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--brand-400)_7%,transparent)] px-4 py-2.5">
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-[var(--brand-500)] text-[0.65rem] font-bold text-white tabular-nums">
+                {day}
+              </span>
+              <h4 className="text-[0.8125rem] font-semibold">Day {day}</h4>
+              <span className="ml-auto text-[0.7rem] text-[var(--muted)] tabular-nums">
+                {dayItems.length} {dayItems.length === 1 ? "stop" : "stops"}
+              </span>
+            </div>
+            <ol className="space-y-4 px-4 py-4">
+              {dayItems.map((item, index) => (
+                <li key={item._id} className="relative pl-5">
+                  {index < dayItems.length - 1 && (
                     <span
                       aria-hidden
-                      className="absolute left-0 top-1.5 h-[0.4375rem] w-[0.4375rem] rounded-full bg-[var(--brand-400)] ring-2 ring-[var(--surface)]"
+                      className="absolute left-[0.1875rem] top-3 bottom-[-1rem] w-px bg-[var(--border)]"
                     />
-                    <p className="text-[0.875rem] font-medium leading-snug">{item.title}</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                      <Badge>{item.kind}</Badge>
-                      {item.starts_at && (
-                        <span className="tabular-nums">
-                          {item.starts_at}
-                          {item.ends_at ? ` – ${item.ends_at}` : ""}
-                        </span>
+                  )}
+                  <span
+                    aria-hidden
+                    className="absolute left-0 top-1.5 h-[0.4375rem] w-[0.4375rem] rounded-full bg-[var(--brand-400)] ring-2 ring-[var(--surface)]"
+                  />
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      {editId === item._id ? (
+                        <input
+                          type="text"
+                          aria-label="Stop name"
+                          value={draft.title ?? ""}
+                          onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+                          className="w-full rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[0.875rem] font-medium"
+                        />
+                      ) : (
+                        <p className="text-[0.875rem] font-medium leading-snug">{item.title}</p>
                       )}
-                      {item.cost_amount != null && (
-                        <span className="font-semibold text-[var(--brand-600)]">
-                          {item.cost_currency ?? "MYR"}{" "}
-                          {Number(item.cost_amount).toLocaleString()}
-                        </span>
+
+                      {editId === item._id ? (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          <input
+                            type="time"
+                            aria-label="Start time"
+                            value={draft.starts_at ?? ""}
+                            onChange={(e) => setDraft((d) => ({ ...d, starts_at: e.target.value || null }))}
+                            className="rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.7rem]"
+                          />
+                          <span className="text-[0.65rem] text-[var(--muted)]">–</span>
+                          <input
+                            type="time"
+                            aria-label="End time"
+                            value={draft.ends_at ?? ""}
+                            onChange={(e) => setDraft((d) => ({ ...d, ends_at: e.target.value || null }))}
+                            className="rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.7rem]"
+                          />
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            aria-label="Cost"
+                            placeholder="cost"
+                            value={draft.cost_amount == null ? "" : String(draft.cost_amount)}
+                            onChange={(e) =>
+                              setDraft((d) => ({
+                                ...d,
+                                cost_amount: e.target.value === "" ? null : Number(e.target.value),
+                              }))
+                            }
+                            className="w-16 rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.7rem]"
+                          />
+                          <span className="text-[0.65rem] text-[var(--muted)]">{currency}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              patch(item._id, draft);
+                              setEditId(null);
+                            }}
+                            className="rounded-[var(--r-pill)] bg-[var(--brand-500)] px-2.5 py-0.5 text-[0.65rem] font-semibold text-white"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditId(null)}
+                            className="rounded-[var(--r-pill)] px-2 py-0.5 text-[0.65rem] font-medium text-[var(--muted)] hover:text-[var(--fg)]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => beginEdit(item)}
+                          title="Edit name, time & cost"
+                          className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)] hover:text-[var(--brand-500)]"
+                        >
+                          <Badge>{item.kind}</Badge>
+                          {item.starts_at && (
+                            <span className="tabular-nums">
+                              {item.starts_at}
+                              {item.ends_at ? ` – ${item.ends_at}` : ""}
+                            </span>
+                          )}
+                          {item.cost_amount != null && (
+                            <span className="font-semibold text-[var(--brand-600)]">
+                              <Money amount={item.cost_amount} currency={item.cost_currency ?? currency} />
+                            </span>
+                          )}
+                          <span className="text-[0.6rem] opacity-60">✎</span>
+                        </button>
+                      )}
+
+                      {item.reasoning && editId !== item._id && (
+                        <p className="mt-1 text-xs italic leading-relaxed text-[var(--muted)]">
+                          {item.reasoning}
+                        </p>
                       )}
                     </div>
-                    {item.reasoning && (
-                      <p className="mt-1 text-xs italic leading-relaxed text-[var(--muted)]">
-                        {item.reasoning}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ))}
+
+                    {/* Move-across-days + remove — thin, right-aligned controls. */}
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      {totalDays > 1 && (
+                        <select
+                          aria-label="Move to day"
+                          title="Move to another day"
+                          value={item.day_index}
+                          onChange={(e) => patch(item._id, { day_index: Number(e.target.value) })}
+                          className="rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-1 py-1 text-[0.65rem] text-[var(--muted)]"
+                        >
+                          {Array.from({ length: totalDays }, (_, i) => i + 1).map((d) => (
+                            <option key={d} value={d}>
+                              D{d}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${item.title}`}
+                        title="Remove stop"
+                        onClick={() => removeItem(item._id)}
+                        className="grid h-7 w-7 place-items-center rounded-[var(--r-sm)] text-[var(--muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--danger)_12%,transparent)] hover:text-[var(--danger)]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => addToDay(day)}
+                  className="flex items-center gap-1.5 text-[0.7rem] font-medium text-[var(--brand-600)] hover:text-[var(--brand-500)]"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add stop to Day {day}
+                </button>
+              </li>
+            </ol>
+          </div>
+        ))}
+      </div>
+
+      {/* Live spend total — re-budgeting is visible as costs change. */}
+      <div className="mt-4 flex items-center justify-between rounded-[var(--r-lg)] border border-[var(--border)] px-4 py-3">
+        <span className="text-sm font-medium text-[var(--muted)]">Planned spend</span>
+        <span className="text-base font-semibold tabular-nums text-[var(--brand-600)]">
+          <Money amount={spend} currency={currency} />
+        </span>
       </div>
     </section>
   );

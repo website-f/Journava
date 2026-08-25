@@ -36,6 +36,15 @@ ProviderStatus = Literal[
     "untested", "healthy", "rate_limited", "limit_reached", "invalid", "disabled"
 ]
 
+
+class ProviderStoreError(RuntimeError):
+    """A provider write failed for a reason worth showing the operator.
+
+    Distinct from "no pool" (the database is genuinely down): this carries the
+    real DB message so the API reports *why* a save failed instead of blaming an
+    unavailable database.
+    """
+
 #: How long a 429 sidelines a provider before it is retried.
 RATE_LIMIT_COOLDOWN = timedelta(seconds=90)
 
@@ -276,8 +285,11 @@ async def create_provider(
             )
         return _public(dict(row)) if row else None
     except Exception as exc:  # noqa: BLE001
+        # The pool exists (checked above), so this is a real write failure — a
+        # bad column, a constraint, etc. Surface the reason rather than letting
+        # the caller assume the database is down.
         logger.error("create_provider failed: %s", exc)
-        return None
+        raise ProviderStoreError(str(exc)) from exc
 
 
 async def update_provider(provider_id: str, **fields: Any) -> dict[str, Any] | None:
