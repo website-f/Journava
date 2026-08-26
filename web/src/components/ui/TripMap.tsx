@@ -60,6 +60,7 @@ function markerEl(index: number, color: string): HTMLElement {
 }
 
 const short = (t: string) => t.split(" ").slice(0, 2).join(" ");
+const dist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
 
 interface TripMapProps {
   className?: string;
@@ -199,7 +200,11 @@ export function TripMap({ className }: TripMapProps) {
           paint: { "line-color": "#0F766E", "line-width": 3, "line-dasharray": [1, 1.6] },
         });
       }
-      if (day.places.length) map.fitBounds(bounds, { padding: 56, maxZoom: 15, duration: 600 });
+      if (day.places.length === 1) {
+        map.easeTo({ center: [day.places[0].lng, day.places[0].lat], zoom: 14, duration: 400 });
+      } else if (day.places.length > 1) {
+        map.fitBounds(bounds, { padding: 56, maxZoom: 15, duration: 400, essential: true });
+      }
     };
 
     if (map.isStyleLoaded()) draw();
@@ -254,15 +259,31 @@ export function TripMap({ className }: TripMapProps) {
           </div>
         )}
         <div ref={mapRef} className="h-[300px] w-full sm:h-[380px] lg:h-[440px]" />
-        {day && day.legs.length > 0 && (
-          <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-[var(--border)] px-3 py-2 text-[0.7rem] text-[var(--muted)]">
-            {day.legs.map((lg, i) => (
-              <span key={i} className="inline-flex items-center gap-1">
-                {lg.mode === "walk" ? <Footprints className="h-3 w-3" /> : <Bus className="h-3 w-3" />}
-                {short(day.places[i]?.title ?? "")} → {short(day.places[i + 1]?.title ?? "")}
-                <span className="font-medium text-[var(--text)]">~{lg.minutes} min {lg.mode}</span>
-              </span>
-            ))}
+        {day && day.places.length > 0 && (
+          <div className="border-t border-[var(--border)] px-3 py-2">
+            {/* Day totals — stops, total travel time and distance across the route */}
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.7rem]">
+              <span className="font-semibold text-[var(--text)]">Day {day.day} route</span>
+              <span className="text-[var(--muted)]">{day.places.length} stop{day.places.length === 1 ? "" : "s"}</span>
+              {day.legs.length > 0 && (
+                <>
+                  <span className="text-[var(--muted)]">~{day.legs.reduce((s, l) => s + l.minutes, 0)} min travel</span>
+                  <span className="text-[var(--muted)]">{dist(day.legs.reduce((s, l) => s + l.meters, 0))} total</span>
+                </>
+              )}
+            </div>
+            {/* Per-leg breakdown — mode, time and distance between each stop */}
+            {day.legs.length > 0 && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.7rem] text-[var(--muted)]">
+                {day.legs.map((lg, i) => (
+                  <span key={i} className="inline-flex items-center gap-1">
+                    {lg.mode === "walk" ? <Footprints className="h-3 w-3" /> : <Bus className="h-3 w-3" />}
+                    {short(day.places[i]?.title ?? "")} → {short(day.places[i + 1]?.title ?? "")}
+                    <span className="font-medium text-[var(--text)]">~{lg.minutes} min · {dist(lg.meters)} {lg.mode}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
