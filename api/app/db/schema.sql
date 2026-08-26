@@ -448,6 +448,22 @@ CREATE TABLE IF NOT EXISTS boardroom_meetings (
 );
 CREATE INDEX IF NOT EXISTS boardroom_meetings_org_idx ON boardroom_meetings (org_id, created_at DESC);
 
+-- Discovery: a traveller snaps a photo, the AI camera identifies it (vision +
+-- Camofox references), and they can save it as a "travel note" on their
+-- Discovery page.
+CREATE TABLE IF NOT EXISTS discoveries (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    image_url   TEXT,                          -- compact data URL of the snapped photo
+    title       TEXT,
+    category    TEXT,
+    description TEXT,
+    facts       JSONB NOT NULL DEFAULT '[]',
+    links       JSONB NOT NULL DEFAULT '[]',   -- [{type, title, url}]
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS discoveries_user_idx ON discoveries (user_id, created_at DESC);
+
 -- A published, brandable public page per business (the "direct hotel site"):
 -- logo + about, reachable at /h/{slug} with no account. Mirrors package_pages.
 CREATE TABLE IF NOT EXISTS org_profiles (

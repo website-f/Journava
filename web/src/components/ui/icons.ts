@@ -38,6 +38,7 @@ export {
   Taxi,
   PersonSimpleWalk as Footprints,
   CalendarBlank as Calendar,
+  Camera,
   Check,
   CheckCircle,
   CheckCircle as CheckCircle2,

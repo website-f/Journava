@@ -1,8 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Headset, X, Plus, ArrowUp, CheckCircle2, Paperclip } from "@/components/ui/icons";
+import { Headset, X, Plus, ArrowUp, CheckCircle2, Paperclip, Camera, Image as ImageIcon } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
+import { AiCamera } from "./AiCamera";
 import { useAgentStream } from "@/hooks/useAgentStream";
 import { API_BASE, api } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth";
@@ -157,7 +158,10 @@ export function AssistantPanel({
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
@@ -393,6 +397,12 @@ export function AssistantPanel({
                   >
                     📱 Plan from a TikTok / IG / YouTube post
                   </button>
+                  <button
+                    onClick={() => setCameraOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-[var(--r-pill)] border border-dashed border-[var(--brand-400)] px-3 py-1.5 text-xs text-[var(--brand-600)] hover:bg-[var(--bg)]"
+                  >
+                    <Camera className="h-3.5 w-3.5" /> Identify a photo with AI Camera
+                  </button>
                 </div>
               </div>
             )}
@@ -458,21 +468,28 @@ export function AssistantPanel({
               </div>
             )}
             <div className="flex items-end gap-2">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*,application/pdf,.pdf,text/plain,.txt,.md"
-                hidden
-                onChange={onFile}
-              />
-              <button
-                onClick={() => fileRef.current?.click()}
-                disabled={uploading}
-                aria-label="Attach image or document"
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--r-md)] border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-50"
-              >
-                <Plus className="h-5 w-5" />
-              </button>
+              <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={onFile} />
+              <input ref={docInputRef} type="file" accept="application/pdf,.pdf,text/plain,.txt,.md" hidden onChange={onFile} />
+              <div className="relative shrink-0">
+                {attachOpen && (
+                  <div className="absolute bottom-12 left-0 z-[60] w-44 overflow-hidden rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--elevated)] py-1 shadow-[var(--shadow-3)]">
+                    <AttachItem icon={ImageIcon} label="Photo" onClick={() => { setAttachOpen(false); imageInputRef.current?.click(); }} />
+                    <AttachItem icon={Paperclip} label="Document" onClick={() => { setAttachOpen(false); docInputRef.current?.click(); }} />
+                    <AttachItem icon={Camera} label="AI Camera" onClick={() => { setAttachOpen(false); setCameraOpen(true); }} />
+                  </div>
+                )}
+                <button
+                  onClick={() => setAttachOpen((v) => !v)}
+                  disabled={uploading}
+                  aria-label="Attach a photo, document, or use the camera"
+                  className={cn(
+                    "grid h-10 w-10 place-items-center rounded-[var(--r-md)] border border-[var(--border)] text-[var(--muted)] transition-[transform,background] hover:bg-[var(--bg)] disabled:opacity-50",
+                    attachOpen && "rotate-45 bg-[var(--bg)] text-[var(--brand-600)]",
+                  )}
+                >
+                  <Plus className="h-5 w-5" />
+                </button>
+              </div>
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -497,8 +514,21 @@ export function AssistantPanel({
               </Button>
             </div>
           </div>
+
+          <AiCamera open={cameraOpen} onClose={() => setCameraOpen(false)} />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function AttachItem({ icon: Icon, label, onClick }: { icon: typeof Camera; label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-[var(--bg)]"
+    >
+      <Icon className="h-4 w-4 text-[var(--brand-500)]" /> {label}
+    </button>
   );
 }

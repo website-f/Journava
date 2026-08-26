@@ -332,6 +332,62 @@ async def complete_stream(
 # --------------------------------------------------------------------------- #
 
 
+_VISION_HINTS = (
+    "gpt-4o", "gpt-4.1", "gpt-5", "o4", "chatgpt", "gemini", "pixtral",
+    "vision", "-vl", "llava", "scout", "maverick", "claude-3", "claude-sonnet",
+    "claude-opus", "qwen2.5-vl", "qwen2-vl", "internvl", "grok-vision", "llama-4",
+)
+
+
+def _looks_vision(model: str) -> bool:
+    m = (model or "").lower()
+    return any(h in m for h in _VISION_HINTS)
+
+
+async def complete_vision(
+    messages: list[Message],
+    *,
+    response_format: dict[str, Any] | None = None,
+    temperature: float | None = None,
+    agent: str | None = None,
+) -> str:
+    """Like `complete()`, but only over VISION-capable models: the configured
+    `llm_vision_model` first, then any multimodal model in the Engine provider
+    pool (with its stored key). Lets the AI camera work whenever *some* vision key
+    is configured, even when the primary text model (e.g. Groq gpt-oss) can't see."""
+    try:
+        from litellm import acompletion
+    except ImportError as exc:  # pragma: no cover — dependency guard
+        raise LLMUnavailableError("litellm is not installed") from exc
+
+    # Engine provider pool first (its keys are user-managed + health-tested), then
+    # the env-configured vision model as a last resort. This avoids wasting a call
+    # on a stale env key when a healthy multimodal provider is already configured.
+    candidates: list[dict[str, Any]] = list(await _build_chain())
+    if settings.llm_vision_model:
+        candidates.append({"model": settings.llm_vision_model, "api_key": _settings_key_for(settings.llm_vision_model)})
+
+    seen: set[str] = set()
+    tried = 0
+    last_error: Exception | None = None
+    for c in candidates:
+        m = c.get("model")
+        if not m or m in seen or not _looks_vision(m):
+            continue
+        seen.add(m)
+        tried += 1
+        try:
+            content = await _call_single(acompletion, m, c.get("api_key"), messages, temperature, response_format, agent)
+            if content:
+                return content
+        except Exception as exc:  # noqa: BLE001 — try the next vision model
+            last_error = exc
+            logger.info("vision model %s failed: %s", m, exc)
+    if tried == 0:
+        raise LLMUnavailableError("No vision-capable model configured")
+    raise LLMUnavailableError(f"All {tried} vision model(s) failed: {last_error}")
+
+
 async def _call_single(
     acompletion: Any,
     model: str,
