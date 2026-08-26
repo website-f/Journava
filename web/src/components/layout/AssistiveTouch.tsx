@@ -108,7 +108,7 @@ export function AssistiveTouch() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           className={cn(
-            "glass-strong relative grid h-[52px] w-[52px] place-items-center rounded-full shadow-[var(--shadow-2)]",
+            "glass-strong relative grid aspect-square h-[52px] w-[52px] shrink-0 place-items-center rounded-full shadow-[var(--shadow-2)]",
             "text-[var(--brand-500)] transition-transform active:scale-95 touch-none",
             jobRunning && "ring-2 ring-[var(--brand-400)]",
           )}

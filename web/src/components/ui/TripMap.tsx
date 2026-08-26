@@ -69,6 +69,10 @@ export function TripMap({ className }: TripMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
+  // Sticky "the map has loaded at least once" flag. `map.loaded()` flickers false
+  // right after a fitBounds/easeTo (tiles reloading), so relying on it for a
+  // day switch left the new day with no pins. This stays true once loaded.
+  const readyRef = useRef(false);
   const results = usePlanStore((s) => s.results);
 
   const [payload, setPayload] = useState<MapPayload | null>(null);
@@ -131,6 +135,8 @@ export function TripMap({ className }: TripMapProps) {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     mapInstance.current = map;
+    readyRef.current = false;
+    map.on("load", () => { readyRef.current = true; });
 
     // Keep the canvas sized to its container (tab switches / resizes).
     let raf = 0;
@@ -165,7 +171,7 @@ export function TripMap({ className }: TripMapProps) {
 
     let cancelled = false;
     const draw = () => {
-      // A deferred draw (map.once("load")) can fire AFTER the active day changed;
+      // A deferred draw (map.on("load")) can fire AFTER the active day changed;
       // bail so we never paint a stale day's markers over the current one.
       if (cancelled || !mapInstance.current) return;
       markersRef.current.forEach((m) => m.remove());
@@ -210,15 +216,16 @@ export function TripMap({ className }: TripMapProps) {
       }
     };
 
-    if (map.isStyleLoaded()) draw();
-    else map.once("load", draw);
-    // Clean up on day switch / unmount so markers never linger from a prior day
-    // (the "4 pins on the map but the panel says 1 stop" bug).
+    // Draw now if the map has EVER loaded (sticky readyRef) — this is what makes a
+    // day switch reliably repaint. Only defer via "load" for the very first render.
+    if (readyRef.current || map.loaded()) draw();
+    else map.on("load", draw);
+    // Cancel a pending deferred draw on switch/unmount so a superseded day's
+    // markers never paint. draw() clears+redraws markers, so we don't remove them
+    // here (removing on teardown is what wiped the pins).
     return () => {
       cancelled = true;
       map.off("load", draw);
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
     };
   }, [activeDay, payload]);
 

@@ -189,21 +189,25 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
 
       <p className="text-sm text-[var(--muted)]">{result.summary}</p>
 
-      {/* Round trip → Go / Return leg tabs (return options come from data.return). */}
+      {/* Round trip → full-width Go/Return leg tabs, sticky so they stay in reach
+          while scrolling the (long) flight list, on both the results + trip page.
+          Sticks below the app's top bar and releases at the end of this section. */}
       {roundTrip && (
-        <div className="inline-flex gap-1 rounded-[var(--r-md)] bg-[var(--bg)] p-1 text-sm font-medium">
-          {(["go", "return"] as const).map((v) => (
-            <button
-              key={v}
-              onClick={() => setLeg(v)}
-              className={cn(
-                "rounded-[calc(var(--r-md)-2px)] px-3.5 py-1.5 transition-colors",
-                leg === v ? "bg-[var(--surface)] text-[var(--brand-600)] shadow-[var(--shadow-1)]" : "text-[var(--muted)]",
-              )}
-            >
-              {v === "go" ? "✈ Go" : "↩ Return"}
-            </button>
-          ))}
+        <div className="sticky top-[calc(var(--top-bar,3.5rem)+0.5rem)] z-20 -mx-0.5">
+          <div className="flex w-full gap-1 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-1 text-sm font-semibold shadow-[var(--shadow-1)]">
+            {(["go", "return"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setLeg(v)}
+                className={cn(
+                  "flex-1 rounded-[calc(var(--r-md)-2px)] px-3.5 py-2 transition-colors",
+                  leg === v ? "bg-[var(--brand-500)] text-white shadow-[var(--shadow-1)]" : "text-[var(--muted)] hover:text-[var(--text)]",
+                )}
+              >
+                {v === "go" ? "✈ Go" : "↩ Return"}
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {isReturn && (

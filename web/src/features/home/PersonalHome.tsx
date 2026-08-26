@@ -8,8 +8,7 @@ import { cn } from "@/lib/cn";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { api } from "@/lib/api";
 import { useAuth } from "@/providers/AuthProvider";
-import { usePlanStore } from "@/stores/planStore";
-import type { ScopeMeta } from "@/lib/types";
+import { useActiveTrip } from "@/hooks/useActiveTrip";
 
 type Recommendation = {
   id?: string;
@@ -38,22 +37,15 @@ function timeGreeting(): string {
 export function PersonalHome() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const activeTrip = usePlanStore((s) => s.byScope["full_trip"] ?? null);
+  // The "active trip" card reflects a trip the traveller ACTUALLY added
+  // (GET /trip) — NOT a plan they merely generated. Generating a plan shows its
+  // results (with "Add to my trip") in the results view; it becomes a trip only
+  // when they add it. This keeps plan vs. trip consistent (no silent adoption).
+  const { results: serverTrip } = useActiveTrip();
   const firstName = (user?.display_name ?? "traveller").split(" ")[0];
-  const tripScope = activeTrip?._scope as ScopeMeta | undefined;
-
-  // Open the trip the traveller already sees on home — straight into its plan.
-  // The plan they're looking at may not have been "added" yet, so adopt it as
-  // the active trip first; then MyTrip (GET /trip) has something to show and we
-  // never bounce them back into the planner.
-  const openActiveTrip = async () => {
-    try {
-      if (activeTrip) await api.post("/trip/save", { results: activeTrip });
-    } catch {
-      /* still open — MyTrip falls back to whatever's active */
-    }
-    navigate("/trip?open=active");
-  };
+  const hasTrip = Boolean(serverTrip && Object.keys(serverTrip).length > 0);
+  const tripLabel =
+    (serverTrip?.chief?.data as { destination?: string } | undefined)?.destination || "Continue planning";
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5">
@@ -71,9 +63,9 @@ export function PersonalHome() {
         </p>
       </header>
 
-      {activeTrip && (
+      {hasTrip && (
         <button
-          onClick={() => void openActiveTrip()}
+          onClick={() => navigate("/trip?open=active")}
           className="pressable flex w-full items-center gap-4 overflow-hidden rounded-[var(--r-xl)] bg-[var(--brand-600)] p-4 text-left text-white shadow-[var(--shadow-2)]"
         >
           <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--r-md)] bg-white/12 ring-1 ring-inset ring-white/20">
@@ -84,7 +76,7 @@ export function PersonalHome() {
               Your active trip
             </span>
             <span className="mt-0.5 block truncate font-[family-name:var(--font-display)] text-[1.0625rem] font-semibold">
-              {tripScope?.label ?? "Continue planning"}
+              {tripLabel}
             </span>
           </span>
           <ArrowRight className="h-5 w-5 shrink-0 text-white/70" />

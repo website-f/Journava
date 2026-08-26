@@ -22,7 +22,15 @@ createRoot(document.getElementById("root")!).render(
           <App />
         </AuthProvider>
       </BrowserRouter>
-      <Toaster position="top-right" richColors closeButton />
+      {/* Top-CENTER + a safe-area offset so mobile toasts sit fully on-screen
+          under the notch/top bar (top-right clipped off the edge). Toned down —
+          no richColors — and constrained so they read as a native banner. */}
+      <Toaster
+        position="top-center"
+        closeButton
+        offset="calc(env(safe-area-inset-top) + 0.75rem)"
+        toastOptions={{ style: { maxWidth: "calc(100vw - 1.5rem)", borderRadius: "var(--r-md)" } }}
+      />
       <ConfirmDialogHost />
     </QueryClientProvider>
   </StrictMode>,
