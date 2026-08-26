@@ -111,6 +111,98 @@ export function ConsoleAgentStudio() {
           ))}
         </div>
       )}
+
+      {agents && agents.length >= 2 && <TeamRunner agents={agents} />}
+    </div>
+  );
+}
+
+/**
+ * Agent Teams — chain your agents into an autonomous workflow. Pick them in
+ * order (Lead Qualifier → Package Planner → Copywriter → …), give one brief, and
+ * each agent works on the brief plus the previous teammate's output, handing off
+ * down the line. An AI back-office running itself.
+ */
+function TeamRunner({ agents }: { agents: Agent[] }) {
+  const [order, setOrder] = useState<string[]>([]);
+  const [brief, setBrief] = useState("");
+  const [running, setRunning] = useState(false);
+  const [steps, setSteps] = useState<Array<{ agent: { name: string; emoji: string }; output: string; ok: boolean }> | null>(null);
+
+  const toggle = (id: string) => setOrder((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id]));
+  const byId = (id: string) => agents.find((a) => a.id === id);
+
+  const run = async () => {
+    if (order.length < 2 || !brief.trim()) return;
+    setRunning(true);
+    setSteps(null);
+    try {
+      const res = await api.post<{ steps: typeof steps }>("/studio/teams/run", { agent_ids: order, brief });
+      setSteps(res.steps);
+    } catch {
+      toast.error("The team run couldn't finish — try again.");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="surface-card mt-6 p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
+        <Sparkles className="h-4 w-4 text-[var(--accent)]" weight="fill" /> Agent Teams — chain them into a workflow
+      </div>
+      <p className="mb-3 text-xs text-[var(--muted)]">Tap agents in the order they should work — each hands its output to the next.</p>
+
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {agents.map((a) => {
+          const pos = order.indexOf(a.id);
+          return (
+            <button
+              key={a.id}
+              onClick={() => toggle(a.id)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-[var(--r-pill)] border px-2.5 py-1 text-xs",
+                pos >= 0 ? "border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] text-[var(--brand-600)] font-semibold" : "border-[var(--border)] text-[var(--muted)]",
+              )}
+            >
+              {pos >= 0 && <span className="grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-500)] text-[0.6rem] text-white">{pos + 1}</span>}
+              {a.emoji} {a.name}
+            </button>
+          );
+        })}
+      </div>
+
+      {order.length >= 2 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted)]">
+          Pipeline:
+          {order.map((id, i) => (
+            <span key={id} className="flex items-center gap-1.5">
+              <span className="rounded-[var(--r-pill)] bg-[var(--bg)] px-2 py-0.5 font-medium text-[var(--text)]">{byId(id)?.emoji} {byId(id)?.name}</span>
+              {i < order.length - 1 && <ArrowRight className="h-3 w-3" />}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input className="min-w-0 flex-1 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm" placeholder="The brief for the team (e.g. a WhatsApp enquiry to turn into a sent package)" value={brief} onChange={(e) => setBrief(e.target.value)} />
+        <Button loading={running} disabled={order.length < 2 || !brief.trim()} onClick={() => void run()}>Run team</Button>
+      </div>
+
+      {running && <p className="mt-2 flex items-center gap-2 text-xs text-[var(--brand-600)]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> The team is working, agent by agent…</p>}
+
+      {steps && (
+        <div className="mt-3 space-y-2">
+          {steps.map((s, i) => (
+            <div key={i} className="rounded-[var(--r-md)] border-l-2 border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_6%,transparent)] p-3">
+              <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
+                <span>{s.agent.emoji}</span> {i + 1}. {s.agent.name}
+              </p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{s.output || "(no output)"}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

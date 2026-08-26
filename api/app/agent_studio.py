@@ -208,22 +208,14 @@ async def delete_agent(agent_id: str, request: Request) -> dict[str, bool]:
 
 
 # --------------------------------------------------------------------------- #
-# Run — the generic executor
+# Run — the generic executor (shared by single-run and Agent Teams)
 # --------------------------------------------------------------------------- #
 
 
-@router.post("/agents/{agent_id}/run")
-async def run_agent(agent_id: str, body: RunRequest, request: Request) -> dict[str, Any]:
-    """Run a saved agent against a task: optional live web research, then the LLM
-    acting under the agent's system prompt. Returns the output + any sources."""
-    org = await _org(request)
-    task = body.task.strip()
-    if not task:
-        raise HTTPException(status_code=400, detail="Give the agent a task.")
-
+async def _load_agent(org: str, agent_id: str) -> dict[str, Any] | None:
     pool = await db.get_pool()
     if pool is None:
-        raise HTTPException(status_code=503, detail="database unavailable")
+        return None
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, name, role, tagline, emoji, system_prompt, skills, tools, runs, created_at "
@@ -231,11 +223,12 @@ async def run_agent(agent_id: str, body: RunRequest, request: Request) -> dict[s
             uuid.UUID(agent_id),
             org,
         )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Agent not found.")
-    agent = _public(dict(row))
+    return _public(dict(row)) if row else None
 
-    # Live web research when the agent is equipped for it.
+
+async def _execute_agent(org: str, agent: dict[str, Any], task: str) -> dict[str, Any]:
+    """Run one agent against a task: optional live web research + KB grounding,
+    then the LLM under the agent's system prompt. Returns output + sources."""
     sources: list[str] = []
     research_block = ""
     used_research = False
@@ -250,11 +243,9 @@ async def run_agent(agent_id: str, body: RunRequest, request: Request) -> dict[s
                     + found["text"][:6000]
                     + ("\n\nSources:\n" + "\n".join(sources) if sources else "")
                 )
-        except Exception as exc:  # noqa: BLE001 — research is best-effort
+        except Exception as exc:  # noqa: BLE001
             logger.info("studio run research failed: %s", exc)
 
-    # Ground the agent in the business's own facts (Knowledge Base) so it answers
-    # about THIS business, not generically.
     kb_block = ""
     try:
         from app.kb import kb_context
@@ -271,25 +262,81 @@ async def run_agent(agent_id: str, body: RunRequest, request: Request) -> dict[s
         "and immediately useful; produce the actual deliverable (not a description of it). "
         "Plain text, no markdown headers." + kb_block + research_block
     )
+    output = await llm.complete(
+        [{"role": "system", "content": system}, {"role": "user", "content": task}],
+        agent=f"studio:{agent['name'][:24]}",
+    )
     try:
-        output = await llm.complete(
-            [{"role": "system", "content": system}, {"role": "user", "content": task}],
-            agent=f"studio:{agent['name'][:24]}",
-        )
+        pool = await db.get_pool()
+        if pool is not None:
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE custom_agents SET runs = runs + 1 WHERE id = $1", uuid.UUID(agent["id"]))
+    except Exception:  # noqa: BLE001
+        pass
+    return {"output": output.strip(), "sources": sources, "used_research": used_research}
+
+
+@router.post("/agents/{agent_id}/run")
+async def run_agent(agent_id: str, body: RunRequest, request: Request) -> dict[str, Any]:
+    """Run a saved agent against a task."""
+    org = await _org(request)
+    task = body.task.strip()
+    if not task:
+        raise HTTPException(status_code=400, detail="Give the agent a task.")
+    agent = await _load_agent(org, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    try:
+        result = await _execute_agent(org, agent, task)
     except Exception as exc:  # noqa: BLE001
         logger.warning("studio run failed: %s", exc)
         raise HTTPException(status_code=502, detail="The agent couldn't complete the task — try again.") from exc
+    return {**result, "agent": {"name": agent["name"], "emoji": agent["emoji"]}}
 
-    # Best-effort run counter.
-    try:
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE custom_agents SET runs = runs + 1 WHERE id = $1", uuid.UUID(agent_id))
-    except Exception:  # noqa: BLE001
-        pass
 
-    return {
-        "output": output.strip(),
-        "sources": sources,
-        "used_research": used_research,
-        "agent": {"name": agent["name"], "emoji": agent["emoji"]},
-    }
+# --------------------------------------------------------------------------- #
+# Agent Teams — chain agents into an autonomous workflow (each hands off to next)
+# --------------------------------------------------------------------------- #
+
+
+class TeamRunRequest(BaseModel):
+    agent_ids: list[str]
+    brief: str
+
+
+@router.post("/teams/run")
+async def run_team(body: TeamRunRequest, request: Request) -> dict[str, Any]:
+    """Run an ordered team: each agent works on the brief plus the previous
+    agent's output, then hands off to the next — an autonomous back-office."""
+    org = await _org(request)
+    brief = body.brief.strip()
+    if not brief or len(body.agent_ids) < 2:
+        raise HTTPException(status_code=400, detail="Pick at least two agents and give the team a brief.")
+
+    steps: list[dict[str, Any]] = []
+    carry = ""
+    for agent_id in body.agent_ids[:6]:
+        agent = await _load_agent(org, agent_id)
+        if agent is None:
+            continue
+        task = (
+            f"Team brief: {brief}"
+            + (f"\n\nThe previous teammate produced:\n{carry}\n\nBuild on it and do YOUR part." if carry else "\n\nYou are first — start the work.")
+        )
+        try:
+            result = await _execute_agent(org, agent, task)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("team step failed (%s): %s", agent["name"], exc)
+            steps.append({"agent": {"name": agent["name"], "emoji": agent["emoji"]}, "output": "", "ok": False})
+            continue
+        carry = result["output"]
+        steps.append({
+            "agent": {"name": agent["name"], "emoji": agent["emoji"]},
+            "output": result["output"],
+            "sources": result["sources"],
+            "used_research": result["used_research"],
+            "ok": True,
+        })
+    if not steps:
+        raise HTTPException(status_code=404, detail="No valid agents in the team.")
+    return {"steps": steps, "final": carry}
