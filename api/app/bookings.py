@@ -151,6 +151,7 @@ def _booking(row: dict[str, Any]) -> dict[str, Any]:
         "amount": float(row["amount"]),
         "currency": row["currency"],
         "status": row["status"],
+        "payment_status": row.get("payment_status"),
         "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
     }
 
@@ -166,6 +167,36 @@ async def list_bookings(agency: dict = Depends(require_agency)) -> dict[str, Any
             uuid.UUID(agency["org_id"]),
         )
     return {"bookings": [_booking(dict(r)) for r in rows]}
+
+
+@router.post("/auto-status")
+async def auto_status(agency: dict = Depends(require_agency)) -> dict[str, Any]:
+    """Ops-agent sweep: move each booking to the right status for today's date —
+    check-in reached → checked_in, check-out passed → completed. Keeps the board
+    current with no manual clicking."""
+    pool = await db.get_pool()
+    if pool is None:
+        return {"checked_in": 0, "completed": 0}
+    org = uuid.UUID(agency["org_id"])
+    async with pool.acquire() as conn:
+        checked_in = await conn.execute(
+            "UPDATE hotel_bookings SET status = 'checked_in' "
+            "WHERE org_id = $1 AND status = 'confirmed' AND check_in IS NOT NULL "
+            "AND check_in <= current_date AND (check_out IS NULL OR check_out > current_date)",
+            org,
+        )
+        completed = await conn.execute(
+            "UPDATE hotel_bookings SET status = 'completed' "
+            "WHERE org_id = $1 AND status IN ('confirmed','checked_in') "
+            "AND check_out IS NOT NULL AND check_out <= current_date",
+            org,
+        )
+    def _n(tag: str) -> int:
+        try:
+            return int(tag.split()[-1])
+        except (ValueError, IndexError):
+            return 0
+    return {"checked_in": _n(checked_in), "completed": _n(completed)}
 
 
 async def send_due_reminders(*, days_ahead: int = 2, org_id: str | None = None) -> dict[str, Any]:

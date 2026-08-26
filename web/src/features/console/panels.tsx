@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2, Calendar, Download,
+  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2, Calendar, Download, X,
 } from "@/components/ui/icons";
 import { Button, Badge, Select } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
@@ -799,15 +799,20 @@ export function ConsoleFinance() {
 
 /* ------------------------------------------------------------- Bookings */
 
-type Booking = { id: string; property_name: string; room_title: string; guest_name: string; channel: string; check_in: string | null; check_out: string | null; nights: number; amount: number; currency: string; status: string };
-type CalDay = { room: string; guest: string; amount: number; currency: string };
+type Booking = { id: string; property_name: string; room_title: string; guest_name: string; channel: string; check_in: string | null; check_out: string | null; nights: number; amount: number; currency: string; status: string; payment_status?: string | null };
 
 export function ConsoleBookings() {
   const { data, loading, reload } = useGet<{ bookings: Booking[] }>("/bookings");
-  const cal = useGet<{ days: Record<string, CalDay[]> }>("/bookings/calendar");
   const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
   const bookings = data?.bookings ?? [];
-  const days = Object.entries(cal.data?.days ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
+
+  // Ops agent: keep every booking's status right for today's date on open.
+  useEffect(() => {
+    api.post<{ checked_in: number; completed: number }>("/bookings/auto-status", {})
+      .then((r) => { if ((r.checked_in || 0) + (r.completed || 0) > 0) reload(); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [form, setForm] = useState({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
   const [busy, setBusy] = useState("");
@@ -824,7 +829,7 @@ export function ConsoleBookings() {
       if (r.status === "blocked") toast.warning(r.reason ?? "Firewall blocked this booking.");
       else toast.success(`Booked — ${r.currency} ${r.amount?.toLocaleString()} · manager notified`);
       setForm({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
-      reload(); cal.reload();
+      reload();
     } catch { toast.error("Booking failed"); } finally { setBusy(""); }
   };
   const remind = async () => {
@@ -855,22 +860,7 @@ export function ConsoleBookings() {
         <div className="mt-2"><Button onClick={createBooking} loading={busy === "book"}>Book &amp; notify</Button></div>
       </Card>
 
-      <Card className="mb-4">
-        <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><Calendar className="h-4 w-4 text-[var(--brand-500)]" /> Booking calendar</div>
-        {!days.length ? <p className="text-sm text-[var(--muted)]">No dated bookings yet.</p>
-          : (
-            <div className="flex flex-wrap gap-2">
-              {days.map(([d, list]) => (
-                <div key={d} className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3">
-                  <p className="text-xs font-semibold text-[var(--brand-600)]">{d}</p>
-                  {list.map((b, i) => (
-                    <p key={i} className="mt-1 text-xs text-[var(--muted)]">{b.guest} · {b.room}</p>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-      </Card>
+      <BookingCalendar bookings={bookings} />
 
       <Card className="overflow-x-auto p-0">
         <table className="w-full text-sm">
@@ -897,6 +887,132 @@ export function ConsoleBookings() {
         </table>
       </Card>
     </div>
+  );
+}
+
+const CAL_STATUS: Record<string, string> = {
+  confirmed: "bg-[color-mix(in_srgb,var(--brand-400)_22%,transparent)] text-[var(--brand-600)]",
+  checked_in: "bg-[color-mix(in_srgb,var(--success)_22%,transparent)] text-[var(--success)]",
+  completed: "bg-[color-mix(in_srgb,var(--text)_10%,transparent)] text-[var(--muted)]",
+  cancelled: "bg-[color-mix(in_srgb,var(--danger,#dc2626)_16%,transparent)] text-[var(--danger,#dc2626)]",
+};
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+function startOfWeek(d: Date): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // Monday-start
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/**
+ * A real month/week booking calendar. Each day shows the first 3 stays covering
+ * it (a booking spans check_in→check_out); "+N more" opens an off-canvas with
+ * the whole day. Statuses are colour-coded and kept current by the auto-status
+ * sweep on open.
+ */
+function BookingCalendar({ bookings }: { bookings: Booking[] }) {
+  const [view, setView] = useState<"month" | "week">("month");
+  const [anchor, setAnchor] = useState(() => new Date());
+  const [dayOpen, setDayOpen] = useState<string | null>(null);
+
+  const covers = (b: Booking, ds: string): boolean => {
+    if (!b.check_in || b.status === "cancelled") return b.check_in === ds && b.status !== "cancelled";
+    if (!b.check_out) return ds === b.check_in;
+    return ds >= b.check_in && ds < b.check_out;
+  };
+  const onDay = (ds: string) => bookings.filter((b) => covers(b, ds));
+
+  const todayStr = ymd(new Date());
+  const cells: Date[] = [];
+  if (view === "month") {
+    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    const start = startOfWeek(first);
+    for (let i = 0; i < 42; i++) cells.push(addDays(start, i));
+  } else {
+    const start = startOfWeek(anchor);
+    for (let i = 0; i < 7; i++) cells.push(addDays(start, i));
+  }
+  const label = view === "month"
+    ? anchor.toLocaleDateString(undefined, { month: "long", year: "numeric" })
+    : `Week of ${startOfWeek(anchor).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+  const shift = (dir: number) => setAnchor((a) => (view === "month" ? new Date(a.getFullYear(), a.getMonth() + dir, 1) : addDays(a, dir * 7)));
+
+  return (
+    <Card className="mb-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-2 text-sm font-semibold"><Calendar className="h-4 w-4 text-[var(--brand-500)]" /> Booking calendar</span>
+        <span className="text-sm text-[var(--muted)]">{label}</span>
+        <div className="ml-auto flex items-center gap-1">
+          <div className="mr-1 flex rounded-[var(--r-md)] bg-[var(--bg)] p-0.5 text-xs">
+            {(["month", "week"] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)} className={cn("rounded-[calc(var(--r-md)-2px)] px-2.5 py-1 capitalize", view === v ? "bg-[var(--surface)] font-semibold text-[var(--brand-600)] shadow-[var(--shadow-1)]" : "text-[var(--muted)]")}>{v}</button>
+            ))}
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => shift(-1)}>‹</Button>
+          <Button size="sm" variant="ghost" onClick={() => setAnchor(new Date())}>Today</Button>
+          <Button size="sm" variant="ghost" onClick={() => shift(1)}>›</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-7 gap-1 text-center text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--muted)]">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="py-1">{d}</div>)}
+      </div>
+      <div className={cn("grid grid-cols-7 gap-1", view === "week" && "grid-rows-1")}>
+        {cells.map((d) => {
+          const ds = ymd(d);
+          const list = onDay(ds);
+          const inMonth = view === "week" || d.getMonth() === anchor.getMonth();
+          return (
+            <div key={ds} className={cn("min-h-[5.5rem] rounded-[var(--r-sm)] border border-[var(--border)] p-1", !inMonth && "opacity-40", ds === todayStr && "ring-2 ring-[var(--brand-400)]")}>
+              <div className="mb-0.5 text-right text-[0.65rem] text-[var(--muted)]">{d.getDate()}</div>
+              <div className="space-y-0.5">
+                {list.slice(0, 3).map((b) => (
+                  <div key={b.id} className={cn("truncate rounded px-1 py-0.5 text-[0.6rem]", CAL_STATUS[b.status] ?? CAL_STATUS.confirmed)} title={`${b.guest_name} · ${b.room_title}`}>
+                    {b.guest_name.split(" ")[0]} · {b.room_title}
+                  </div>
+                ))}
+                {list.length > 3 && (
+                  <button onClick={() => setDayOpen(ds)} className="w-full rounded px-1 text-left text-[0.6rem] font-semibold text-[var(--brand-600)] hover:underline">
+                    +{list.length - 3} more
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {dayOpen && (
+        <div className="fixed inset-0 z-[80] flex justify-end bg-black/40 backdrop-blur-sm" onClick={() => setDayOpen(null)}>
+          <div className="h-full w-full max-w-sm overflow-y-auto bg-[var(--elevated)] p-5 shadow-[var(--shadow-3)]" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-[family-name:var(--font-display)] text-lg font-bold">{new Date(dayOpen).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</h3>
+              <button onClick={() => setDayOpen(null)} aria-label="Close" className="rounded-full p-1 text-[var(--muted)] hover:text-[var(--text)]"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-2">
+              {onDay(dayOpen).map((b) => (
+                <div key={b.id} className="rounded-[var(--r-md)] border border-[var(--border)] p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold">{b.guest_name}</span>
+                    <span className={cn("rounded-[var(--r-pill)] px-2 py-0.5 text-[0.6rem] font-semibold capitalize", CAL_STATUS[b.status] ?? CAL_STATUS.confirmed)}>{b.status.replace(/_/g, " ")}</span>
+                  </div>
+                  <p className="text-xs text-[var(--muted)]">{b.room_title} · {b.property_name}</p>
+                  <p className="mt-0.5 text-[0.65rem] text-[var(--muted)]">{b.check_in || "—"} → {b.check_out || "—"} · <Money amount={b.amount} currency={b.currency} />{b.payment_status ? ` · ${b.payment_status}` : ""}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
