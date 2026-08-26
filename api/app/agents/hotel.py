@@ -163,7 +163,15 @@ class HotelAgent(BaseAgent):
                         "halal_friendly": item.get("halal_friendly"),
                         "perks": item.get("perks", []),
                         "near_transit": False,
-                        "stars": 0,
+                        "stars": item.get("star_rating") or 0,
+                        # Booking.com-style richness so the traveller sees the real
+                        # direct listing (image, discount, description, amenities).
+                        "image_url": item.get("image_url"),
+                        "description": item.get("description"),
+                        "original_price": item.get("original_price"),
+                        "discount_pct": item.get("discount_pct"),
+                        "amenities": item.get("amenities", []),
+                        "rating": (item.get("star_rating") or 0) or None,
                     },
                 )
             )

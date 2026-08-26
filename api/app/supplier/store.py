@@ -6,12 +6,35 @@ Degrades to empty/None when Postgres is down, like the rest of the app.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 
 from app.core import db
 
 logger = logging.getLogger(__name__)
+
+
+def _as_city(destination: str) -> str:
+    """A city name for matching listings. The planner resolves a destination to
+    an IATA code (e.g. "BKI"), but listings are stored by city ("Kota Kinabalu"),
+    so a 3-letter code is expanded to its city before the ILIKE match."""
+    term = (destination or "").strip()
+    if re.fullmatch(r"[A-Za-z]{3}", term):
+        try:
+            from app.agents.goal_parser import CITY_CODES
+
+            code = term.upper()
+            city = max(
+                (name for name, c in CITY_CODES.items() if c == code),
+                key=len,
+                default=None,
+            )
+            if city:
+                return city
+        except Exception:  # noqa: BLE001 — fall back to the raw term
+            pass
+    return term
 
 
 def _uuid(value: str) -> uuid.UUID | None:
@@ -203,12 +226,13 @@ async def search_for_destination(destination: str) -> list[dict[str, Any]]:
     pool = await db.get_pool()
     if pool is None or not destination:
         return []
-    term = destination.strip()
+    term = _as_city(destination)
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT l.id, l.title, l.price_amount, l.price_currency, l.perks,
+                      l.description, l.image_url, l.original_price, l.discount_pct, l.amenities,
                       p.id AS property_id, p.org_id, p.name AS property_name,
-                      p.city, p.halal_friendly
+                      p.city, p.halal_friendly, p.star_rating, p.image_url AS property_image
                FROM supplier_listings l
                JOIN supplier_properties p ON p.id = l.property_id
                WHERE l.available = TRUE
@@ -234,6 +258,12 @@ async def search_for_destination(destination: str) -> list[dict[str, Any]]:
                 "perks": list(r.get("perks") or []),
                 "halal_friendly": r["halal_friendly"],
                 "city": r["city"],
+                "description": r.get("description"),
+                "image_url": r.get("image_url") or r.get("property_image"),
+                "original_price": float(r["original_price"]) if r.get("original_price") is not None else None,
+                "discount_pct": r.get("discount_pct"),
+                "amenities": list(r.get("amenities") or []),
+                "star_rating": r.get("star_rating"),
             }
         )
     return out

@@ -35,6 +35,9 @@ const HALAL_BADGE_VARIANT = {
 export function OptionCard({ option, className }: OptionCardProps) {
   const listingId =
     option.source === "supplier" ? (option.raw?.listing_id as string | undefined) : undefined;
+  const image = option.raw?.image_url as string | undefined;
+  const original = option.raw?.original_price as number | undefined;
+  const discount = option.raw?.discount_pct as number | undefined;
   const [booking, setBooking] = useState(false);
   const [sent, setSent] = useState(false);
 
@@ -55,12 +58,20 @@ export function OptionCard({ option, className }: OptionCardProps) {
   return (
     <article
       className={cn(
-        "surface-card p-4 flex flex-col gap-3",
+        "surface-card flex flex-col gap-3 overflow-hidden p-4",
+        image && "pt-0 pl-0 pr-0",
         className,
       )}
     >
+      {image && (
+        <div className="relative h-32 w-full overflow-hidden">
+          <img src={image} alt={option.title} loading="lazy" className="h-full w-full object-cover" onError={(e) => (e.currentTarget.style.display = "none")} />
+          {discount ? <span className="absolute left-2 top-2 rounded-[var(--r-pill)] bg-[var(--success)] px-2 py-0.5 text-[0.65rem] font-bold text-white">-{discount}%</span> : null}
+        </div>
+      )}
+      <div className={cn("flex flex-col gap-3", image && "px-4")}>
       {/* Header row: kind badge + title */}
-      <div className="flex items-start gap-2">
+      <div className="flex flex-wrap items-start gap-2">
         <Badge variant="brand">{KIND_LABELS[option.kind] ?? option.kind}</Badge>
         {option.source === "supplier" && (
           <Badge variant="success">
@@ -83,9 +94,14 @@ export function OptionCard({ option, className }: OptionCardProps) {
 
       <h3 className="text-sm font-semibold leading-tight">{option.title}</h3>
 
-      {/* Price */}
+      {/* Price (with a struck-through was-price when there's a discount) */}
       {option.price_amount != null && (
         <p className="text-lg font-bold text-[var(--brand-500)]">
+          {original && original > option.price_amount ? (
+            <span className="mr-1.5 text-sm font-normal text-[var(--muted)] line-through">
+              <Money amount={original} currency={option.price_currency} />
+            </span>
+          ) : null}
           <Money amount={option.price_amount} currency={option.price_currency} />
         </p>
       )}
@@ -130,6 +146,7 @@ export function OptionCard({ option, className }: OptionCardProps) {
           )}
         </Button>
       )}
+      </div>
     </article>
   );
 }

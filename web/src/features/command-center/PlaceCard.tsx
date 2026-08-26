@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, ShoppingCart, Video } from "@/components/ui/icons";
+import { toast } from "sonner";
+import { ExternalLink, ShoppingCart, Video, Building2, CheckCircle } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { SourceBadge } from "@/components/ui/SourceBadge";
 import { api } from "@/lib/api";
@@ -17,14 +18,38 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
     rating?: number | string | null;
     review?: string | null;
     environment?: string | null;
+    image_url?: string | null;
+    image?: string | null;
+    direct?: boolean;
+    listing_id?: string;
+    original_price?: number | null;
+    discount_pct?: number | null;
   };
   const link = option.booking_url || option.source_url || null;
   const isStay = option.kind === "hotel";
+  const isDirect = option.source === "supplier";
   const canVideo = option.kind === "activity" || option.kind === "restaurant";
   const [videoLoading, setVideoLoading] = useState(false);
 
-  // A real photo of the place — resolved lazily (keyless Openverse/Wikipedia).
-  const [image, setImage] = useState<string | null>((option.raw as { image?: string })?.image ?? null);
+  // Book-direct (supplier listing → a lead the property follows up on).
+  const [booking, setBooking] = useState(false);
+  const [sent, setSent] = useState(false);
+  const bookDirect = async () => {
+    if (!raw.listing_id || booking || sent) return;
+    setBooking(true);
+    try {
+      await api.post("/supplier/leads", { listing_id: raw.listing_id });
+      setSent(true);
+      toast.success("Request sent — the property will follow up with you directly.");
+    } catch {
+      toast.error("Could not send your request.");
+    } finally {
+      setBooking(false);
+    }
+  };
+
+  // A real photo — the supplier's own listing image first, else lazy Openverse/Wikipedia.
+  const [image, setImage] = useState<string | null>(raw.image_url ?? raw.image ?? null);
   useEffect(() => {
     if (image) return;
     let cancelled = false;
@@ -88,9 +113,22 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-sm font-semibold">{option.title}</p>
         {price && (
-          <span className="shrink-0 text-sm font-semibold text-[var(--brand-500)]">{price}</span>
+          <span className="shrink-0 text-right text-sm font-semibold text-[var(--brand-500)]">
+            {raw.original_price && option.price_amount != null && raw.original_price > option.price_amount ? (
+              <span className="mr-1 text-xs font-normal text-[var(--muted)] line-through">
+                {option.price_currency} {raw.original_price.toLocaleString()}
+              </span>
+            ) : null}
+            {price}
+          </span>
         )}
       </div>
+      {isDirect && (
+        <span className="mt-1 inline-flex w-fit items-center gap-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_14%,transparent)] px-2 py-0.5 text-[0.6rem] font-semibold text-[var(--success)]">
+          <Building2 className="h-3 w-3" /> Direct · no OTA fee
+          {raw.discount_pct ? <span className="ml-1">· -{raw.discount_pct}%</span> : null}
+        </span>
+      )}
       {option.provider && (
         <p className="mt-0.5 text-[0.65rem] text-[var(--muted)]">{option.provider}</p>
       )}
@@ -117,8 +155,13 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
         )}
       </div>
 
-      {(link || canVideo) && (
+      {(link || canVideo || (isDirect && raw.listing_id)) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {isDirect && raw.listing_id && (
+            <Button size="sm" onClick={() => void bookDirect()} loading={booking} disabled={sent}>
+              {sent ? <><CheckCircle className="h-4 w-4" /> Request sent</> : <><ShoppingCart className="h-4 w-4" /> Book direct</>}
+            </Button>
+          )}
           {link && (
             <Button asChild size="sm" variant={isStay ? undefined : "secondary"}>
               <a href={link} target="_blank" rel="noreferrer noopener">
