@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Sparkles, Plus, Trash2, Loader2, X, Compass, ArrowRight } from "@/components/ui/icons";
+import { Sparkles, Plus, Trash2, Loader2, X, Compass, ArrowRight, Users, CheckCircle2, Copy, Zap } from "@/components/ui/icons";
 import { Button, Skeleton } from "@/components/ui";
+import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
+import { Section } from "./ui";
 
 type Agent = {
   id: string;
@@ -73,6 +75,8 @@ export function ConsoleAgentStudio() {
           </Button>
         )}
       </header>
+
+      <Boardroom />
 
       <KnowledgeCard />
 
@@ -194,7 +198,7 @@ function TeamRunner({ agents }: { agents: Agent[] }) {
       {steps && (
         <div className="mt-3 space-y-2">
           {steps.map((s, i) => (
-            <div key={i} className="rounded-[var(--r-md)] border-l-2 border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_6%,transparent)] p-3">
+            <div key={i} className="rounded-[var(--r-md)] bg-[var(--bg)] p-3">
               <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
                 <span>{s.agent.emoji}</span> {i + 1}. {s.agent.name}
               </p>
@@ -413,7 +417,7 @@ function CreateAgent({
       </div>
 
       {draft && (
-        <div className="mt-4 rounded-[var(--r-lg)] border border-[var(--brand-400)]/40 bg-[color-mix(in_srgb,var(--brand-400)_6%,transparent)] p-4">
+        <div className="mt-4 rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--bg)] p-4">
           <div className="flex items-start gap-3">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[var(--surface)] text-2xl">{draft.emoji}</span>
             <div className="min-w-0 flex-1">
@@ -543,7 +547,7 @@ function AgentCard({ agent, onDeleted }: { agent: Agent; onDeleted: () => void }
             </p>
           )}
           {result && (
-            <div className="mt-3 rounded-[var(--r-md)] border-l-2 border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_7%,transparent)] p-3">
+            <div className="mt-3 rounded-[var(--r-md)] bg-[var(--bg)] p-3">
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{result.output}</p>
               {result.used_research && result.sources.length > 0 && (
                 <div className="mt-2 border-t border-[var(--border)] pt-2">
@@ -562,5 +566,152 @@ function AgentCard({ agent, onDeleted }: { agent: Agent; onDeleted: () => void }
         </div>
       )}
     </div>
+  );
+}
+
+/* ---------------------------------------------------------- Boardroom */
+
+type Participant = { name: string; emoji: string; role: string };
+type Turn = { speaker: string; emoji: string; role: string; text: string };
+type ActionItem = { owner: string; action: string };
+type Meeting = { id?: string; topic?: string; summary?: string; transcript: Turn[]; decisions: string[]; action_items: ActionItem[]; marketing_draft?: string; created_at?: string };
+type BoardroomData = { settings: { enabled: boolean; focus: string | null }; participants: Participant[]; meetings: Meeting[] };
+
+/**
+ * Autonomous Boardroom — the org's agents (built-in Revenue/Bookings/Marketing
+ * leads + every custom agent) convene by themselves, speak to the real numbers,
+ * and a Chair records decisions, action items and a ready-to-post marketing
+ * draft. Flip Autopilot on and it convenes on the schedule, unattended.
+ */
+function Boardroom() {
+  const [data, setData] = useState<BoardroomData | null>(null);
+  const [latest, setLatest] = useState<Meeting | null>(null);
+  const [topic, setTopic] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const d = await api.get<BoardroomData>("/boardroom");
+      setData(d);
+      setLatest((prev) => prev ?? d.meetings[0] ?? null);
+    } catch {
+      setData({ settings: { enabled: false, focus: null }, participants: [], meetings: [] });
+    }
+  };
+  useEffect(() => { void load(); }, []);
+
+  const convene = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ meeting: Meeting }>("/boardroom/convene", { topic: topic.trim() || undefined });
+      setLatest(r.meeting);
+      toast.success("The boardroom met — minutes are in.");
+      void load();
+    } catch {
+      toast.error("The boardroom couldn't convene — try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggleAuto = async (v: boolean) => {
+    setData((d) => (d ? { ...d, settings: { ...d.settings, enabled: v } } : d));
+    try { await api.post("/boardroom/settings", { enabled: v }); }
+    catch { toast.error("Couldn't update autopilot."); }
+  };
+
+  const participants = data?.participants ?? [];
+  const enabled = data?.settings.enabled ?? false;
+
+  return (
+    <Section
+      icon={Users}
+      title="Autonomous Boardroom"
+      subtitle="Your agents meet on their own — grow revenue, handle bookings, and market — within this org."
+      className="mb-5"
+      actions={<>
+        <label className="flex items-center gap-2 text-xs font-medium"><Switch checked={enabled} onCheckedChange={(v) => void toggleAuto(v)} aria-label="autopilot" /> Autopilot</label>
+        <Button size="sm" loading={busy} onClick={() => void convene()}><Zap className="h-4 w-4" /> Convene now</Button>
+      </>}
+    >
+      <div className="space-y-4">
+        <div>
+          <p className="mb-1.5 text-xs font-medium text-[var(--muted)]">{participants.length} in the room{enabled ? " · convenes on schedule" : ""} — build more in Agent Studio and they all get a seat</p>
+          <div className="flex flex-wrap gap-1.5">
+            {participants.map((p) => (
+              <span key={p.name} className="inline-flex items-center gap-1.5 rounded-[var(--r-pill)] bg-[var(--bg)] px-2.5 py-1 text-xs">
+                <span>{p.emoji}</span> {p.name}
+                {p.role === "custom" && <span className="text-[0.6rem] text-[var(--muted)]">· yours</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <input
+          className="w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-[var(--brand-400)]"
+          placeholder="Optional topic (else they take on revenue + bookings + marketing)"
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+        />
+
+        {busy && <p className="flex items-center gap-2 text-xs text-[var(--brand-600)]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> The room is discussing…</p>}
+
+        {latest ? (
+          <div className="space-y-4">
+            {latest.summary && (
+              <div className="rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_10%,transparent)] p-3">
+                <p className="text-sm"><span className="font-semibold">Chair's readout — </span>{latest.summary}</p>
+              </div>
+            )}
+            {!!latest.transcript.length && (
+              <div className="space-y-2">
+                {latest.transcript.map((t, i) => (
+                  <div key={i} className="flex gap-2.5">
+                    <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--bg)] text-base">{t.emoji}</span>
+                    <div className="min-w-0 flex-1 rounded-[var(--r-md)] bg-[var(--bg)] px-3 py-2">
+                      <p className="text-[0.7rem] font-semibold">{t.speaker}</p>
+                      <p className="text-sm text-[var(--muted)]">{t.text}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              {!!latest.decisions.length && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold">Decisions</p>
+                  <ul className="space-y-1">
+                    {latest.decisions.map((d, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-sm"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--success)]" /> {d}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {!!latest.action_items.length && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold">Action items</p>
+                  <ul className="space-y-1">
+                    {latest.action_items.map((a, i) => (
+                      <li key={i} className="text-sm"><span className="font-medium">{a.owner}:</span> <span className="text-[var(--muted)]">{a.action}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            {latest.marketing_draft && (
+              <div className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-xs font-semibold">📣 Marketing draft — ready to post</span>
+                  <button onClick={() => { void navigator.clipboard?.writeText(latest.marketing_draft || ""); toast.success("Copied"); }} className="ml-auto inline-flex items-center gap-1 text-xs text-[var(--brand-600)] hover:underline"><Copy className="h-3.5 w-3.5" /> Copy</button>
+                </div>
+                <p className="whitespace-pre-wrap text-sm">{latest.marketing_draft}</p>
+              </div>
+            )}
+            {(data?.meetings.length ?? 0) > 1 && <p className="text-[0.7rem] text-[var(--muted)]">{data!.meetings.length} meetings on record.</p>}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--muted)]">No meetings yet — press <strong>Convene now</strong> and your agents will meet and produce a plan. Turn on <strong>Autopilot</strong> to have them convene on their own.</p>
+        )}
+      </div>
+    </Section>
   );
 }

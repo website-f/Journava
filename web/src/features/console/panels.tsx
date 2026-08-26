@@ -357,7 +357,7 @@ export function ConsolePolicy() {
   return (
     <div>
       <PageHead icon={FileCheck2} title="Policy, duty of care & ESG" subtitle="Corporate controls the agents enforce on every search + fleet risk and carbon." />
-      <Card className="mb-4 border-[var(--brand-400)]/40">
+      <Card className="mb-4">
         <div className="mb-1 text-sm font-semibold">How this works</div>
         <ul className="space-y-1 text-xs text-[var(--muted)]">
           <li><b className="text-[var(--text)]">Travel policy</b> — set fare caps, cabin class, preferred airlines and a hotel/night limit (upload your policy doc in the assistant 📎 and AI extracts them). Every flight &amp; hotel search your agents run then <b className="text-[var(--text)]">enforces these rules and flags any breach</b>, so no one books outside policy.</li>
@@ -558,7 +558,7 @@ function PackagePageCard() {
 
   if (loading || !page) return null;
   return (
-    <Card className="mb-4 border-[var(--brand-400)]/40">
+    <Card className="mb-4">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="text-sm font-semibold">🌐 Your public planning page</div>
         <Button size="sm" variant={page.enabled ? "secondary" : "primary"} loading={busy} onClick={() => save({ enabled: !page.enabled })}>
@@ -606,7 +606,7 @@ export function ConsoleInbox() {
   return (
     <div>
       <PageHead icon={Mail} title="Inbox" subtitle="Inbound WhatsApp enquiries — auto-answered by your AI qualifier and captured as leads. Point Meta's webhook at /api/v1/webhooks/whatsapp to go live." />
-      <Card className="mb-4 border-[var(--brand-400)]/40">
+      <Card className="mb-4">
         <div className="mb-2 text-sm font-semibold">Try it — simulate an inbound WhatsApp message</div>
         <div className="flex flex-wrap items-center gap-2">
           <input className={cn(inputCls, "min-w-0 flex-1")} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="What a prospect might message you" />

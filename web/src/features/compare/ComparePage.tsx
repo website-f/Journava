@@ -166,7 +166,7 @@ export function ComparePage() {
           <p className="mt-2 text-xs text-[var(--muted)]">Add at least two trips to compare.</p>
         )}
         {(asking || answer) && (
-          <div className="mt-3 rounded-[var(--r-md)] border-l-2 border-[var(--brand-500)] bg-[color-mix(in_srgb,var(--brand-400)_8%,transparent)] p-3 text-sm leading-relaxed">
+          <div className="mt-3 rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm leading-relaxed">
             {asking ? "Weighing the options…" : answer}
           </div>
         )}

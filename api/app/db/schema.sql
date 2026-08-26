@@ -426,6 +426,28 @@ CREATE TABLE IF NOT EXISTS price_adjustments (
 );
 CREATE INDEX IF NOT EXISTS price_adjustments_org_idx ON price_adjustments (org_id, created_at DESC);
 
+-- Autonomous Boardroom: the org's agents convene on their own to discuss revenue,
+-- bookings and marketing, and record decisions + action items. One settings row
+-- per org, plus a log of every meeting's minutes.
+CREATE TABLE IF NOT EXISTS boardroom_settings (
+    org_id      UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    enabled     BOOLEAN NOT NULL DEFAULT FALSE,   -- include in the scheduled convene
+    focus       TEXT,                             -- a standing objective for the room
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS boardroom_meetings (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    topic            TEXT,
+    summary          TEXT,
+    transcript       JSONB NOT NULL DEFAULT '[]',   -- [{speaker, emoji, role, text}]
+    decisions        JSONB NOT NULL DEFAULT '[]',   -- [str]
+    action_items     JSONB NOT NULL DEFAULT '[]',   -- [{owner, action}]
+    marketing_draft  TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS boardroom_meetings_org_idx ON boardroom_meetings (org_id, created_at DESC);
+
 -- A published, brandable public page per business (the "direct hotel site"):
 -- logo + about, reachable at /h/{slug} with no account. Mirrors package_pages.
 CREATE TABLE IF NOT EXISTS org_profiles (
