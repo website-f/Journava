@@ -69,6 +69,18 @@ const STATUS: Record<AgentStatus, { label: string; color: string }> = {
   error: { label: "error", color: "var(--danger)" },
 };
 
+/**
+ * Total status→style lookup. The backend's status vocabulary can grow (e.g. an
+ * auto-recovery emitting "done"), and — critically — the SSE bus replays its
+ * buffer on reconnect, so an unknown status produced while the tab was idle can
+ * land in state on resume. A raw `STATUS[unknown]` there returns undefined and
+ * destructuring `.color` throws, tripping the whole-page ErrorBoundary (the
+ * "reopen the app to fix it" crash). Falling back to `idle` makes that
+ * impossible for any current or future status.
+ */
+const styleFor = (status: string | null | undefined) =>
+  STATUS[(status ?? "idle") as AgentStatus] ?? STATUS.idle;
+
 const tint = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
 
 // Graph topology matching supervisor.py 3-tier architecture
@@ -189,7 +201,7 @@ export function AgentControl() {
       nds.map((node) => {
         const latest = statusMap[node.id];
         const status: AgentStatus = latest?.status ?? "idle";
-        const color = STATUS[status].color;
+        const color = styleFor(status).color;
         const message = latest?.message ?? AGENTS.find((a) => a.slug === node.id)?.role ?? "";
         return {
           ...node,
@@ -418,7 +430,7 @@ function MissionControl({ events, statusMap, connected }: {
           {AGENTS.map((a) => {
             const s = (statusMap[a.slug]?.status ?? "idle") as AgentStatus;
             const busy = s === "working" || s === "monitoring" || s === "waiting";
-            const { color, label } = STATUS[s];
+            const { color, label } = styleFor(s);
             return (
               <div
                 key={a.slug}
@@ -492,10 +504,10 @@ function HealthStrip() {
         System health · 24h
       </p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Hud label="LLM calls" value={String(t.llm_calls_24h)} />
+        <Hud label="LLM calls" value={String(t.llm_calls_24h ?? 0)} />
         <Hud label="Error rate" value={`${errPct}%`} />
         <Hud label="Cache hit" value={hit} />
-        <Hud label="Tokens" value={t.tokens_24h.toLocaleString()} />
+        <Hud label="Tokens" value={(t.tokens_24h ?? 0).toLocaleString()} />
         {t.slowest_agent && <Hud label="Slowest agent" value={t.slowest_agent} />}
       </div>
     </div>
@@ -545,7 +557,7 @@ function EventStream({ events }: { events: Array<{ id: string; ts: string; agent
 
 // Custom React Flow node
 function AgentNodeComponent({ data }: { data: { label: string; status: AgentStatus; message?: string } }) {
-  const { color } = STATUS[data.status ?? "idle"];
+  const { color } = styleFor(data.status);
   const isWorking = data.status === "working";
 
   return (

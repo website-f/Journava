@@ -357,7 +357,10 @@ async def auto_recover(
         f"Refunded {currency} {refund['amount']:.2f} ({refund.get('pct')}%); "
         f"rebooked to {best['title']} at {best.get('price_currency')} {best.get('price_amount')}."
     )
-    sse.publish("flight", "done", summary, data={"auto_recover": "complete"})
+    # "active" (the UI renders it as "done") — NOT a literal "done", which isn't a
+    # valid AgentStatus and used to crash the Agents page when the SSE buffer
+    # replayed this event after the app had been idle.
+    sse.publish("flight", "active", summary, data={"auto_recover": "complete"})
     try:
         await notify.broadcast(summary, subject="Journava — flight auto-recovered")
     except Exception as exc:  # noqa: BLE001 — notification is best-effort
