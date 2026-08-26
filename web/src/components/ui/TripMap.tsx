@@ -163,7 +163,11 @@ export function TripMap({ className }: TripMapProps) {
     const day = payload.days.find((d) => d.day === activeDay);
     if (!day) return;
 
+    let cancelled = false;
     const draw = () => {
+      // A deferred draw (map.once("load")) can fire AFTER the active day changed;
+      // bail so we never paint a stale day's markers over the current one.
+      if (cancelled || !mapInstance.current) return;
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
       const bounds = new maplibregl.LngLatBounds();
@@ -208,6 +212,14 @@ export function TripMap({ className }: TripMapProps) {
 
     if (map.isStyleLoaded()) draw();
     else map.once("load", draw);
+    // Clean up on day switch / unmount so markers never linger from a prior day
+    // (the "4 pins on the map but the panel says 1 stop" bug).
+    return () => {
+      cancelled = true;
+      map.off("load", draw);
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+    };
   }, [activeDay, payload]);
 
   if (!results || failed || (!payload && items.length === 0)) return null;

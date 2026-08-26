@@ -26,6 +26,20 @@ def _hotel_link(title: str, destination: str) -> str:
     so every stay card is clickable even without a provider deep-link."""
     return "https://www.google.com/travel/search?q=" + quote_plus(f"{title} {destination}")
 
+
+def _ota_links(title: str, destination: str) -> list[dict[str, str]]:
+    """Compare-and-book links across the major OTAs for one property, so the
+    traveller isn't stuck with a single Google link. Deterministic search URLs
+    (no key needed) — the same property on Booking.com, Agoda, Trip.com, etc."""
+    q = quote_plus(f"{title} {destination}")
+    return [
+        {"name": "Booking.com", "url": f"https://www.booking.com/searchresults.html?ss={q}"},
+        {"name": "Agoda", "url": f"https://www.agoda.com/search?q={q}"},
+        {"name": "Trip.com", "url": f"https://www.trip.com/hotels/list?searchValue={q}"},
+        {"name": "Hotels.com", "url": f"https://www.hotels.com/Hotel-Search?q-destination={q}"},
+        {"name": "Google", "url": f"https://www.google.com/travel/search?q={q}"},
+    ]
+
 logger = logging.getLogger(__name__)
 
 
@@ -256,6 +270,14 @@ class HotelAgent(BaseAgent):
                             "rating": opt.get("rating")
                             or (opt.get("raw") or {}).get("rating")
                             or (opt.get("raw") or {}).get("stars"),
+                            # A short guest-review snippet always shown on the card;
+                            # falls back to the agent's reasoning when the model
+                            # didn't emit a dedicated review.
+                            "review": opt.get("review")
+                            or (opt.get("raw") or {}).get("review")
+                            or opt.get("reasoning"),
+                            # Compare-and-book across the major OTAs (not just Google).
+                            "ota_links": _ota_links(title, destination),
                         },
                     )
                 )

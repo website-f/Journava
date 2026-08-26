@@ -153,6 +153,13 @@ class FlightAgent(BaseAgent):
         # sorted), but never drop a fare that won one of the ranking buckets.
         options = self._cap_options(options, ranking, limit=18)
 
+        # Attach OTA compare links to every fare so the card can show "compare on
+        # Skyscanner · Kayak · Trip.com …" — not just the one source that crawled.
+        ota = _flight_ota_links(origin, destination, depart)
+        for o in options:
+            if isinstance(o.raw, dict) and not o.raw.get("ota_links"):
+                o.raw["ota_links"] = ota
+
         self._remember_route(origin, destination, options, source_report)
 
         warnings = self._warnings(options, source_report)
@@ -1453,6 +1460,30 @@ def _google_flights_results_url(origin: str, destination: str, depart: str) -> s
     """A one-way Google Flights *results* URL that renders parseable flight rows."""
     query = f"Flights to {destination} from {origin} on {depart} one way"
     return "https://www.google.com/travel/flights?hl=en&gl=my&curr=MYR&q=" + quote_plus(query)
+
+
+def _flight_ota_links(origin: str, destination: str, depart: str) -> list[dict[str, str]]:
+    """Compare-and-book links for the route across the big metasearch/OTAs, so a
+    traveller isn't stuck on one Google link. Search-style URLs (no key), with the
+    date wired in when known so they land on the right results."""
+    o, d = (origin or "").upper(), (destination or "").upper()
+    iso = depart if re.fullmatch(r"\d{4}-\d{2}-\d{2}", depart or "") else None
+    links = [{"name": "Google Flights", "url": _google_flights_url(o, d, depart)}]
+    if iso:
+        yy = iso[2:4] + iso[5:7] + iso[8:10]
+        links += [
+            {"name": "Skyscanner", "url": f"https://www.skyscanner.net/transport/flights/{o.lower()}/{d.lower()}/{yy}/"},
+            {"name": "Kayak", "url": f"https://www.kayak.com/flights/{o}-{d}/{iso}"},
+            {"name": "Trip.com", "url": f"https://www.trip.com/flights/showfarefirst?dcity={o.lower()}&acity={d.lower()}&ddate={iso}&triptype=ow"},
+            {"name": "Momondo", "url": f"https://www.momondo.com/flight-search/{o}-{d}/{iso}"},
+        ]
+    else:
+        links += [
+            {"name": "Skyscanner", "url": f"https://www.skyscanner.net/transport/flights/{o.lower()}/{d.lower()}/"},
+            {"name": "Kayak", "url": f"https://www.kayak.com/flights/{o}-{d}"},
+            {"name": "Trip.com", "url": "https://www.trip.com/flights/"},
+        ]
+    return links
 
 
 #: One flight row from the Google Flights accessibility tree. The link's aria

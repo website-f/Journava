@@ -10,6 +10,7 @@ import {
 import { Badge, Button, NumberField, Select } from "@/components/ui";
 import { Rail } from "@/components/layout/Page";
 import { Money } from "@/components/ui/Money";
+import { OtaLinks } from "@/components/ui/OtaLinks";
 import { SourceTrustRow } from "@/components/ui/SourceBadge";
 import { cn } from "@/lib/cn";
 import type { AgentPlanResult, PlanOption } from "@/lib/types";
@@ -380,6 +381,7 @@ function FlightCard({
     flight_numbers?: string[];
     preference_notes?: string[];
     price_status?: string;
+    ota_links?: { name: string; url: string }[];
   };
   const notes = raw.preference_notes ?? [];
 
@@ -466,6 +468,8 @@ function FlightCard({
           </span>
         )}
       </div>
+
+      <OtaLinks links={raw.ota_links} label="Compare fares" />
     </motion.div>
   );
 }

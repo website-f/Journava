@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ExternalLink, ShoppingCart, Video, Building2, CheckCircle } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
+import { OtaLinks } from "@/components/ui/OtaLinks";
 import { SourceBadge } from "@/components/ui/SourceBadge";
 import { api } from "@/lib/api";
 import type { PlanOption } from "@/lib/types";
@@ -24,6 +25,7 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
     listing_id?: string;
     original_price?: number | null;
     discount_pct?: number | null;
+    ota_links?: { name: string; url: string }[] | null;
   };
   const link = option.booking_url || option.source_url || null;
   const isStay = option.kind === "hotel";
@@ -178,6 +180,8 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
           )}
         </div>
       )}
+
+      {isStay && !isDirect && <OtaLinks links={raw.ota_links} label="Compare & book" />}
     </div>
   );
 }
