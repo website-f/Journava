@@ -120,6 +120,14 @@ export function App() {
     );
   }
 
+  // Guard the WHOLE consumer app: a business (hotel/agency) account belongs in
+  // the console, so any consumer URL (/account, /research, /trip, …) redirects
+  // there. This closes the "logged in as hotel but still seeing the traveller
+  // account tab" hole — the previous redirect only covered "/".
+  if (isB2B) {
+    return <Navigate to="/console" replace />;
+  }
+
   return (
     <AppShell>
       <AnimatePresence mode="wait">
