@@ -126,6 +126,16 @@ class FlightAgent(BaseAgent):
         # what made every "alternative flight" identical to the cancelled one.
         bypass_cache = bool((context or {}).get("bypass_cache"))
 
+        # Return leg (round trip only): a one-way DEST->ORIGIN search on the return
+        # date, kicked off CONCURRENTLY with the outbound so it adds no wall-clock.
+        ret_task = None
+        ret_depart = str(request.end_date) if request.end_date else ""
+        if ret_depart and ret_depart != depart and destination != "unknown":
+            ret_req = request.model_copy(update={"start_date": request.end_date, "end_date": None})
+            ret_task = asyncio.create_task(
+                self._search(ret_req, profile, destination, origin, ret_depart, bypass_cache=bypass_cache)
+            )
+
         options, source_report = await self._search(
             request, profile, origin, destination, depart, bypass_cache=bypass_cache
         )
@@ -160,6 +170,23 @@ class FlightAgent(BaseAgent):
             if isinstance(o.raw, dict) and not o.raw.get("ota_links"):
                 o.raw["ota_links"] = ota
 
+        # Finalise the return leg (if any): light post-processing, then serialise
+        # into data.return for the Return tab.
+        return_serialized: list[dict[str, Any]] = []
+        if ret_task is not None:
+            try:
+                ret_opts, _ = await ret_task
+                ret_opts = self._dedupe_cross_source(ret_opts)
+                ret_opts = self._apply_preferences(ret_opts, profile, request)
+                ret_opts = self._cap_options(ret_opts, self._rank(ret_opts), limit=12)
+                ota_ret = _flight_ota_links(destination, origin, ret_depart)
+                for o in ret_opts:
+                    if isinstance(o.raw, dict) and not o.raw.get("ota_links"):
+                        o.raw["ota_links"] = ota_ret
+                return_serialized = [o.model_dump(mode="json") for o in ret_opts]
+            except Exception as exc:  # noqa: BLE001 — the return leg is best-effort
+                logger.info("return-leg search failed: %s", exc)
+
         self._remember_route(origin, destination, options, source_report)
 
         warnings = self._warnings(options, source_report)
@@ -187,6 +214,10 @@ class FlightAgent(BaseAgent):
                 "bookable_count": sum(1 for o in options if o.bookable),
                 "recalled_from_memory": bool(recalled),
                 "policy": policy_eval,
+                # Return-leg options for the Go/Return tabs (round trips only).
+                "round_trip": bool(return_serialized),
+                "return_route": ({"origin": destination, "destination": origin, "depart": ret_depart} if return_serialized else None),
+                "return": return_serialized,
             },
         )
 

@@ -90,13 +90,21 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
   const [sort, setSort] = useState<SortMode>("relevance");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
-  const options = result.options ?? [];
-  const ranking = (result.data?.ranking ?? {}) as Record<string, string | null>;
+  // Round-trip: the backend returns the return-leg options in data.return, shown
+  // in a "Return" tab. `leg` picks which set of options everything below renders.
+  const returnOptions = (result.data?.return ?? []) as PlanOption[];
+  const returnRoute = (result.data?.return_route ?? {}) as { origin?: string; destination?: string; depart?: string };
+  const roundTrip = Boolean(result.data?.round_trip) && returnOptions.length > 0;
+  const [leg, setLeg] = useState<"go" | "return">("go");
+  const isReturn = roundTrip && leg === "return";
+
+  const options = isReturn ? returnOptions : (result.options ?? []);
+  const ranking = (isReturn ? {} : (result.data?.ranking ?? {})) as Record<string, string | null>;
   const sources = (result.data?.sources ?? {}) as Record<
     string,
     { count?: number; status?: string; pages_read?: string[] }
   >;
-  const route = (result.data?.route ?? {}) as {
+  const route = (isReturn ? returnRoute : (result.data?.route ?? {})) as {
     origin?: string;
     destination?: string;
     depart?: string;
@@ -179,6 +187,30 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
       </header>
 
       <p className="text-sm text-[var(--muted)]">{result.summary}</p>
+
+      {/* Round trip → Go / Return leg tabs (return options come from data.return). */}
+      {roundTrip && (
+        <div className="inline-flex gap-1 rounded-[var(--r-md)] bg-[var(--bg)] p-1 text-sm font-medium">
+          {(["go", "return"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setLeg(v)}
+              className={cn(
+                "rounded-[calc(var(--r-md)-2px)] px-3.5 py-1.5 transition-colors",
+                leg === v ? "bg-[var(--surface)] text-[var(--brand-600)] shadow-[var(--shadow-1)]" : "text-[var(--muted)]",
+              )}
+            >
+              {v === "go" ? "✈ Go" : "↩ Return"}
+            </button>
+          ))}
+        </div>
+      )}
+      {isReturn && (
+        <p className="text-xs text-[var(--muted)]">
+          One-way return options ({returnRoute.origin} → {returnRoute.destination}
+          {returnRoute.depart ? ` · ${returnRoute.depart}` : ""}). Your outbound fare may already include the return.
+        </p>
+      )}
 
       {/* Bypass-OTA hook: the ~10% OTA commission avoided by booking direct. */}
       {commissionSaved && commissionSaved.amount > 0 && (
