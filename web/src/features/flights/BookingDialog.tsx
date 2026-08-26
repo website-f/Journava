@@ -86,6 +86,7 @@ export function BookingDialog({
   route: routeProp,
   initialBooking,
   onClose,
+  onBooked,
 }: {
   option?: PlanOption;
   route?: { origin?: string; destination?: string; depart?: string };
@@ -93,6 +94,9 @@ export function BookingDialog({
    *  starting fresh from a search result. */
   initialBooking?: FlightBooking;
   onClose: () => void;
+  /** Fired once the order is paid/ticketed, with the booking reference — lets the
+   *  parent mark the flight booked so its card locks (no rebook). */
+  onBooked?: (ref: string) => void;
 }) {
   // Resuming? Derive the display option/route from the stored booking snapshot.
   const option = optionProp ?? optionFromBooking(initialBooking);
@@ -237,6 +241,14 @@ export function BookingDialog({
 
   const stage: BookingStage = booking?.stage ?? "draft";
   const stepIndex = STAGE_INDEX[stage] ?? 0;
+
+  // Once the order is paid/ticketed, tell the parent (upsert-safe if fired twice).
+  useEffect(() => {
+    if (booking && (booking.stage === "paid" || booking.stage === "ticketed")) {
+      onBooked?.(booking.order_no || booking.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking?.stage]);
   const passengerReady =
     passenger.given_name.trim() !== "" &&
     passenger.surname.trim() !== "" &&

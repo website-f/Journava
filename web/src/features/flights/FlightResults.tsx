@@ -82,6 +82,7 @@ const SOURCE_MATCH: Record<SourceFilter, (o: PlanOption) => boolean> = {
 
 export function FlightResults({ result }: { result: AgentPlanResult }) {
   const [booking, setBooking] = useState<PlanOption | null>(null);
+  const addBooking = useBookings((s) => s.add);
 
   // Post-search filters (applied client-side over the returned options).
   const [maxBudget, setMaxBudget] = useState<number | null>(null);
@@ -94,7 +95,7 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
   // in a "Return" tab. `leg` picks which set of options everything below renders.
   const returnOptions = (result.data?.return ?? []) as PlanOption[];
   const returnRoute = (result.data?.return_route ?? {}) as { origin?: string; destination?: string; depart?: string };
-  const roundTrip = Boolean(result.data?.round_trip) && returnOptions.length > 0;
+  const roundTrip = Boolean(result.data?.round_trip);
   const [leg, setLeg] = useState<"go" | "return">("go");
   const isReturn = roundTrip && leg === "return";
 
@@ -207,8 +208,9 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
       )}
       {isReturn && (
         <p className="text-xs text-[var(--muted)]">
-          One-way return options ({returnRoute.origin} → {returnRoute.destination}
-          {returnRoute.depart ? ` · ${returnRoute.depart}` : ""}). Your outbound fare may already include the return.
+          {returnOptions.length === 0
+            ? `No separate return-leg fares found for ${returnRoute.origin} → ${returnRoute.destination}. Your outbound fare may already include the return.`
+            : `One-way return options (${returnRoute.origin} → ${returnRoute.destination}${returnRoute.depart ? ` · ${returnRoute.depart}` : ""}). Your outbound fare may already include the return.`}
         </p>
       )}
 
@@ -389,6 +391,21 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
           option={booking}
           route={route}
           onClose={() => setBooking(null)}
+          onBooked={(ref) => {
+            // Atlas purchase completed -> mark the flight booked so the card locks
+            // (no rebook) and shows the Booked state, consistent with manual marks.
+            void addBooking({
+              item_kind: "flight",
+              item_key: flightKey(booking.title, booking.price_amount),
+              direction: isReturn ? "return" : "outbound",
+              title: booking.title,
+              provider: booking.provider,
+              price_amount: booking.price_amount,
+              price_currency: booking.price_currency,
+              booking_ref: ref,
+              source: "atlas",
+            });
+          }}
         />
       )}
     </section>

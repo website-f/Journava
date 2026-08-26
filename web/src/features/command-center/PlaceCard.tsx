@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ExternalLink, ShoppingCart, Video, Building2, CheckCircle } from "@/components/ui/icons";
+import { ExternalLink, ShoppingCart, Video, Building2, CheckCircle, Image as ImageIcon, MapPin, Utensils } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { OtaLinks } from "@/components/ui/OtaLinks";
 import { BookingMark } from "@/components/ui/BookingMark";
@@ -107,15 +107,23 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
 
   return (
     <div className="surface-card flex h-full flex-col overflow-hidden p-4 transition-colors hover:border-[var(--brand-400)]">
-      {image && (
-        <img
-          src={image}
-          alt={option.title}
-          loading="lazy"
-          onError={() => setImage(null)}
-          className="-mx-4 -mt-4 mb-3 h-28 w-[calc(100%+2rem)] max-w-none object-cover"
-        />
-      )}
+      {/* Fixed-height thumbnail area (placeholder when the source has no image)
+          so every card — stays, places, eats — is the same height in the grid. */}
+      <div className="-mx-4 -mt-4 mb-3 h-28 w-[calc(100%+2rem)] overflow-hidden bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)]">
+        {image ? (
+          <img
+            src={image}
+            alt={option.title}
+            loading="lazy"
+            onError={() => setImage(null)}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-[var(--brand-500)] opacity-35">
+            {isStay ? <Building2 className="h-8 w-8" weight="duotone" /> : option.kind === "restaurant" ? <Utensils className="h-8 w-8" weight="duotone" /> : option.kind === "activity" ? <MapPin className="h-8 w-8" weight="duotone" /> : <ImageIcon className="h-8 w-8" weight="duotone" />}
+          </div>
+        )}
+      </div>
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-sm font-semibold">{option.title}</p>
         {price && (

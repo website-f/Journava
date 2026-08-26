@@ -214,9 +214,11 @@ class FlightAgent(BaseAgent):
                 "bookable_count": sum(1 for o in options if o.bookable),
                 "recalled_from_memory": bool(recalled),
                 "policy": policy_eval,
-                # Return-leg options for the Go/Return tabs (round trips only).
-                "round_trip": bool(return_serialized),
-                "return_route": ({"origin": destination, "destination": origin, "depart": ret_depart} if return_serialized else None),
+                # Go/Return tabs: round_trip is true for any round-trip REQUEST
+                # (return date present), so the tabs always show; the Return tab
+                # then lists return_serialized (may be empty -> empty state).
+                "round_trip": ret_task is not None,
+                "return_route": ({"origin": destination, "destination": origin, "depart": ret_depart} if ret_task is not None else None),
                 "return": return_serialized,
             },
         )

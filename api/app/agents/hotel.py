@@ -22,9 +22,10 @@ from app.supplier import store as supplier_store
 
 
 def _hotel_link(title: str, destination: str) -> str:
-    """A guaranteed 'View / Book' target — Google Hotels search for the property,
-    so every stay card is clickable even without a provider deep-link."""
-    return "https://www.google.com/travel/search?q=" + quote_plus(f"{title} {destination}")
+    """The primary 'View & book' target — a Booking.com search for the property.
+    Booking.com's search reliably resolves the property (Google Hotels' deep link
+    often lands on an empty result), and the full OTA set is in `ota_links`."""
+    return "https://www.booking.com/searchresults.html?ss=" + quote_plus(f"{title} {destination}")
 
 
 def _ota_links(title: str, destination: str) -> list[dict[str, str]]:
@@ -242,6 +243,10 @@ class HotelAgent(BaseAgent):
             try:
                 title = opt.get("title", "Hotel")
                 url = opt.get("booking_url") or opt.get("url")
+                # Google Hotels deep links frequently land on an empty result —
+                # prefer a Booking.com search that reliably resolves the property.
+                if url and "google.com/travel" in url:
+                    url = None
                 link = url or _hotel_link(title, destination)
                 # Grounded in the live crawl → tag it as researched, not invented.
                 src = "camofox" if (sourced or url) else "llm"
