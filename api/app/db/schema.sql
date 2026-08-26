@@ -549,6 +549,25 @@ CREATE TABLE IF NOT EXISTS trip_collaborators (
 );
 CREATE INDEX IF NOT EXISTS trip_collab_user_idx ON trip_collaborators (user_id);
 CREATE INDEX IF NOT EXISTS trip_collab_saved_idx ON trip_collaborators (saved_id);
+
+-- Agent Studio: plug-and-play role agents a business (hotel/agency) creates at
+-- runtime. The owner describes a role in plain language; a meta-agent drafts the
+-- identity + system prompt + skills + tools, and a generic executor runs it
+-- (LLM + optional live web research). Org-scoped; no code deploy.
+CREATE TABLE IF NOT EXISTS custom_agents (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    role          TEXT NOT NULL,
+    tagline       TEXT,
+    emoji         TEXT,
+    system_prompt TEXT NOT NULL,
+    skills        JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tools         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    runs          INTEGER NOT NULL DEFAULT 0,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS custom_agents_org_idx ON custom_agents (org_id, created_at DESC);
 ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'result';
 -- When a proactive trip notification (e.g. a countdown) was last sent, so the
 -- reminder loop pings each trip once instead of every cycle.

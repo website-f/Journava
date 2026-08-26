@@ -87,7 +87,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user,
       isPlatformAdmin: Boolean(user?.is_platform_admin),
-      isAgency: Boolean(user?.memberships?.some((m) => m.org_kind === "agency")),
+      // Any business tenant (agency / hotel / supplier / corporate …) is B2B and
+      // belongs in the console. Gating on the SET — everything that isn't a
+      // personal traveller or the platform org — rather than the single literal
+      // "agency" is why a hotel account no longer silently drops to the consumer
+      // app when its org kind is labelled anything other than exactly "agency".
+      isAgency: Boolean(
+        user?.memberships?.some(
+          (m) => m.org_kind && m.org_kind !== "personal" && m.org_kind !== "platform",
+        ),
+      ),
       signIn,
       signUp,
       signOut,

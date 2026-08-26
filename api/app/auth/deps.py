@@ -39,35 +39,44 @@ def require_platform_admin(request: Request) -> dict[str, Any]:
 
 _AGENCY_ROLES = {"owner", "admin", "staff"}
 
+#: Every org kind that is a business/B2B tenant (as opposed to a personal
+#: traveller or the platform org). Gating on this SET rather than the single
+#: literal "agency" means a hotel/supplier org — however its kind was labelled —
+#: still reaches the console instead of silently dropping to the consumer app.
+_B2B_KINDS = {"agency", "supplier", "hotel", "business", "corporate", "tmc", "operator"}
+
+
+def _is_b2b(kind: str | None) -> bool:
+    return bool(kind) and kind not in ("personal", "platform")
+
 
 async def resolve_org_id(request: Request) -> str:
     """Best-effort org id for org-scoped features (policy, corporate console).
 
-    Prefers an agency membership, falls back to the caller's first org, then to
+    Prefers a B2B membership, falls back to the caller's first org, then to
     "default". Unlike `require_agency` this never 403s — a platform admin gets
     their platform org so support/testing works.
     """
     claims = current_claims(request)
     user_id = str(claims["sub"])
     memberships = await store.memberships_for_user(user_id)
-    agency = next((m for m in memberships if m["org_kind"] == "agency"), None)
-    chosen = agency or (memberships[0] if memberships else None)
+    b2b = next((m for m in memberships if _is_b2b(m.get("org_kind"))), None)
+    chosen = b2b or (memberships[0] if memberships else None)
     return str(chosen["org_id"]) if chosen else "default"
 
 
 async def require_agency(request: Request) -> dict[str, Any]:
-    """Resolve the caller's agency (supplier) org, or 403.
+    """Resolve the caller's business (agency / hotel / supplier) org, or 403.
 
-    A supplier user has a membership in an org of kind 'agency'. Returns that org
-    context ({user_id, org_id, org_name, role}) so supplier endpoints can scope
-    every read and write to it. Platform admins are allowed through against the
-    first agency org (for support), if one exists.
+    A B2B user has a membership in an org whose kind is not personal/platform.
+    Returns that org context ({user_id, org_id, org_name, role}) so console
+    endpoints can scope every read and write to it.
     """
     claims = current_claims(request)
     user_id = str(claims["sub"])
     memberships = await store.memberships_for_user(user_id)
     for m in memberships:
-        if m["org_kind"] == "agency" and m["role"] in _AGENCY_ROLES:
+        if (m["org_kind"] in _B2B_KINDS or _is_b2b(m.get("org_kind"))) and m["role"] in _AGENCY_ROLES:
             return {
                 "user_id": user_id,
                 "org_id": m["org_id"],
