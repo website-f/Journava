@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2, Calendar, Download, Plus, UserPlus, Globe, Mail,
@@ -771,7 +771,7 @@ export function ConsoleFinance() {
 
 /* ------------------------------------------------------------- Bookings */
 
-type Booking = { id: string; property_name: string; room_title: string; guest_name: string; channel: string; check_in: string | null; check_out: string | null; nights: number; amount: number; currency: string; status: string; payment_status?: string | null };
+type Booking = { id: string; property_name: string; room_title: string; guest_name: string; guest_contact?: string | null; channel: string; check_in: string | null; check_out: string | null; nights: number; amount: number; currency: string; status: string; payment_status?: string | null; created_at?: string | null };
 
 function NewBookingModal({
   open, onOpenChange, listingOpts, onBooked,
@@ -824,6 +824,7 @@ export function ConsoleBookings() {
   const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
   const bookings = data?.bookings ?? [];
   const [modal, setModal] = useState(false);
+  const [view, setView] = useState<Booking | null>(null);
   const [busy, setBusy] = useState("");
 
   // Ops agent: keep every booking's status right for today's date on open.
@@ -857,6 +858,7 @@ export function ConsoleBookings() {
       />
 
       <NewBookingModal open={modal} onOpenChange={setModal} listingOpts={listingOpts} onBooked={reload} />
+      <BookingDetailModal booking={view} onClose={() => setView(null)} />
 
       <BookingCalendar bookings={bookings} />
 
@@ -865,12 +867,12 @@ export function ConsoleBookings() {
           <thead>
             <tr className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
               <th className="px-4 py-2.5">Guest</th><th className="px-4 py-2.5">Room</th><th className="px-4 py-2.5">Dates</th>
-              <th className="px-4 py-2.5">Channel</th><th className="px-4 py-2.5 text-right">Amount</th><th className="px-4 py-2.5">Status</th>
+              <th className="px-4 py-2.5">Channel</th><th className="px-4 py-2.5 text-right">Amount</th><th className="px-4 py-2.5">Status</th><th className="px-4 py-2.5" />
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">Loading…</td></tr>
-              : !bookings.length ? <tr><td colSpan={6} className="px-4 py-10 text-center text-[var(--muted)]">No bookings yet — press <strong>New booking</strong> to take one.</td></tr>
+            {loading ? <tr><td colSpan={7} className="px-4 py-6 text-center text-[var(--muted)]">Loading…</td></tr>
+              : !bookings.length ? <tr><td colSpan={7} className="px-4 py-10 text-center text-[var(--muted)]">No bookings yet — press <strong>New booking</strong> to take one.</td></tr>
                 : bookings.map((b) => (
                   <tr key={b.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)]">
                     <td className="px-4 py-2.5 font-medium">{b.guest_name}</td>
@@ -879,12 +881,56 @@ export function ConsoleBookings() {
                     <td className="px-4 py-2.5 text-xs">{b.channel}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold"><Money amount={b.amount} currency={b.currency} /></td>
                     <td className="px-4 py-2.5"><Badge variant={b.status === "cancelled" ? "warning" : "success"}>{b.status}</Badge></td>
+                    <td className="px-4 py-2.5 text-right"><Button size="sm" variant="secondary" onClick={() => setView(b)}>View</Button></td>
                   </tr>
                 ))}
           </tbody>
         </table>
       </Section>
     </div>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] py-2 last:border-0">
+      <span className="text-xs text-[var(--muted)]">{label}</span>
+      <span className="min-w-0 text-right text-sm font-medium">{children}</span>
+    </div>
+  );
+}
+
+/** Read-only detail of one booking — opened by the row's View button. */
+function BookingDetailModal({ booking, onClose }: { booking: Booking | null; onClose: () => void }) {
+  const b = booking;
+  return (
+    <Modal
+      open={!!b}
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      icon={<Calendar className="h-5 w-5" />}
+      title={b?.guest_name ?? "Booking"}
+      description={b ? `${b.room_title} · ${b.property_name}` : undefined}
+      footer={<Button variant="ghost" onClick={onClose}>Close</Button>}
+    >
+      {b && (
+        <div>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Badge variant={b.status === "cancelled" ? "warning" : "success"}>{b.status.replace(/_/g, " ")}</Badge>
+            {b.payment_status && <Badge variant={b.payment_status === "paid" ? "success" : "brand"}>{b.payment_status}</Badge>}
+          </div>
+          <DetailRow label="Guest">{b.guest_name}</DetailRow>
+          <DetailRow label="Contact">{b.guest_contact || "—"}</DetailRow>
+          <DetailRow label="Room">{b.room_title}</DetailRow>
+          <DetailRow label="Property">{b.property_name}</DetailRow>
+          <DetailRow label="Check-in">{b.check_in || "—"}</DetailRow>
+          <DetailRow label="Check-out">{b.check_out || "—"}</DetailRow>
+          <DetailRow label="Nights">{b.nights}</DetailRow>
+          <DetailRow label="Channel">{b.channel}</DetailRow>
+          <DetailRow label="Amount"><Money amount={b.amount} currency={b.currency} /></DetailRow>
+          {b.created_at && <DetailRow label="Booked on">{b.created_at.slice(0, 10)}</DetailRow>}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -1304,7 +1350,10 @@ function HotelProfileCard() {
           {logo ? <img src={logo} alt="logo" className="h-11 w-11 rounded-[var(--r-md)] object-cover" /> : <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[var(--bg)] text-[0.6rem] text-[var(--muted)]">logo</span>}
           <Field label="Company / hotel name" className="flex-1"><input className={inputCls} placeholder="e.g. Kinabalu Bay Resort" value={name} onChange={(e) => setName(e.target.value)} /></Field>
         </div>
-        <Field label="Logo image URL"><input className={inputCls} placeholder="https://…" value={logo} onChange={(e) => setLogo(e.target.value)} /></Field>
+        <div>
+          <p className="mb-1.5 text-xs font-medium text-[var(--muted)]">Logo</p>
+          <ImageDropzone value={logo ? [logo] : []} onChange={(urls) => setLogo(urls[0] ?? "")} max={1} label="Drag & drop your logo" />
+        </div>
         <Field label="About"><textarea rows={2} className={cn(inputCls, "resize-none")} placeholder="Shown on your public page" value={about} onChange={(e) => setAbout(e.target.value)} /></Field>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" loading={busy} onClick={() => void save({})}>Save profile</Button>
@@ -1320,94 +1369,116 @@ function HotelProfileCard() {
 /** AI room composer — a right-hand off-canvas: drop several photos, add a hint,
  *  and the mesh writes a full bookable listing. The uploaded photos become the
  *  room's gallery; the first is the cover. */
+const EMPTY_LISTING = {
+  name: "", city: "", room_title: "", description: "", price: "", original_price: "",
+  discount_pct: "", capacity: "2", amenities: "", star_rating: "", halal_friendly: true,
+};
+
 function ListingComposerDrawer({
   open, onOpenChange, onPublished,
 }: { open: boolean; onOpenChange: (o: boolean) => void; onPublished: () => void }) {
-  const [hint, setHint] = useState({ name: "", city: "", room: "", notes: "", halal_friendly: true });
+  const [form, setForm] = useState({ ...EMPTY_LISTING });
   const [images, setImages] = useState<string[]>([]);
-  const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState("");
+  const set = (patch: Partial<typeof EMPTY_LISTING>) => setForm((f) => ({ ...f, ...patch }));
+  const reset = () => { setForm({ ...EMPTY_LISTING }); setImages([]); };
 
-  const reset = () => { setHint({ name: "", city: "", room: "", notes: "", halal_friendly: true }); setImages([]); setDraft(null); };
-
+  // AI fills the fields (description, price, amenities…) from the photos + a hint;
+  // everything stays editable so the owner can adjust before publishing.
   const aiDraft = async () => {
-    if (!hint.city) return toast.info("Enter a city first.");
+    if (!form.city.trim() && !form.room_title.trim()) return toast.info("Add a city or room name for the AI to work from.");
     setBusy("draft");
     try {
-      // Feed the first uploaded photo to the vision model so the copy matches the
-      // real room; otherwise the agent writes from the text hint alone.
-      const r = await api.post<{ draft: Draft }>("/supplier/ai/draft-listing", { ...hint, image: images[0] || undefined, kind: "hotel" });
-      setDraft(r.draft);
+      const r = await api.post<{ draft: Draft }>("/supplier/ai/draft-listing", {
+        name: form.name, city: form.city, room: form.room_title, notes: form.description,
+        halal_friendly: form.halal_friendly, image: images[0] || undefined, kind: "hotel",
+      });
+      const d = r.draft;
+      set({
+        name: form.name || d.name || "",
+        city: form.city || d.city || "",
+        room_title: form.room_title || d.room_title || "",
+        description: d.description || form.description,
+        price: d.suggested_price ? String(d.suggested_price) : form.price,
+        original_price: d.original_price ? String(d.original_price) : form.original_price,
+        discount_pct: d.discount_pct ? String(d.discount_pct) : form.discount_pct,
+        capacity: d.capacity ? String(d.capacity) : form.capacity,
+        amenities: (d.amenities ?? d.perks ?? []).join(", ") || form.amenities,
+        star_rating: d.star_rating ? String(d.star_rating) : form.star_rating,
+      });
+      if (d.image_url && !images.length) setImages([d.image_url]);
+      toast.success("AI filled the listing — review and publish.");
     } catch { toast.error("AI draft failed"); } finally { setBusy(""); }
   };
+
   const publish = async () => {
-    if (!draft) return;
+    const price = Number(form.price);
+    if (!form.city.trim() || !form.room_title.trim() || !price) return toast.info("Add a city, room name and a nightly price.");
     setBusy("publish");
-    const gallery = images.length ? images : draft.image_url ? [draft.image_url] : [];
+    const amenities = form.amenities.split(",").map((s) => s.trim()).filter(Boolean);
     try {
       await api.post("/supplier/ai/publish", {
-        name: draft.name, city: draft.city, kind: draft.kind, halal_friendly: draft.halal_friendly,
-        room_title: draft.room_title, description: draft.description, price_amount: draft.suggested_price,
-        price_currency: draft.price_currency, perks: draft.perks, capacity: draft.capacity,
-        image_url: gallery[0] ?? draft.image_url, image_urls: gallery, amenities: draft.amenities,
-        original_price: draft.original_price, discount_pct: draft.discount_pct, star_rating: draft.star_rating,
+        name: form.name.trim() || `${form.city.trim()} stay`, city: form.city.trim(), kind: "hotel",
+        halal_friendly: form.halal_friendly, room_title: form.room_title.trim(), description: form.description.trim(),
+        price_amount: price, price_currency: "MYR", perks: amenities, capacity: Number(form.capacity) || 2,
+        image_url: images[0] ?? null, image_urls: images, amenities,
+        original_price: form.original_price ? Number(form.original_price) : null,
+        discount_pct: form.discount_pct ? Number(form.discount_pct) : null,
+        star_rating: form.star_rating ? Number(form.star_rating) : null,
       });
-      toast.success("Published — live to travellers searching " + draft.city);
+      toast.success("Published — live to travellers searching " + form.city);
       reset(); onPublished(); onOpenChange(false);
     } catch { toast.error("Publish failed"); } finally { setBusy(""); }
   };
 
-  const cover = images[0] || draft?.image_url || null;
+  const numCls = cn(inputCls, "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none");
   return (
     <Drawer
       open={open}
-      onOpenChange={(o) => { if (!o) { onOpenChange(false); } else onOpenChange(true); }}
-      icon={<Sparkles className="h-5 w-5" />}
+      onOpenChange={onOpenChange}
+      icon={<Building2 className="h-5 w-5" />}
       title="Add a room"
-      description="Drop photos, add a hint, and AI writes the whole bookable listing."
-      footer={draft ? <>
-        <Button variant="ghost" onClick={() => setDraft(null)}>Discard draft</Button>
+      description="Fill in the details — or let AI draft them from your photos — then publish."
+      footer={<>
+        <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
         <Button onClick={publish} loading={busy === "publish"}>Publish — go live</Button>
-      </> : undefined}
+      </>}
     >
       <div className="space-y-4">
         <div>
           <p className="mb-1.5 text-xs font-medium text-[var(--muted)]">Room photos</p>
           <ImageDropzone value={images} onChange={setImages} />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Property name"><input className={inputCls} placeholder="e.g. Kinabalu Bay Resort" value={hint.name} onChange={(e) => setHint({ ...hint, name: e.target.value })} /></Field>
-          <Field label="City"><input className={inputCls} placeholder="e.g. Kota Kinabalu" value={hint.city} onChange={(e) => setHint({ ...hint, city: e.target.value })} /></Field>
-          <Field label="Room / ticket"><input className={inputCls} placeholder="e.g. Deluxe Sea View" value={hint.room} onChange={(e) => setHint({ ...hint, room: e.target.value })} /></Field>
-          <Field label="Notes"><input className={inputCls} placeholder="Amenities, location…" value={hint.notes} onChange={(e) => setHint({ ...hint, notes: e.target.value })} /></Field>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <label className="flex items-center gap-2 text-sm"><Switch checked={hint.halal_friendly} onCheckedChange={(c) => setHint({ ...hint, halal_friendly: c })} aria-label="halal" /> Halal-friendly</label>
-          <Button onClick={aiDraft} loading={busy === "draft"}><Sparkles className="h-4 w-4" /> {draft ? "Re-draft with AI" : "Draft with AI"}</Button>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+          <p className="text-xs text-[var(--muted)]">Let AI write the description, price &amp; amenities from your photos + a hint.</p>
+          <Button size="sm" variant="secondary" onClick={aiDraft} loading={busy === "draft"}><Sparkles className="h-4 w-4" /> Draft with AI</Button>
         </div>
 
-        {draft && (
-          <div className="overflow-hidden rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--bg)]">
-            {cover && (
-              <div className="relative">
-                <img src={cover} alt={draft.room_title} className="h-44 w-full object-cover" />
-                {images.length > 1 && <span className="absolute bottom-2 right-2 rounded-[var(--r-pill)] bg-black/60 px-2 py-0.5 text-[0.65rem] font-semibold text-white">{images.length} photos</span>}
-              </div>
-            )}
-            <div className="p-4">
-              <div className="mb-1 flex flex-wrap items-center gap-2">
-                <Badge variant="brand">AI draft</Badge>
-                <span className="font-semibold">{draft.room_title}</span>
-                {draft.star_rating ? <span className="text-xs text-[var(--warning)]">{"★".repeat(Math.max(1, Math.min(5, draft.star_rating)))}</span> : null}
-                <span className="ml-auto text-right">
-                  {draft.original_price && draft.original_price > draft.suggested_price ? <span className="mr-1 text-xs text-[var(--muted)] line-through">{draft.price_currency} {draft.original_price.toLocaleString()}</span> : null}
-                  <span className="text-sm font-semibold">{draft.price_currency} {draft.suggested_price.toLocaleString()}</span><span className="text-xs text-[var(--muted)]">/night</span>
-                  {draft.discount_pct ? <span className="ml-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold text-[var(--success)]">-{draft.discount_pct}%</span> : null}
-                </span>
-              </div>
-              <p className="text-sm text-[var(--muted)]">{draft.description}</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">{(draft.amenities ?? draft.perks).map((p) => <Chip key={p}>{p}</Chip>)}</div>
-            </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Property name"><input className={inputCls} placeholder="e.g. Kinabalu Bay Resort" value={form.name} onChange={(e) => set({ name: e.target.value })} /></Field>
+          <Field label="City"><input className={inputCls} placeholder="e.g. Kota Kinabalu" value={form.city} onChange={(e) => set({ city: e.target.value })} /></Field>
+        </div>
+        <Field label="Room / ticket"><input className={inputCls} placeholder="e.g. Deluxe Sea View" value={form.room_title} onChange={(e) => set({ room_title: e.target.value })} /></Field>
+        <Field label="Description" hint="What makes this room special — view, size, bed, extras."><textarea rows={3} className={cn(inputCls, "resize-none")} placeholder="A bright sea-facing room with a king bed, balcony and free breakfast…" value={form.description} onChange={(e) => set({ description: e.target.value })} /></Field>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Price / night (MYR)"><input type="number" min={0} className={numCls} placeholder="420" value={form.price} onChange={(e) => set({ price: e.target.value })} /></Field>
+          <Field label="Was / night (optional)" hint="Shows a struck-through 'before' price."><input type="number" min={0} className={numCls} placeholder="520" value={form.original_price} onChange={(e) => set({ original_price: e.target.value })} /></Field>
+          <Field label="Discount %"><input type="number" min={0} max={90} className={numCls} placeholder="15" value={form.discount_pct} onChange={(e) => set({ discount_pct: e.target.value })} /></Field>
+          <Field label="Sleeps (guests)"><input type="number" min={1} className={numCls} placeholder="2" value={form.capacity} onChange={(e) => set({ capacity: e.target.value })} /></Field>
+        </div>
+
+        <Field label="Amenities" hint="Comma-separated — shown as tags on your listing."><input className={inputCls} placeholder="Free Wi-Fi, Pool, Sea view, Breakfast, Air-con" value={form.amenities} onChange={(e) => set({ amenities: e.target.value })} /></Field>
+
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="flex items-center gap-2 pb-2 text-sm"><Switch checked={form.halal_friendly} onCheckedChange={(c) => set({ halal_friendly: c })} aria-label="halal" /> Halal-friendly</label>
+          <Field label="Star rating (1–5)" className="w-32"><input type="number" min={1} max={5} className={numCls} placeholder="4" value={form.star_rating} onChange={(e) => set({ star_rating: e.target.value })} /></Field>
+        </div>
+
+        {images[0] && (
+          <div className="overflow-hidden rounded-[var(--r-md)] border border-[var(--border)]">
+            <img src={images[0]} alt="cover preview" className="h-40 w-full object-cover" />
           </div>
         )}
       </div>

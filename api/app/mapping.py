@@ -236,8 +236,18 @@ async def trip_map(body: MapRequest) -> dict[str, Any]:
         return {"configured": False, "provider": provider, "reason": "could not geocode destination"}
     proximity = (city[1], city[0])  # (lat, lng) for biasing subsequent lookups
 
-    # Geocode each place, biased toward the city. MapTiler tolerates parallelism;
-    # Nominatim is serialized by its lock inside _geocode.
+    # Geocode each place, biased toward the city. Bound concurrency to 3: the
+    # keyless Photon instance rate-limits a big parallel burst, which used to drop
+    # the *later* stops (day 2 & 3) and leave those days with no pins or legs. A
+    # small semaphore + one retry makes every day resolve as reliably as day 1.
+    sem = asyncio.Semaphore(3)
+
+    async def _try(name: str) -> list[float] | None:
+        pt = await _geocode(name, key, proximity)
+        if not pt:
+            pt = await _geocode(f"{name}, {city_name}", key, proximity)
+        return pt
+
     async def locate(item: MapItem) -> dict[str, Any] | None:
         kind = (item.kind or "activity").lower()
         if kind in _SKIP_KINDS:
@@ -245,18 +255,22 @@ async def trip_map(body: MapRequest) -> dict[str, Any]:
         name = _clean_title(item.title)
         if not name:
             return None
-        # Many titles already carry the locale ("Naritasan Shinshoji Temple"), so
-        # try the bare name first (nearest-to-city wins), then fall back to a
-        # city-qualified query for generic names.
-        pt = await _geocode(name, key, proximity)
+        async with sem:
+            # Many titles already carry the locale ("Naritasan Shinshoji Temple"),
+            # so try the bare name first (nearest-to-city wins), then a city-
+            # qualified query. One backed-off retry rides out a transient 429.
+            pt = await _try(name)
+            if not pt:
+                await asyncio.sleep(0.4)
+                pt = await _try(name)
         if not pt:
-            pt = await _geocode(f"{name}, {city_name}", key, proximity)
-        if not pt:
+            logger.info("map: could not locate %r near %s", name, city_name)
             return None
+        day = item.day_index if isinstance(item.day_index, int) and item.day_index > 0 else 1
         return {
             "title": item.title,
             "kind": item.kind or "activity",
-            "day_index": item.day_index or 1,
+            "day_index": day,
             "starts_at": item.starts_at,
             "lng": pt[0],
             "lat": pt[1],

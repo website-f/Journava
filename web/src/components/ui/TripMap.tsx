@@ -59,7 +59,6 @@ function markerEl(index: number, color: string): HTMLElement {
   return el;
 }
 
-const short = (t: string) => t.split(" ").slice(0, 2).join(" ");
 const dist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
 
 interface TripMapProps {
@@ -260,30 +259,43 @@ export function TripMap({ className }: TripMapProps) {
         )}
         <div ref={mapRef} className="h-[300px] w-full sm:h-[380px] lg:h-[440px]" />
         {day && day.places.length > 0 && (
-          <div className="border-t border-[var(--border)] px-3 py-2">
-            {/* Day totals — stops, total travel time and distance across the route */}
-            <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.7rem]">
+          <div className="border-t border-[var(--border)] px-4 py-3">
+            {/* Day summary — stops, total travel time + distance across the route */}
+            <div className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               <span className="font-semibold text-[var(--text)]">Day {day.day} route</span>
-              <span className="text-[var(--muted)]">{day.places.length} stop{day.places.length === 1 ? "" : "s"}</span>
+              <span className="rounded-[var(--r-pill)] bg-[var(--bg)] px-2 py-0.5 text-[var(--muted)]">{day.places.length} stop{day.places.length === 1 ? "" : "s"}</span>
               {day.legs.length > 0 && (
                 <>
                   <span className="text-[var(--muted)]">~{day.legs.reduce((s, l) => s + l.minutes, 0)} min travel</span>
+                  <span className="text-[var(--muted)]">·</span>
                   <span className="text-[var(--muted)]">{dist(day.legs.reduce((s, l) => s + l.meters, 0))} total</span>
                 </>
               )}
             </div>
-            {/* Per-leg breakdown — mode, time and distance between each stop */}
-            {day.legs.length > 0 && (
-              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.7rem] text-[var(--muted)]">
-                {day.legs.map((lg, i) => (
-                  <span key={i} className="inline-flex items-center gap-1">
-                    {lg.mode === "walk" ? <Footprints className="h-3 w-3" /> : <Bus className="h-3 w-3" />}
-                    {short(day.places[i]?.title ?? "")} → {short(day.places[i + 1]?.title ?? "")}
-                    <span className="font-medium text-[var(--text)]">~{lg.minutes} min · {dist(lg.meters)} {lg.mode}</span>
-                  </span>
-                ))}
-              </div>
-            )}
+            {/* Numbered itinerary — each stop with its time, and the leg (distance +
+                time + mode) to the next, shown on a connector between the pins. */}
+            <ol>
+              {day.places.map((p, i) => {
+                const leg = day.legs[i]; // leg from this stop to the next
+                return (
+                  <li key={i}>
+                    <div className="flex items-start gap-2.5">
+                      <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--brand-500)] text-[0.7rem] font-bold text-white">{i + 1}</span>
+                      <div className="min-w-0 flex-1 pb-0.5">
+                        <p className="truncate text-sm font-medium leading-tight">{p.title}</p>
+                        <p className="text-[0.65rem] capitalize text-[var(--muted)]">{p.starts_at ? `${p.starts_at} · ` : ""}{p.kind}</p>
+                      </div>
+                    </div>
+                    {leg && (
+                      <div className="ml-[0.7rem] flex items-center gap-1.5 border-l-2 border-dashed border-[var(--border)] py-1 pl-4 text-[0.7rem] text-[var(--muted)]">
+                        {leg.mode === "walk" ? <Footprints className="h-3 w-3 shrink-0" /> : <Bus className="h-3 w-3 shrink-0" />}
+                        <span className="font-medium text-[var(--text)]">~{leg.minutes} min</span> · {dist(leg.meters)} · {leg.mode}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
           </div>
         )}
       </div>
