@@ -400,6 +400,32 @@ ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS amenities TEXT[] NOT NULL
 ALTER TABLE supplier_properties ADD COLUMN IF NOT EXISTS amenities TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE supplier_properties ADD COLUMN IF NOT EXISTS star_rating INTEGER;
 
+-- Revenue Autopilot: a yield agent that watches competitor rates + demand and
+-- auto-adjusts nightly prices within guardrails. One settings row per org, plus
+-- an audit log of every adjustment (proposed or applied).
+CREATE TABLE IF NOT EXISTS revenue_autopilot (
+    org_id         UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_apply     BOOLEAN NOT NULL DEFAULT FALSE,
+    max_change_pct INTEGER NOT NULL DEFAULT 15,   -- cap on a single run's move
+    floor_pct      INTEGER NOT NULL DEFAULT 60,   -- never price below this % of the list price
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS price_adjustments (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    listing_id   UUID REFERENCES supplier_listings(id) ON DELETE CASCADE,
+    room_title   TEXT,
+    old_price    NUMERIC(12,2),
+    new_price    NUMERIC(12,2),
+    delta_pct    NUMERIC(6,2),
+    demand_level TEXT,
+    rationale    TEXT,
+    applied      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS price_adjustments_org_idx ON price_adjustments (org_id, created_at DESC);
+
 -- A published, brandable public page per business (the "direct hotel site"):
 -- logo + about, reachable at /h/{slug} with no account. Mirrors package_pages.
 CREATE TABLE IF NOT EXISTS org_profiles (

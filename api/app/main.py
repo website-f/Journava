@@ -51,6 +51,8 @@ from app.chaos_lab import router as chaos_router
 from app.mapping import geo_router
 from app.mapping import router as mapping_router
 from app.pricewatch import router as pricewatch_router
+from app.revenue import router as revenue_router
+from app.wargame import router as wargame_router
 from app.expenses import router as expenses_router
 from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
@@ -89,6 +91,7 @@ async def _reminder_loop() -> None:
 
     from app.bookings import send_daily_digests, send_due_reminders, send_trip_countdowns
     from app.pricewatch import run_price_watches
+    from app.revenue import run_all_autopilots
 
     while True:
         try:
@@ -97,6 +100,7 @@ async def _reminder_loop() -> None:
             await send_trip_countdowns()
             await send_daily_digests()  # "what to do today" for trips in progress
             await run_price_watches()  # re-price armed fare watches; alert on drops
+            await run_all_autopilots()  # supplier Revenue Autopilot: auto-adjust room prices
         except asyncio.CancelledError:  # noqa: PERF203
             break
         except Exception as exc:  # noqa: BLE001
@@ -205,6 +209,8 @@ app.include_router(chaos_router)
 app.include_router(mapping_router)
 app.include_router(geo_router)
 app.include_router(pricewatch_router)
+app.include_router(revenue_router)
+app.include_router(wargame_router)
 app.include_router(expenses_router)
 
 

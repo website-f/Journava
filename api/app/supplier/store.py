@@ -201,6 +201,22 @@ async def add_listing(org_id: str, property_id: str, **fields: Any) -> dict[str,
     return _listing(dict(row)) if row else None
 
 
+async def update_listing_price(org_id: str, listing_id: str, new_price: float) -> bool:
+    """Set a listing's nightly price (org-scoped) — used by Revenue Autopilot."""
+    pool = await db.get_pool()
+    if pool is None:
+        return False
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE supplier_listings SET price_amount = $3, updated_at = now() "
+            "WHERE id = $1 AND org_id = $2",
+            _uuid(listing_id),
+            _uuid(org_id),
+            new_price,
+        )
+    return result.endswith("1")
+
+
 async def delete_listing(org_id: str, listing_id: str) -> bool:
     pool = await db.get_pool()
     if pool is None:

@@ -234,6 +234,13 @@ async def _occupancy_pct(listing_id: str) -> float | None:
 @router.post("/price/{listing_id}")
 async def price(listing_id: str, agency: dict = Depends(require_agency)) -> dict[str, Any]:
     """Yield agent: dynamic price from comps + occupancy + live demand (events)."""
+    return await recommend_price(listing_id)
+
+
+async def recommend_price(listing_id: str) -> dict[str, Any]:
+    """The yield agent's recommendation for one listing — comps (Camofox) +
+    occupancy (channel inventory) + live demand (events/season). Shared by the
+    manual "AI price" button and the Revenue Autopilot sweep."""
     row = await _listing_row(listing_id)
     if not row:
         return {"error": "Listing not found."}

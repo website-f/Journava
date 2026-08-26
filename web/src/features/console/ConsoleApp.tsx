@@ -1,6 +1,6 @@
 import { Suspense, lazy, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2, Calendar, Wallet, Bot, Mail } from "@/components/ui/icons";
+import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2, Calendar, Wallet, Bot, Mail, Zap, Scales } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui";
 import { useAuth } from "@/providers/AuthProvider";
 import { cn } from "@/lib/cn";
@@ -27,6 +27,8 @@ const ConsoleEscrow = lazy(() => import("./panels").then((m) => ({ default: m.Co
 const ConsolePolicy = lazy(() => import("./panels").then((m) => ({ default: m.ConsolePolicy })));
 const ConsoleAgentStudio = lazy(() => import("./AgentStudio").then((m) => ({ default: m.ConsoleAgentStudio })));
 const ConsoleInbox = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleInbox })));
+const ConsoleRevenue = lazy(() => import("./RevenueWarRoom").then((m) => ({ default: m.ConsoleRevenue })));
+const ConsoleWarRoom = lazy(() => import("./RevenueWarRoom").then((m) => ({ default: m.ConsoleWarRoom })));
 
 type ConsoleMode = "clients" | "property";
 
@@ -41,6 +43,7 @@ const NAV_CLIENTS = [
 const NAV_PROPERTY = [
   { to: "/console/listings", label: "Listings", icon: Building2 },
   { to: "/console/bookings", label: "Bookings", icon: Calendar },
+  { to: "/console/revenue", label: "Revenue autopilot", icon: Zap },
   { to: "/console/negotiate", label: "Rate negotiation", icon: Sparkles },
   { to: "/console/firewall", label: "Inventory firewall", icon: ShieldCheck },
 ];
@@ -50,6 +53,7 @@ function navFor(mode: ConsoleMode) {
     { to: "/console", label: "Overview", icon: TrendingUp, end: true },
     { to: "/console/studio", label: "Agent Studio", icon: Bot },
     ...(mode === "clients" ? NAV_CLIENTS : NAV_PROPERTY),
+    { to: "/console/warroom", label: "War room", icon: Scales },
     { to: "/console/finance", label: "Finance", icon: Wallet },
     { to: "/console/escrow", label: "Escrow & refunds", icon: CreditCard },
     { to: "/console/policy", label: "Policy & ESG", icon: FileCheck2 },
@@ -146,6 +150,8 @@ export function ConsoleApp() {
               <Route path="/console/inbox" element={<ConsoleInbox />} />
               <Route path="/console/listings" element={<ConsoleListings />} />
               <Route path="/console/bookings" element={<ConsoleBookings />} />
+              <Route path="/console/revenue" element={<ConsoleRevenue />} />
+              <Route path="/console/warroom" element={<ConsoleWarRoom />} />
               <Route path="/console/negotiate" element={<ConsoleNegotiate />} />
               <Route path="/console/finance" element={<ConsoleFinance />} />
               <Route path="/console/disruptions" element={<ConsoleDisruptions />} />
