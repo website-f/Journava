@@ -173,7 +173,8 @@ async def list_clients(agency: dict = Depends(require_agency)) -> dict[str, Any]
         return {"clients": []}
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, email, telegram_chat_id, whatsapp, channel, notes, created_at "
+            "SELECT id, name, email, telegram_chat_id, whatsapp, channel, notes, "
+            "source, destination, share_token, created_at "
             "FROM agency_clients WHERE org_id = $1 ORDER BY created_at DESC",
             uuid.UUID(agency["org_id"]),
         )
@@ -183,6 +184,8 @@ async def list_clients(agency: dict = Depends(require_agency)) -> dict[str, Any]
                 "id": str(r["id"]), "name": r["name"], "email": r["email"],
                 "telegram_chat_id": r["telegram_chat_id"], "whatsapp": r["whatsapp"],
                 "channel": r["channel"], "notes": r["notes"],
+                "source": r["source"], "destination": r["destination"],
+                "share_token": r["share_token"],
             }
             for r in rows
         ]

@@ -47,7 +47,10 @@ _ADMIN_PREFIXES = (
 
 
 #: Public path prefixes — a client with no account opens a shared plan by token.
-_PUBLIC_PREFIXES = (f"{settings.api_prefix}/shared/",)
+_PUBLIC_PREFIXES = (
+    f"{settings.api_prefix}/shared/",
+    f"{settings.api_prefix}/packages/",  # the public Package Builder funnel
+)
 
 
 def _is_public(path: str) -> bool:

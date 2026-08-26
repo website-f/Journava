@@ -439,7 +439,7 @@ function Chip({ children }: { children: ReactNode }) {
 
 /* -------------------------------------------------------------- Clients */
 
-type Client = { id: string; name: string; email: string | null; telegram_chat_id: string | null; whatsapp: string | null; channel: string; notes: string | null };
+type Client = { id: string; name: string; email: string | null; telegram_chat_id: string | null; whatsapp: string | null; channel: string; notes: string | null; source?: string; destination?: string | null; share_token?: string | null };
 type ClientRun = { dest: string; jobId?: string; status?: string; share_url?: string; delivered?: boolean; detail?: string };
 
 async function pollJob(id: string): Promise<string> {
@@ -501,6 +501,8 @@ export function ConsoleClients() {
     <div>
       <PageHead icon={Sparkles} title="Clients" subtitle="Plan a full package for a client, then send the PDF + an interactive link over Telegram." />
 
+      <PackagePageCard />
+
       <Card className="mb-4">
         <div className="mb-3 text-sm font-semibold">Add a client</div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -523,10 +525,20 @@ export function ConsoleClients() {
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="font-semibold">{c.name}</span>
                   <Badge variant="brand">via {c.channel}</Badge>
+                  {c.source === "package_page" && <Badge variant="success">🌐 from planning page</Badge>}
+                  {c.destination && <Badge>{c.destination}</Badge>}
                   {(c.channel !== "whatsapp" && !c.telegram_chat_id) && <Badge variant="warning">no Telegram id</Badge>}
                   {(c.channel !== "telegram" && !c.whatsapp) && <Badge variant="warning">no WhatsApp</Badge>}
                   {c.notes && <span className="text-xs text-[var(--muted)]">{c.notes}</span>}
                 </div>
+                {c.share_token && (
+                  <p className="mb-2 text-xs">
+                    Auto-drafted package:{" "}
+                    <a href={`/s/${c.share_token}`} target="_blank" rel="noreferrer" className="text-[var(--brand-600)] underline">
+                      view the plan our agents built
+                    </a>
+                  </p>
+                )}
                 <div className="flex flex-wrap items-center gap-2">
                   <input className={cn(inputCls, "max-w-[16rem]")} placeholder="Destination (e.g. Langkawi)" value={run.dest} onChange={(e) => setRun(c.id, { dest: e.target.value })} />
                   <Button size="sm" onClick={() => buildPackage(c.id)} loading={busy === "plan:" + c.id}><Sparkles className="h-3.5 w-3.5" /> Build full package</Button>
@@ -543,6 +555,48 @@ export function ConsoleClients() {
             );
           })}
     </div>
+  );
+}
+
+type PackagePage = { token: string; org_name: string | null; headline: string | null; subhead: string | null; enabled: boolean; url: string };
+
+/** The agency's public lead-capture page: share the link, prospects self-serve a
+ *  trip request, and the mesh auto-drafts a package that lands as a lead. */
+function PackagePageCard() {
+  const { data, loading, reload } = useGet<{ page: PackagePage }>("/agency/package-page");
+  const page = data?.page;
+  const [busy, setBusy] = useState(false);
+  const [headline, setHeadline] = useState("");
+  useEffect(() => { if (page?.headline != null) setHeadline(page.headline); }, [page?.headline]);
+
+  const save = async (patch: Partial<PackagePage>) => {
+    setBusy(true);
+    try { await api.post("/agency/package-page", { headline, ...patch }); reload(); }
+    catch { toast.error("Couldn't update the page."); } finally { setBusy(false); }
+  };
+
+  if (loading || !page) return null;
+  return (
+    <Card className="mb-4 border-[var(--brand-400)]/40">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold">🌐 Your public planning page</div>
+        <Button size="sm" variant={page.enabled ? "secondary" : "primary"} loading={busy} onClick={() => save({ enabled: !page.enabled })}>
+          {page.enabled ? "Enabled" : "Enable"}
+        </Button>
+      </div>
+      <p className="mb-2 text-xs text-[var(--muted)]">
+        Share this link with prospects — they describe their trip on a branded page and your AI agents auto-draft a full package. Each request becomes a lead below.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input readOnly className={cn(inputCls, "min-w-0 flex-1 font-[family-name:var(--font-mono)] text-xs")} value={page.url} />
+        <Button size="sm" variant="secondary" onClick={() => { void navigator.clipboard?.writeText(page.url); toast.success("Link copied"); }}>Copy link</Button>
+        <a href={page.url} target="_blank" rel="noreferrer" className="text-xs text-[var(--brand-600)] underline">Open</a>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input className={cn(inputCls, "min-w-0 flex-1")} placeholder="Headline shown to clients" value={headline} onChange={(e) => setHeadline(e.target.value)} />
+        <Button size="sm" variant="secondary" loading={busy} onClick={() => void save({})}>Save</Button>
+      </div>
+    </Card>
   );
 }
 

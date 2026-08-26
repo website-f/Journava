@@ -41,6 +41,11 @@ const ConsoleApp = lazy(() =>
 const SharedPlan = lazy(() =>
   import("@/features/shared/SharedPlan").then((m) => ({ default: m.SharedPlan })),
 );
+// Public, no-auth Package Builder — a prospective client plans a trip on an
+// agency's branded page and the mesh auto-drafts a package.
+const PackageRequest = lazy(() =>
+  import("@/features/packages/PackageRequest").then((m) => ({ default: m.PackageRequest })),
+);
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -78,12 +83,13 @@ export function App() {
   // Public shared-plan link — renders for anyone, before the auth wall, so a
   // client with no account can open the interactive itinerary. Wrapped in a
   // Route so useParams() sees the :token.
-  if (location.pathname.startsWith("/s/")) {
+  if (location.pathname.startsWith("/s/") || location.pathname.startsWith("/p/")) {
     return (
       <ErrorBoundary resetKey={location.pathname}>
         <Suspense fallback={<RouteFallback />}>
           <Routes location={location}>
             <Route path="/s/:token" element={<SharedPlan />} />
+            <Route path="/p/:token" element={<PackageRequest />} />
           </Routes>
         </Suspense>
       </ErrorBoundary>

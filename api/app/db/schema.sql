@@ -480,6 +480,25 @@ CREATE TABLE IF NOT EXISTS agency_clients (
 );
 CREATE INDEX IF NOT EXISTS agency_clients_org_idx ON agency_clients (org_id, created_at DESC);
 
+-- Where a client/lead came from, and the auto-planned package attached to it, so
+-- a lead captured from the public Package Builder carries its AI-drafted plan.
+ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';  -- manual | package_page
+ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS destination TEXT;
+ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS job_id TEXT;        -- the auto-plan job
+ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS share_token TEXT;   -- the compiled package's public link
+
+-- Public "Package Builder" page an agency publishes: a client picks their wishes
+-- on a branded, no-account page and the agent mesh auto-drafts a full package.
+CREATE TABLE IF NOT EXISTS package_pages (
+    org_id     TEXT PRIMARY KEY,
+    token      TEXT UNIQUE NOT NULL,
+    org_name   TEXT,
+    headline   TEXT,
+    subhead    TEXT,
+    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS shared_plans (
     token       TEXT PRIMARY KEY,
     org_id      UUID REFERENCES organizations(id) ON DELETE CASCADE,
