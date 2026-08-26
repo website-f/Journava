@@ -50,6 +50,7 @@ _ADMIN_PREFIXES = (
 _PUBLIC_PREFIXES = (
     f"{settings.api_prefix}/shared/",
     f"{settings.api_prefix}/packages/",  # the public Package Builder funnel
+    f"{settings.api_prefix}/webhooks/",  # inbound Meta/WhatsApp webhooks
 )
 
 

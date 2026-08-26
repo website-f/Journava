@@ -600,6 +600,69 @@ function PackagePageCard() {
   );
 }
 
+/* --------------------------------------------------------------- Inbox */
+
+type InboxThread = { sender: string; name: string | null; channel: string; messages: { text: string; direction: "in" | "out"; at: string }[] };
+
+/** Inbound WhatsApp enquiries, auto-qualified by AI and captured as leads. The
+ *  "simulate" button drives the same real handler as the live Meta webhook. */
+export function ConsoleInbox() {
+  const { data, loading, reload } = useGet<{ threads: InboxThread[] }>("/agency/inbox");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("Hi! Looking for a 5-day honeymoon in Bali next month, budget ~RM8000. What can you arrange?");
+  const threads = data?.threads ?? [];
+
+  const simulate = async () => {
+    if (!msg.trim()) return;
+    setBusy(true);
+    try {
+      await api.post("/agency/inbox/simulate", { sender: "60123456789", name: "Demo Lead", text: msg });
+      toast.success("AI qualified the lead and replied.");
+      reload();
+    } catch { toast.error("Couldn't process that message."); } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <PageHead icon={Sparkles} title="Inbox" subtitle="Inbound WhatsApp enquiries — auto-answered by your AI qualifier and captured as leads. Point Meta's webhook at /api/v1/webhooks/whatsapp to go live." />
+      <Card className="mb-4 border-[var(--brand-400)]/40">
+        <div className="mb-2 text-sm font-semibold">Try it — simulate an inbound WhatsApp message</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input className={cn(inputCls, "min-w-0 flex-1")} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="What a prospect might message you" />
+          <Button onClick={simulate} loading={busy}><Sparkles className="h-3.5 w-3.5" /> Send as lead</Button>
+        </div>
+        <p className="mt-1.5 text-xs text-[var(--muted)]">Runs the exact handler the live webhook uses — AI reply + lead capture. If you built a “customer reply” agent in Agent Studio, it answers in that voice.</p>
+      </Card>
+
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
+        : !threads.length ? <Card><p className="text-sm text-[var(--muted)]">No conversations yet — simulate one above, or connect WhatsApp.</p></Card>
+          : threads.map((t) => (
+            <Card key={t.sender} className="mb-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="font-semibold">{t.name || t.sender}</span>
+                <Badge variant="success">{t.channel}</Badge>
+                <span className="text-xs text-[var(--muted)]">{t.sender}</span>
+              </div>
+              <div className="space-y-2">
+                {t.messages.map((m, i) => (
+                  <div key={i} className={cn("flex", m.direction === "out" ? "justify-end" : "justify-start")}>
+                    <div className={cn(
+                      "max-w-[80%] rounded-[var(--r-lg)] px-3 py-2 text-sm",
+                      m.direction === "out"
+                        ? "bg-[var(--brand-500)] text-white"
+                        : "bg-[var(--bg)] text-[var(--text)]",
+                    )}>
+                      {m.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ))}
+    </div>
+  );
+}
+
 /* --------------------------------------------------------------- Finance */
 
 type Tx = { id: string; kind: string; amount: number; currency: string; status: string; counterparty: string | null; description: string | null; reference: string | null; created_at: string };

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2, Calendar, Wallet, Bot } from "@/components/ui/icons";
+import { TrendingUp, Plane, ShieldCheck, CreditCard, FileCheck2, LogOut, Sparkles, Building2, Calendar, Wallet, Bot, Mail } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui";
 import { useAuth } from "@/providers/AuthProvider";
 import { cn } from "@/lib/cn";
@@ -26,6 +26,7 @@ const ConsoleFirewall = lazy(() => import("./panels").then((m) => ({ default: m.
 const ConsoleEscrow = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleEscrow })));
 const ConsolePolicy = lazy(() => import("./panels").then((m) => ({ default: m.ConsolePolicy })));
 const ConsoleAgentStudio = lazy(() => import("./AgentStudio").then((m) => ({ default: m.ConsoleAgentStudio })));
+const ConsoleInbox = lazy(() => import("./panels").then((m) => ({ default: m.ConsoleInbox })));
 
 type ConsoleMode = "clients" | "property";
 
@@ -34,6 +35,7 @@ type ConsoleMode = "clients" | "property";
 // the nav; Overview / Escrow / Policy are common to both.
 const NAV_CLIENTS = [
   { to: "/console/clients", label: "Clients", icon: Sparkles },
+  { to: "/console/inbox", label: "Inbox", icon: Mail },
   { to: "/console/disruptions", label: "Trip operations", icon: Plane },
 ];
 const NAV_PROPERTY = [
@@ -141,6 +143,7 @@ export function ConsoleApp() {
               <Route path="/console" element={<ConsoleOverview />} />
               <Route path="/console/studio" element={<ConsoleAgentStudio />} />
               <Route path="/console/clients" element={<ConsoleClients />} />
+              <Route path="/console/inbox" element={<ConsoleInbox />} />
               <Route path="/console/listings" element={<ConsoleListings />} />
               <Route path="/console/bookings" element={<ConsoleBookings />} />
               <Route path="/console/negotiate" element={<ConsoleNegotiate />} />

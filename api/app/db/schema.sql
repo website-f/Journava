@@ -499,6 +499,20 @@ CREATE TABLE IF NOT EXISTS package_pages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Inbound conversations (WhatsApp/etc.): every message in/out of a lead thread,
+-- so the console can show the chat and the AI's auto-replies.
+CREATE TABLE IF NOT EXISTS inbox_messages (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      TEXT NOT NULL,
+    channel     TEXT NOT NULL DEFAULT 'whatsapp',  -- whatsapp | telegram | web
+    sender      TEXT NOT NULL,                      -- the lead's id/number
+    sender_name TEXT,
+    text        TEXT NOT NULL,
+    direction   TEXT NOT NULL,                      -- in | out
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS inbox_org_sender_idx ON inbox_messages (org_id, sender, created_at);
+
 CREATE TABLE IF NOT EXISTS shared_plans (
     token       TEXT PRIMARY KEY,
     org_id      UUID REFERENCES organizations(id) ON DELETE CASCADE,

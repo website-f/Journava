@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     #: to Telegram + the share link.
     whatsapp_token: str = ""
     whatsapp_phone_id: str = ""
+    #: Meta webhook verify token (the string you set in the WhatsApp app config)
+    #: and the org the shared inbound number routes to. Inbound WhatsApp leads
+    #: land against this org; the console "simulate" path scopes to the caller.
+    whatsapp_verify_token: str = "journava-verify"
+    whatsapp_org_id: str | None = None
 
     dashscope_api_key: str | None = None
     gemini_api_key: str | None = None
