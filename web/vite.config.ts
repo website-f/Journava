@@ -35,8 +35,14 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
-        // Never cache the agent SSE stream or API mutations.
-        navigateFallbackDenylist: [/^\/api\//],
+        // Never cache the agent SSE stream or API mutations — and, critically,
+        // never serve the PRECACHED index.html for the public deep-link routes
+        // (/h/, /s/, /p/). Those are links people paste; the cache-first nav
+        // handler would serve a STALE bundle whose router doesn't know the route
+        // yet, so it fell through to the catch-all and redirected to "/" (the
+        // consumer home). Denylisting them makes each paste hit the network and
+        // load the current app — so a shared hotel/plan/package link always works.
+        navigateFallbackDenylist: [/^\/api\//, /^\/h\//, /^\/s\//, /^\/p\//],
         // Take over immediately on a new deploy instead of waiting for every tab
         // to close — otherwise a rebuild keeps serving the old cached bundle
         // (which is exactly why a fixed UI looked unchanged after redeploy).
