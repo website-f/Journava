@@ -193,59 +193,61 @@ function SearchHistory() {
 
   return (
     <div className="space-y-3 py-3">
-      {entries.map((entry) => (
-        <div key={entry.id} className="surface-card p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{entry.goal}</p>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <Badge variant="brand">{entry.scope.replace(/_/g, " ")}</Badge>
-                {entry.destination && <Badge>{entry.destination}</Badge>}
-                <Badge>{entry.agent_count} agents</Badge>
-                {entry.option_count > 0 && <Badge>{entry.option_count} options</Badge>}
+      {entries.map((entry) => {
+        const inCompare = Boolean(savedFor[entry.id] && compareIds.includes(savedFor[entry.id]));
+        return (
+          <div key={entry.id} className="surface-card p-4">
+            {/* Header: the ask + facts, with a small delete in the corner. */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{entry.goal}</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <Badge variant="brand">{entry.scope.replace(/_/g, " ")}</Badge>
+                  {entry.destination && <Badge>{entry.destination}</Badge>}
+                  <Badge>{entry.agent_count} agents</Badge>
+                  {entry.option_count > 0 && <Badge>{entry.option_count} options</Badge>}
+                </div>
+                <p className="mt-1.5 flex items-center gap-1.5 text-[0.65rem] text-[var(--muted)]">
+                  <Clock className="h-3 w-3" />
+                  {formatWhen(entry.created_at)}
+                  {entry.duration_ms != null && ` · took ${(entry.duration_ms / 1000).toFixed(1)}s`}
+                </p>
               </div>
-              <p className="mt-1.5 flex items-center gap-1.5 text-[0.65rem] text-[var(--muted)]">
-                <Clock className="h-3 w-3" />
-                {formatWhen(entry.created_at)}
-                {entry.duration_ms != null && ` · took ${(entry.duration_ms / 1000).toFixed(1)}s`}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {(() => {
-                const inCompare = Boolean(savedFor[entry.id] && compareIds.includes(savedFor[entry.id]));
-                return (
-                  <Button
-                    variant={inCompare ? "primary" : "ghost"}
-                    size="sm"
-                    loading={comparing === entry.id}
-                    aria-label={inCompare ? "In comparison" : "Add to compare"}
-                    onClick={() => void toggleCompare(entry)}
-                  >
-                    <Scales className="h-4 w-4" weight={inCompare ? "fill" : "regular"} />
-                    <span className="hidden sm:inline">{inCompare ? "In compare" : "Compare"}</span>
-                  </Button>
-                );
-              })()}
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={opening === entry.id}
-                onClick={() => void reopen(entry)}
-              >
-                Reopen
-              </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 aria-label="Delete entry"
+                className="-mr-1 -mt-1 shrink-0"
                 onClick={() => void remove(entry)}
               >
                 <Trash2 className="h-4 w-4 text-[var(--danger)]" />
               </Button>
             </div>
+            {/* Actions: Compare + Reopen side by side along the bottom. */}
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant={inCompare ? "primary" : "secondary"}
+                size="sm"
+                className="flex-1"
+                loading={comparing === entry.id}
+                onClick={() => void toggleCompare(entry)}
+              >
+                <Scales className="h-4 w-4" weight={inCompare ? "fill" : "regular"} />
+                {inCompare ? "In compare" : "Compare"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="flex-1"
+                loading={opening === entry.id}
+                onClick={() => void reopen(entry)}
+              >
+                Reopen
+              </Button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
