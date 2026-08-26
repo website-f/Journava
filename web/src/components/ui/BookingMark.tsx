@@ -6,7 +6,16 @@ import { Badge } from "./Badge";
 import { Select } from "./Select";
 import { Modal } from "./Modal";
 import { Money } from "./Money";
+import { api } from "@/lib/api";
 import { useBookings } from "@/stores/bookingsStore";
+
+type MonitorResult = {
+  disrupted?: boolean;
+  reason?: string;
+  status?: { status?: string; delay_minutes?: number | null; carrier?: string; route?: string; mode?: string };
+  recovery?: { summary?: string; additional_cost?: string };
+  alternatives?: { id: string; title: string; price_amount: number | null; price_currency: string | null; within_budget: boolean | null }[];
+};
 
 /**
  * "Booked" state + mark control for a flight/hotel option. Most consumer
@@ -36,6 +45,21 @@ export function BookingMark({
   const [form, setForm] = useState<null | { direction: string; check_in: string; ref: string }>(null);
   const [detail, setDetail] = useState<(typeof mine)[number] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<MonitorResult | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const checkStatus = async () => {
+    setChecking(true);
+    try {
+      // Reuses the trip's flight monitor: real status, and — if disrupted — the
+      // recovery summary + best alternatives already bounded to the traveller's budget.
+      setStatus(await api.post<MonitorResult>("/monitor/flight", { simulate: null, auto_reschedule: false, threshold_minutes: 90 }));
+    } catch {
+      toast.error("Couldn't check flight status.");
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const confirm = async () => {
     setBusy(true);
@@ -68,6 +92,39 @@ export function BookingMark({
           </span>
         </div>
       ))}
+
+      {kind === "flight" && mine.length > 0 && (
+        <div className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium">Flight status &amp; delays</span>
+            <Button size="sm" variant="secondary" onClick={() => void checkStatus()} loading={checking}>Check for delays</Button>
+          </div>
+          {status && (status.reason ? (
+            <p className="mt-1.5 text-xs text-[var(--muted)]">{status.reason}</p>
+          ) : !status.disrupted ? (
+            <p className="mt-1.5 flex items-center gap-1 text-xs text-[var(--success)]">
+              <CheckCircle2 className="h-3.5 w-3.5" /> On time{status.status?.carrier ? ` — ${status.status.carrier} ${status.status.route ?? ""}` : ""}
+            </p>
+          ) : (
+            <div className="mt-1.5 space-y-1">
+              <p className="text-xs font-semibold text-[var(--warning)]">
+                Disrupted{status.status?.delay_minutes ? ` · ~${status.status.delay_minutes} min` : ""} — {status.recovery?.summary}
+              </p>
+              {(status.alternatives ?? []).slice(0, 3).map((a) => (
+                <div key={a.id} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="min-w-0 truncate text-[var(--muted)]">{a.title}</span>
+                  {a.price_amount != null && (
+                    <span className={a.within_budget ? "text-[var(--success)]" : "text-[var(--warning)]"}>
+                      <Money amount={a.price_amount} currency={a.price_currency ?? "MYR"} />
+                    </span>
+                  )}
+                </div>
+              ))}
+              <p className="text-[0.65rem] text-[var(--muted)]">Suggested alternatives — book one and mark it as your new flight.</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {mine.length === 0 && (
         <button
