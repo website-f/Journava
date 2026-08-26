@@ -84,15 +84,26 @@ class MapRequest(BaseModel):
 
 
 def _osm_style() -> dict[str, Any]:
-    """A self-contained MapLibre raster style over OpenStreetMap tiles — no key."""
+    """A self-contained MapLibre raster style — no key.
+
+    Uses Carto's Voyager basemap (OSM data) over their global CDN with three
+    subdomains, instead of tile.openstreetmap.org. OSM's own tile server is
+    rate-limited and discouraged for apps, which made panning/zoom feel slow and
+    unresponsive; Carto's CDN serves parallel, cached tiles so the map is snappy.
+    """
     return {
         "version": 8,
         "sources": {
             "osm": {
                 "type": "raster",
-                "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+                "tiles": [
+                    "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+                    "https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+                    "https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+                ],
                 "tileSize": 256,
-                "attribution": "© OpenStreetMap contributors",
+                "maxzoom": 20,
+                "attribution": "© OpenStreetMap contributors © CARTO",
             }
         },
         "layers": [{"id": "osm", "type": "raster", "source": "osm"}],
