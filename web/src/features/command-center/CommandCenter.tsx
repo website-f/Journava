@@ -75,14 +75,27 @@ export function CommandCenter() {
   const showingAnswer = Boolean(scope && results && activeScope === scope.slug);
   const phase: Phase = !scope ? "pick" : showingAnswer ? "answer" : "ask";
 
+  // A finished result LOCKS the session: it's saved and now lives in History.
+  // Starting anything new — picking a mode or tapping a "For you" suggestion —
+  // clears the last result so the fresh prompt shows, never the previous plan
+  // (which was surfacing when the new scope matched the last plan's scope).
+  const startFresh = () => usePlanStore.setState({ results: null, activeScope: null });
+
   const pickScope = (next: Scope) => {
     resetInputs();
+    startFresh();
     setSearchParams({ scope: next.slug });
   };
 
   const backToPicker = () => {
     setSearchParams({});
   };
+
+  // Land at the top of every new session/phase — otherwise a new prompt opens
+  // scrolled down where the previous results left the page, hiding the input.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [scopeSlug, phase]);
 
   // The CTA is always clickable. Before running, ask the backend whether the
   // prompt is missing an origin or names a country without a city — if so, pop the
@@ -259,6 +272,7 @@ export function CommandCenter() {
           <ForYou
             onLaunch={(slug, goal) => {
               resetInputs(goal ?? "");
+              startFresh();
               setSearchParams({ scope: slug });
             }}
           />

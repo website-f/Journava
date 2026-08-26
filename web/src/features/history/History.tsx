@@ -8,7 +8,9 @@ import {
   Search,
   Ticket,
   Trash2,
+  Scales,
 } from "@/components/ui/icons";
+import { useCompareStore, MAX_COMPARE } from "@/stores/compareStore";
 import { toast } from "sonner";
 import {
   Badge,
@@ -77,6 +79,49 @@ function SearchHistory() {
   const [opening, setOpening] = useState<string | null>(null);
   const navigate = useNavigate();
   const setResults = usePlanStore((s) => s.setResults);
+
+  // Add-to-compare lives here (results are history the moment they're produced).
+  // A history entry isn't a saved_results row, so on first add we persist its
+  // snapshot as a result to get a stable id for the comparison; a local map
+  // (historyId → savedId) lets the same entry toggle off without re-saving.
+  const compareIds = useCompareStore((s) => s.ids);
+  const addCompare = useCompareStore((s) => s.add);
+  const removeCompare = useCompareStore((s) => s.remove);
+  const [savedFor, setSavedFor] = useState<Record<string, string>>({});
+  const [comparing, setComparing] = useState<string | null>(null);
+
+  const toggleCompare = async (entry: HistoryEntry) => {
+    const existing = savedFor[entry.id];
+    if (existing && compareIds.includes(existing)) {
+      removeCompare(existing);
+      return;
+    }
+    setComparing(entry.id);
+    try {
+      let savedId = existing;
+      if (!savedId) {
+        const full = await api.get<HistoryEntry>(`/history/searches/${entry.id}`);
+        if (!full.result_snapshot) {
+          toast.error("That result wasn't saved in full — reopen and run it again.");
+          return;
+        }
+        const saved = await api.post<{ id: string }>("/saved", {
+          kind: "result",
+          scope: full.scope,
+          destination: entry.destination,
+          results: full.result_snapshot,
+        });
+        savedId = saved.id;
+        setSavedFor((m) => ({ ...m, [entry.id]: saved.id }));
+      }
+      if (!addCompare(savedId)) toast.error(`Compare holds up to ${MAX_COMPARE} trips.`);
+      else toast.success("Added to comparison — open Compare to weigh them.");
+    } catch {
+      toast.error("Couldn't add this to the comparison.");
+    } finally {
+      setComparing(null);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -166,6 +211,21 @@ function SearchHistory() {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              {(() => {
+                const inCompare = Boolean(savedFor[entry.id] && compareIds.includes(savedFor[entry.id]));
+                return (
+                  <Button
+                    variant={inCompare ? "primary" : "ghost"}
+                    size="sm"
+                    loading={comparing === entry.id}
+                    aria-label={inCompare ? "In comparison" : "Add to compare"}
+                    onClick={() => void toggleCompare(entry)}
+                  >
+                    <Scales className="h-4 w-4" weight={inCompare ? "fill" : "regular"} />
+                    <span className="hidden sm:inline">{inCompare ? "In compare" : "Compare"}</span>
+                  </Button>
+                );
+              })()}
               <Button
                 variant="secondary"
                 size="sm"

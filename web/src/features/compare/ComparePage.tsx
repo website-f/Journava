@@ -172,49 +172,50 @@ export function ComparePage() {
         )}
       </div>
 
-      {/* Side-by-side table */}
+      {/* One card per trip — stacked on phones, side-by-side from sm up. Each
+          card lists the same facts as label/value rows, so it reads cleanly at
+          any width instead of forcing a horizontal-scrolling wide table. */}
       {loading ? (
-        <Skeleton className="h-64 w-full rounded-[var(--r-lg)]" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {ids.map((id) => (
+            <Skeleton key={id} className="h-64 w-full rounded-[var(--r-lg)]" />
+          ))}
+        </div>
       ) : (
-        <div className="overflow-x-auto">
-          <div className="min-w-[36rem]">
-            {/* Header row: each trip + remove */}
-            <div className="grid gap-3" style={{ gridTemplateColumns: `9rem repeat(${trips.length}, minmax(9rem, 1fr))` }}>
-              <div />
-              {trips.map((t) => (
-                <div key={t.saved_id} className="surface-card relative p-3">
-                  <button
-                    onClick={() => remove(t.saved_id)}
-                    aria-label={`Remove ${t.destination}`}
-                    className="absolute right-2 top-2 rounded-full p-1 text-[var(--muted)] hover:text-[var(--danger)]"
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {trips.map((t) => (
+            <div key={t.saved_id} className="surface-card relative p-4">
+              <button
+                onClick={() => remove(t.saved_id)}
+                aria-label={`Remove ${t.destination}`}
+                className="absolute right-2 top-2 rounded-full p-1 text-[var(--muted)] hover:text-[var(--danger)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <p className="truncate pr-6 font-[family-name:var(--font-display)] text-lg font-bold">
+                {t.destination}
+              </p>
+              {t.social_score != null && (
+                <p className="mt-0.5 text-[0.65rem] text-[var(--muted)]">buzz {Math.round(t.social_score * 100)}</p>
+              )}
+              <dl className="mt-3 space-y-2">
+                {ROWS.map((row) => (
+                  <div
+                    key={row.label}
+                    className="flex items-center justify-between gap-3 border-b border-dashed border-[var(--border)] pb-2 last:border-0 last:pb-0"
                   >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                  <p className="truncate pr-5 font-[family-name:var(--font-display)] text-base font-bold">{t.destination}</p>
-                  {t.social_score != null && (
-                    <p className="mt-0.5 text-[0.65rem] text-[var(--muted)]">buzz {Math.round(t.social_score * 100)}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Fact rows */}
-            <div className="mt-3 space-y-2">
-              {ROWS.map((row) => (
-                <div key={row.label} className="grid items-center gap-3" style={{ gridTemplateColumns: `9rem repeat(${trips.length}, minmax(9rem, 1fr))` }}>
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--muted)]">
-                    {row.icon}
-                    {row.label}
-                  </div>
-                  {trips.map((t) => (
-                    <div key={t.saved_id} className="rounded-[var(--r-md)] border border-[var(--border)] px-3 py-2 text-sm tabular-nums">
+                    <dt className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-[var(--muted)]">
+                      {row.icon}
+                      {row.label}
+                    </dt>
+                    <dd className="min-w-0 break-words text-right text-sm font-medium tabular-nums">
                       {row.get(t)}
-                    </div>
-                  ))}
-                </div>
-              ))}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
-          </div>
+          ))}
         </div>
       )}
 
