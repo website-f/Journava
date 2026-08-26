@@ -46,6 +46,10 @@ const SharedPlan = lazy(() =>
 const PackageRequest = lazy(() =>
   import("@/features/packages/PackageRequest").then((m) => ({ default: m.PackageRequest })),
 );
+// Public, no-auth direct hotel storefront (Booking.com-style, bookable).
+const PublicHotelSite = lazy(() =>
+  import("@/features/hotels/PublicHotelSite").then((m) => ({ default: m.PublicHotelSite })),
+);
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -83,13 +87,18 @@ export function App() {
   // Public shared-plan link — renders for anyone, before the auth wall, so a
   // client with no account can open the interactive itinerary. Wrapped in a
   // Route so useParams() sees the :token.
-  if (location.pathname.startsWith("/s/") || location.pathname.startsWith("/p/")) {
+  if (
+    location.pathname.startsWith("/s/") ||
+    location.pathname.startsWith("/p/") ||
+    location.pathname.startsWith("/h/")
+  ) {
     return (
       <ErrorBoundary resetKey={location.pathname}>
         <Suspense fallback={<RouteFallback />}>
           <Routes location={location}>
             <Route path="/s/:token" element={<SharedPlan />} />
             <Route path="/p/:token" element={<PackageRequest />} />
+            <Route path="/h/:slug" element={<PublicHotelSite />} />
           </Routes>
         </Suspense>
       </ErrorBoundary>

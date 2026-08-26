@@ -21,6 +21,16 @@ def _uuid(value: str) -> uuid.UUID | None:
         return None
 
 
+_LISTING_COLS = (
+    "id, property_id, title, price_amount, price_currency, capacity, perks, available, "
+    "description, image_url, original_price, discount_pct, amenities"
+)
+_PROPERTY_COLS = (
+    "id, org_id, name, kind, city, country, description, halal_friendly, image_url, "
+    "amenities, star_rating"
+)
+
+
 def _listing(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
@@ -31,6 +41,11 @@ def _listing(row: dict[str, Any]) -> dict[str, Any]:
         "capacity": row.get("capacity"),
         "perks": list(row.get("perks") or []),
         "available": row["available"],
+        "description": row.get("description"),
+        "image_url": row.get("image_url"),
+        "original_price": float(row["original_price"]) if row.get("original_price") is not None else None,
+        "discount_pct": row.get("discount_pct"),
+        "amenities": list(row.get("amenities") or []),
     }
 
 
@@ -44,6 +59,8 @@ def _property(row: dict[str, Any]) -> dict[str, Any]:
         "description": row.get("description"),
         "halal_friendly": row["halal_friendly"],
         "image_url": row.get("image_url"),
+        "amenities": list(row.get("amenities") or []),
+        "star_rating": row.get("star_rating"),
     }
 
 
@@ -58,11 +75,11 @@ async def create_property(org_id: str, **fields: Any) -> dict[str, Any] | None:
         return None
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """INSERT INTO supplier_properties
-                   (org_id, name, kind, city, country, description, halal_friendly, image_url)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-               RETURNING id, org_id, name, kind, city, country, description,
-                         halal_friendly, image_url""",
+            f"""INSERT INTO supplier_properties
+                   (org_id, name, kind, city, country, description, halal_friendly,
+                    image_url, amenities, star_rating)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+               RETURNING {_PROPERTY_COLS}""",  # noqa: S608 — fixed columns
             _uuid(org_id),
             fields["name"],
             fields.get("kind", "hotel"),
@@ -71,6 +88,8 @@ async def create_property(org_id: str, **fields: Any) -> dict[str, Any] | None:
             fields.get("description"),
             bool(fields.get("halal_friendly", False)),
             fields.get("image_url"),
+            list(fields.get("amenities") or []),
+            fields.get("star_rating"),
         )
     return _property(dict(row)) if row else None
 
@@ -82,13 +101,11 @@ async def list_properties(org_id: str) -> list[dict[str, Any]]:
         return []
     async with pool.acquire() as conn:
         props = await conn.fetch(
-            "SELECT id, org_id, name, kind, city, country, description, halal_friendly, "
-            "image_url FROM supplier_properties WHERE org_id = $1 ORDER BY created_at DESC",
+            f"SELECT {_PROPERTY_COLS} FROM supplier_properties WHERE org_id = $1 ORDER BY created_at DESC",  # noqa: S608
             _uuid(org_id),
         )
         listings = await conn.fetch(
-            "SELECT id, property_id, title, price_amount, price_currency, capacity, "
-            "perks, available FROM supplier_listings WHERE org_id = $1 ORDER BY created_at",
+            f"SELECT {_LISTING_COLS} FROM supplier_listings WHERE org_id = $1 ORDER BY created_at",  # noqa: S608
             _uuid(org_id),
         )
     by_prop: dict[str, list[dict[str, Any]]] = {}
@@ -137,10 +154,11 @@ async def add_listing(org_id: str, property_id: str, **fields: Any) -> dict[str,
         return None
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """INSERT INTO supplier_listings
-                   (property_id, org_id, title, price_amount, price_currency, capacity, perks, available)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-               RETURNING id, property_id, title, price_amount, price_currency, capacity, perks, available""",
+            f"""INSERT INTO supplier_listings
+                   (property_id, org_id, title, price_amount, price_currency, capacity,
+                    perks, available, description, image_url, original_price, discount_pct, amenities)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+               RETURNING {_LISTING_COLS}""",  # noqa: S608 — fixed columns
             _uuid(property_id),
             _uuid(org_id),
             fields["title"],
@@ -149,6 +167,11 @@ async def add_listing(org_id: str, property_id: str, **fields: Any) -> dict[str,
             fields.get("capacity"),
             list(fields.get("perks") or []),
             bool(fields.get("available", True)),
+            fields.get("description"),
+            fields.get("image_url"),
+            fields.get("original_price"),
+            fields.get("discount_pct"),
+            list(fields.get("amenities") or []),
         )
     return _listing(dict(row)) if row else None
 

@@ -29,7 +29,7 @@ from app.auth.deps import require_agency
 from app.core import db, llm
 from app.core.settings import settings
 from app.supplier import store as supplier_store
-from app.tools import discover
+from app.tools import discover, photos
 
 logger = logging.getLogger("journava")
 
@@ -43,6 +43,9 @@ class DraftRequest(BaseModel):
     room: str = ""  # e.g. "Deluxe Sea View"
     notes: str = ""
     halal_friendly: bool = False
+    #: Optional photo (data URL or https URL). If given, a vision model reads it
+    #: to write the description + amenities, and it becomes the listing image.
+    image: str | None = None
 
 
 class PublishRequest(BaseModel):
@@ -57,22 +60,32 @@ class PublishRequest(BaseModel):
     price_currency: str = "MYR"
     perks: list[str] = []
     capacity: int = 5
+    image_url: str | None = None
+    amenities: list[str] = []
+    original_price: float | None = None
+    discount_pct: int | None = None
+    star_rating: int | None = None
 
 
 _DRAFT_SYSTEM = """You are a revenue manager + copywriter for a property listing \
 on Journava (a direct-booking marketplace that bypasses the OTAs). From the \
-supplier's short hint, produce a polished, bookable listing.
+supplier's short hint (and a photo if provided), produce a polished, bookable \
+listing like a premium Booking.com page.
 
 Respond ONLY as JSON:
-{"room_title": "concise room/ticket name", "description": "2-3 sentence guest-facing \
-description", "perks": ["short perk", ...max 6], "suggested_price": number, \
-"price_currency": "MYR", "capacity": number, "halal_friendly": boolean}"""
+{"room_title": "concise room/ticket name", "description": "3-4 sentence vivid \
+guest-facing description", "perks": ["short perk", ...max 6], \
+"amenities": ["Free Wi-Fi", "Pool", ...max 8], "suggested_price": number, \
+"original_price": number (a slightly higher was-price so a discount shows), \
+"discount_pct": number (0-40), "price_currency": "MYR", "capacity": number, \
+"star_rating": number (1-5), "halal_friendly": boolean}"""
 
 
 @router.post("/draft-listing")
 async def draft_listing(body: DraftRequest, agency: dict = Depends(require_agency)) -> dict[str, Any]:
-    """An agent drafts a full listing (copy + perks + suggested price)."""
-    user = (
+    """An agent drafts a full, image-rich listing (copy + amenities + price +
+    discount + a photo). Give it a photo and a vision model reads it."""
+    hint = (
         f"Property: {body.name or 'a ' + body.kind} in {body.city}. Type: {body.kind}. "
         f"Room/ticket: {body.room or 'standard'}. Halal-friendly: {body.halal_friendly}. "
         f"Notes: {body.notes or 'none'}."
@@ -81,23 +94,55 @@ async def draft_listing(body: DraftRequest, agency: dict = Depends(require_agenc
         "room_title": body.room or "Standard Room",
         "description": "",
         "perks": [],
+        "amenities": [],
         "suggested_price": 300,
+        "original_price": None,
+        "discount_pct": 0,
         "price_currency": "MYR",
         "capacity": 5,
+        "star_rating": 4,
         "halal_friendly": body.halal_friendly,
     }
+    # Vision when a photo is supplied, else text-only (see llm multimodal note).
+    if body.image:
+        content: list[dict[str, Any]] = [
+            {"type": "text", "text": hint + " Describe THIS photo accurately in the listing."},
+            {"type": "image_url", "image_url": {"url": body.image}},
+        ]
+        messages = [{"role": "system", "content": _DRAFT_SYSTEM}, {"role": "user", "content": content}]
+        model = settings.llm_vision_model
+    else:
+        messages = [{"role": "system", "content": _DRAFT_SYSTEM}, {"role": "user", "content": hint}]
+        model = None
     try:
-        raw = await llm.complete(
-            [{"role": "system", "content": _DRAFT_SYSTEM}, {"role": "user", "content": user}],
-            response_format={"type": "json_object"},
-            agent="supplier",
-        )
+        raw = await llm.complete(messages, model=model, response_format={"type": "json_object"}, agent="supplier")
         data = json.loads(raw)
         if isinstance(data, dict):
             draft.update({k: data[k] for k in draft if k in data and data[k] is not None})
             draft["perks"] = [str(p) for p in (data.get("perks") or [])][:6]
+            draft["amenities"] = [str(a) for a in (data.get("amenities") or [])][:8]
     except Exception as exc:  # noqa: BLE001
         logger.info("draft-listing fell back: %s", exc)
+
+    # The image: the owner's photo if given, else auto-fetch a representative one
+    # so the listing is never blank — "AI creates the listing AND its image".
+    image_url = body.image if (body.image and body.image.startswith("http")) else None
+    if not image_url:
+        # Try progressively more generic queries so a card is never blank — a
+        # specific hotel name rarely resolves, but the city + kind always does.
+        for q in (
+            f"{body.name} {body.city} {body.kind}",
+            f"{body.city} {body.kind} room",
+            f"{body.city} hotel",
+            body.city,
+        ):
+            try:
+                image_url = await photos.place_photo(q.strip())
+            except Exception:  # noqa: BLE001
+                image_url = None
+            if image_url:
+                break
+    draft["image_url"] = image_url
     draft["name"] = body.name or f"{body.city} {body.kind.title()}"
     draft["city"] = body.city
     draft["kind"] = body.kind
@@ -110,13 +155,16 @@ async def publish(body: PublishRequest, agency: dict = Depends(require_agency)) 
     org_id = agency["org_id"]
     prop = await supplier_store.create_property(
         org_id, name=body.name, kind=body.kind, city=body.city, country=body.country,
-        description=body.description, halal_friendly=body.halal_friendly, image_url=None,
+        description=body.description, halal_friendly=body.halal_friendly,
+        image_url=body.image_url, amenities=body.amenities, star_rating=body.star_rating,
     )
     if not prop:
         return {"error": "Could not create the property."}
     listing = await supplier_store.add_listing(
         org_id, prop["id"], title=body.room_title, price_amount=body.price_amount,
-        price_currency=body.price_currency, capacity=body.capacity, perks=body.perks, available=True,
+        price_currency=body.price_currency, capacity=body.capacity, perks=body.perks,
+        available=True, description=body.description, image_url=body.image_url,
+        original_price=body.original_price, discount_pct=body.discount_pct, amenities=body.amenities,
     )
     return {"property": prop, "listing": listing, "live": True, "city": body.city}
 

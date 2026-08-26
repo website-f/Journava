@@ -397,6 +397,15 @@ export function ConsolePolicy() {
   return (
     <div>
       <PageHead icon={FileCheck2} title="Policy, duty of care & ESG" subtitle="Corporate controls the agents enforce on every search + fleet risk and carbon." />
+      <Card className="mb-4 border-[var(--brand-400)]/40">
+        <div className="mb-1 text-sm font-semibold">How this works</div>
+        <ul className="space-y-1 text-xs text-[var(--muted)]">
+          <li><b className="text-[var(--text)]">Travel policy</b> — set fare caps, cabin class, preferred airlines and a hotel/night limit (upload your policy doc in the assistant 📎 and AI extracts them). Every flight &amp; hotel search your agents run then <b className="text-[var(--text)]">enforces these rules and flags any breach</b>, so no one books outside policy.</li>
+          <li><b className="text-[var(--text)]">Duty of care</b> — the live safety level of every destination your travellers are heading to, so you can see at a glance who needs attention (the “Caution” rows).</li>
+          <li><b className="text-[var(--text)]">ESG · carbon</b> — total flight CO₂ and the offset cost across your trips, for sustainability reporting.</li>
+        </ul>
+        <p className="mt-1.5 text-[0.7rem] text-[var(--muted)]">This is a control tower for managing <i>travellers'</i> trips — most useful in “My clients” mode for agencies/corporates.</p>
+      </Card>
       {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p> : (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
@@ -1041,21 +1050,65 @@ export function ConsoleNegotiate() {
 
 /* ------------------------------------------------------------- Listings */
 
-type SupplierListing = { id: string; title: string; price_amount: number | null; price_currency: string; capacity: number | null; perks: string[]; available: boolean };
-type SupplierProperty = { id: string; name: string; city: string; kind: string; halal_friendly: boolean; listings: SupplierListing[] };
+type SupplierListing = { id: string; title: string; price_amount: number | null; price_currency: string; capacity: number | null; perks: string[]; available: boolean; description?: string | null; image_url?: string | null; original_price?: number | null; discount_pct?: number | null; amenities?: string[] };
+type SupplierProperty = { id: string; name: string; city: string; kind: string; halal_friendly: boolean; listings: SupplierListing[]; image_url?: string | null; star_rating?: number | null };
 type Visibility = { cities: string[]; live_rooms: number; appeared_in_searches: number; leads: number };
-type Draft = { name: string; city: string; kind: string; room_title: string; description: string; perks: string[]; suggested_price: number; price_currency: string; capacity: number; halal_friendly: boolean };
+type Draft = { name: string; city: string; kind: string; room_title: string; description: string; perks: string[]; suggested_price: number; price_currency: string; capacity: number; halal_friendly: boolean; image_url?: string | null; original_price?: number | null; discount_pct?: number; amenities?: string[]; star_rating?: number };
+type HotelProfile = { slug: string; name: string | null; logo_url: string | null; about: string | null; published: boolean; url: string };
 type Lead = { id: string; status: string; note: string | null; traveler_email: string | null; property_name: string | null; listing_title: string | null };
 type PriceRec = { recommended_price: number; currency: string; comp_low: number | null; comp_high: number | null; delta_pct: number; rationale: string; current_price: number | null; sourced: boolean; occupancy_pct?: number | null; demand_level?: string; drivers?: string[] };
 
 const inputCls = "w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]";
+
+/** The business's own public, bookable hotel site (Booking.com-style, direct). */
+function HotelProfileCard() {
+  const { data, loading, reload } = useGet<{ profile: HotelProfile }>("/agency/profile");
+  const p = data?.profile;
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [logo, setLogo] = useState("");
+  const [about, setAbout] = useState("");
+  useEffect(() => {
+    if (p) { setName(p.name ?? ""); setLogo(p.logo_url ?? ""); setAbout(p.about ?? ""); }
+  }, [p?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async (patch: Record<string, unknown>) => {
+    setBusy(true);
+    try { await api.post("/agency/profile", { name, logo_url: logo, about, ...patch }); reload(); toast.success("Profile saved."); }
+    catch { toast.error("Couldn't save the profile."); } finally { setBusy(false); }
+  };
+  if (loading || !p) return null;
+  return (
+    <Card className="mb-4 border-[var(--brand-400)]/40">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold">🏨 Your public hotel site</div>
+        <Button size="sm" variant={p.published ? "secondary" : "primary"} loading={busy} onClick={() => void save({ published: !p.published })}>
+          {p.published ? "Published" : "Publish"}
+        </Button>
+      </div>
+      <p className="mb-2 text-xs text-[var(--muted)]">A Booking.com-style page of your own — travellers book your rooms direct, no OTA fee. Add your logo + about, publish, and share the link.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {logo ? <img src={logo} alt="logo" className="h-9 w-9 rounded object-cover" /> : <span className="grid h-9 w-9 place-items-center rounded bg-[var(--bg)] text-[0.6rem] text-[var(--muted)]">logo</span>}
+        <input className={cn(inputCls, "min-w-0 flex-1")} placeholder="Company / hotel name" value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <input className={cn(inputCls, "mt-2")} placeholder="Logo image URL" value={logo} onChange={(e) => setLogo(e.target.value)} />
+      <textarea rows={2} className={cn(inputCls, "mt-2 resize-none")} placeholder="About your hotel (shown on your public page)" value={about} onChange={(e) => setAbout(e.target.value)} />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Button size="sm" loading={busy} onClick={() => void save({})}>Save profile</Button>
+        <input readOnly className={cn(inputCls, "min-w-0 flex-1 font-[family-name:var(--font-mono)] text-xs")} value={p.url} />
+        <Button size="sm" variant="secondary" onClick={() => { void navigator.clipboard?.writeText(p.url); toast.success("Link copied"); }}>Copy</Button>
+        <a href={p.url} target="_blank" rel="noreferrer" className="text-xs text-[var(--brand-600)] underline">Open site</a>
+      </div>
+    </Card>
+  );
+}
 
 export function ConsoleListings() {
   const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
   const vis = useGet<Visibility>("/supplier/ai/visibility");
   const leads = useGet<{ leads: Lead[] }>("/supplier/leads");
 
-  const [hint, setHint] = useState({ name: "", city: "", room: "", notes: "", halal_friendly: true });
+  const [hint, setHint] = useState({ name: "", city: "", room: "", notes: "", halal_friendly: true, image: "" });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState("");
   const [prices, setPrices] = useState<Record<string, PriceRec>>({});
@@ -1065,7 +1118,7 @@ export function ConsoleListings() {
     if (!hint.city) return toast.info("Enter a city first.");
     setBusy("draft");
     try {
-      const r = await api.post<{ draft: Draft }>("/supplier/ai/draft-listing", { ...hint, kind: "hotel" });
+      const r = await api.post<{ draft: Draft }>("/supplier/ai/draft-listing", { ...hint, image: hint.image || undefined, kind: "hotel" });
       setDraft(r.draft);
     } catch { toast.error("AI draft failed"); } finally { setBusy(""); }
   };
@@ -1077,9 +1130,11 @@ export function ConsoleListings() {
         name: draft.name, city: draft.city, kind: draft.kind, halal_friendly: draft.halal_friendly,
         room_title: draft.room_title, description: draft.description, price_amount: draft.suggested_price,
         price_currency: draft.price_currency, perks: draft.perks, capacity: draft.capacity,
+        image_url: draft.image_url, amenities: draft.amenities, original_price: draft.original_price,
+        discount_pct: draft.discount_pct, star_rating: draft.star_rating,
       });
       toast.success("Published — live to travellers searching " + draft.city);
-      setDraft(null); setHint({ name: "", city: "", room: "", notes: "", halal_friendly: true });
+      setDraft(null); setHint({ name: "", city: "", room: "", notes: "", halal_friendly: true, image: "" });
       props.reload(); vis.reload();
     } catch { toast.error("Publish failed"); } finally { setBusy(""); }
   };
@@ -1104,6 +1159,8 @@ export function ConsoleListings() {
     <div>
       <PageHead icon={Building2} title="Listings" subtitle="Your agents write, price and publish rooms — live to travellers, no OTA in the middle." />
 
+      <HotelProfileCard />
+
       <Card className="mb-4 border-l-4 border-[var(--brand-500)]">
         <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Live to travellers</p>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-6 gap-y-1">
@@ -1115,12 +1172,13 @@ export function ConsoleListings() {
 
       {/* AI listing composer */}
       <Card className="mb-4">
-        <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-[var(--brand-500)]" /> AI listing composer</div>
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-[var(--brand-500)]" /> AI listing composer — describe it, or drop a photo URL, and AI writes the whole listing</div>
         <div className="grid gap-2 sm:grid-cols-2">
           <input className={inputCls} placeholder="Property name" value={hint.name} onChange={(e) => setHint({ ...hint, name: e.target.value })} />
           <input className={inputCls} placeholder="City (e.g. Kota Kinabalu)" value={hint.city} onChange={(e) => setHint({ ...hint, city: e.target.value })} />
           <input className={inputCls} placeholder="Room / ticket (e.g. Deluxe Sea View)" value={hint.room} onChange={(e) => setHint({ ...hint, room: e.target.value })} />
           <input className={inputCls} placeholder="Notes (amenities, location…)" value={hint.notes} onChange={(e) => setHint({ ...hint, notes: e.target.value })} />
+          <input className={cn(inputCls, "sm:col-span-2")} placeholder="Photo URL (optional) — AI reads it to write the listing + uses it as the image" value={hint.image} onChange={(e) => setHint({ ...hint, image: e.target.value })} />
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm"><Switch checked={hint.halal_friendly} onCheckedChange={(c) => setHint({ ...hint, halal_friendly: c })} aria-label="halal" /> Halal-friendly</label>
@@ -1128,11 +1186,23 @@ export function ConsoleListings() {
         </div>
 
         {draft && (
-          <div className="mt-4 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-4">
-            <div className="mb-1 flex items-center gap-2"><Badge variant="brand">AI draft</Badge><span className="font-semibold">{draft.room_title}</span><span className="ml-auto text-sm font-semibold">{draft.price_currency} {draft.suggested_price.toLocaleString()}/night</span></div>
-            <p className="text-sm text-[var(--muted)]">{draft.description}</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">{draft.perks.map((p) => <Chip key={p}>{p}</Chip>)}</div>
-            <div className="mt-3 flex gap-2"><Button size="sm" onClick={publish} loading={busy === "publish"}>Publish — go live</Button><Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Discard</Button></div>
+          <div className="mt-4 overflow-hidden rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--bg)]">
+            {draft.image_url && <img src={draft.image_url} alt={draft.room_title} className="h-40 w-full object-cover" />}
+            <div className="p-4">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <Badge variant="brand">AI draft</Badge>
+                <span className="font-semibold">{draft.room_title}</span>
+                {draft.star_rating ? <span className="text-xs text-[var(--warning)]">{"★".repeat(Math.max(1, Math.min(5, draft.star_rating)))}</span> : null}
+                <span className="ml-auto text-right">
+                  {draft.original_price && draft.original_price > draft.suggested_price ? <span className="mr-1 text-xs text-[var(--muted)] line-through">{draft.price_currency} {draft.original_price.toLocaleString()}</span> : null}
+                  <span className="text-sm font-semibold">{draft.price_currency} {draft.suggested_price.toLocaleString()}</span><span className="text-xs text-[var(--muted)]">/night</span>
+                  {draft.discount_pct ? <span className="ml-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold text-[var(--success)]">-{draft.discount_pct}%</span> : null}
+                </span>
+              </div>
+              <p className="text-sm text-[var(--muted)]">{draft.description}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">{(draft.amenities ?? draft.perks).map((p) => <Chip key={p}>{p}</Chip>)}</div>
+              <div className="mt-3 flex gap-2"><Button size="sm" onClick={publish} loading={busy === "publish"}>Publish — go live</Button><Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Discard</Button></div>
+            </div>
           </div>
         )}
       </Card>
@@ -1150,14 +1220,27 @@ export function ConsoleListings() {
               </div>
               <div className="space-y-2">
                 {(prop.listings ?? []).map((l) => (
-                  <div key={l.id} className="rounded-[var(--r-md)] bg-[var(--bg)] p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{l.title}</span>
-                      <span className="shrink-0 text-sm font-semibold"><Money amount={l.price_amount ?? 0} currency={l.price_currency} />/night</span>
-                      <Button size="sm" variant="secondary" onClick={() => aiPrice(l.id)} loading={busy === "price:" + l.id}><TrendingUp className="h-3.5 w-3.5" /> AI price</Button>
+                  <div key={l.id} className="overflow-hidden rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)]">
+                    <div className="flex gap-3 p-3">
+                      {l.image_url && <img src={l.image_url} alt={l.title} className="h-20 w-28 shrink-0 rounded-[var(--r-sm)] object-cover" />}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start gap-2">
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{l.title}</span>
+                          <span className="shrink-0 text-right">
+                            {l.original_price && l.original_price > (l.price_amount ?? 0) ? <span className="mr-1 text-xs text-[var(--muted)] line-through"><Money amount={l.original_price} currency={l.price_currency} /></span> : null}
+                            <span className="text-sm font-semibold"><Money amount={l.price_amount ?? 0} currency={l.price_currency} /></span><span className="text-xs text-[var(--muted)]">/night</span>
+                            {l.discount_pct ? <span className="ml-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold text-[var(--success)]">-{l.discount_pct}%</span> : null}
+                          </span>
+                        </div>
+                        {l.description && <p className="mt-0.5 line-clamp-2 text-xs text-[var(--muted)]">{l.description}</p>}
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          {(l.amenities ?? l.perks ?? []).slice(0, 5).map((a) => <span key={a} className="rounded-[var(--r-pill)] bg-[var(--surface)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{a}</span>)}
+                          <Button size="sm" variant="secondary" className="ml-auto" onClick={() => aiPrice(l.id)} loading={busy === "price:" + l.id}><TrendingUp className="h-3.5 w-3.5" /> AI price</Button>
+                        </div>
+                      </div>
                     </div>
                     {prices[l.id] && (
-                      <div className="mt-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-2 text-sm">
+                      <div className="mx-3 mb-3 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-2 text-sm">
                         <span className="font-semibold text-[var(--brand-500)]">Recommend {prices[l.id].currency} {prices[l.id].recommended_price.toLocaleString()}</span>
                         {prices[l.id].delta_pct ? <span className={cn("ml-2 text-xs", prices[l.id].delta_pct > 0 ? "text-[var(--success)]" : "text-[var(--warning)]")}>{prices[l.id].delta_pct > 0 ? "+" : ""}{prices[l.id].delta_pct}%</span> : null}
                         {prices[l.id].comp_low != null && <span className="ml-2 text-xs text-[var(--muted)]">comp {prices[l.id].currency} {prices[l.id].comp_low}–{prices[l.id].comp_high}</span>}

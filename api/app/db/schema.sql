@@ -388,6 +388,27 @@ CREATE TABLE IF NOT EXISTS supplier_leads (
 );
 CREATE INDEX IF NOT EXISTS supplier_leads_org_idx ON supplier_leads (org_id, created_at DESC);
 
+-- Booking.com-style richness on listings + properties (idempotent upgrade).
+ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS original_price NUMERIC(12,2);
+ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS discount_pct INTEGER;
+ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS amenities TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE supplier_properties ADD COLUMN IF NOT EXISTS amenities TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE supplier_properties ADD COLUMN IF NOT EXISTS star_rating INTEGER;
+
+-- A published, brandable public page per business (the "direct hotel site"):
+-- logo + about, reachable at /h/{slug} with no account. Mirrors package_pages.
+CREATE TABLE IF NOT EXISTS org_profiles (
+    org_id     TEXT PRIMARY KEY,
+    slug       TEXT UNIQUE NOT NULL,
+    name       TEXT,
+    logo_url   TEXT,
+    about      TEXT,
+    published  BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ---------------------------------------------------------------------------
 -- Corporate travel policy (Phase 2.3). One active policy per org — fare caps,
 -- cabin rules, preferred carriers/hotels, approval thresholds. The Flight/Hotel
@@ -549,6 +570,9 @@ CREATE TABLE IF NOT EXISTS hotel_bookings (
 CREATE INDEX IF NOT EXISTS hotel_bookings_org_idx ON hotel_bookings (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS hotel_bookings_checkin_idx ON hotel_bookings (org_id, check_in);
 ALTER TABLE hotel_bookings ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMPTZ;
+-- Simulated payment for the public direct-booking site (no real gateway).
+ALTER TABLE hotel_bookings ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid';  -- unpaid | paid | refunded
+ALTER TABLE hotel_bookings ADD COLUMN IF NOT EXISTS payment_ref TEXT;
 ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS whatsapp TEXT;
 ALTER TABLE agency_clients ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'telegram';
 

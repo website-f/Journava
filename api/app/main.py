@@ -40,6 +40,8 @@ from app.packages import config_router as package_config_router
 from app.packages import public_router as package_public_router
 from app.inbox import config_router as inbox_config_router
 from app.inbox import webhook_router as inbox_webhook_router
+from app.hotels import config_router as hotel_config_router
+from app.hotels import public_router as hotel_public_router
 from app.collab import router as collab_router
 from app.compare import router as compare_router
 from app.saved import router as saved_router
@@ -195,6 +197,8 @@ app.include_router(package_config_router)
 app.include_router(package_public_router)
 app.include_router(inbox_config_router)
 app.include_router(inbox_webhook_router)
+app.include_router(hotel_config_router)
+app.include_router(hotel_public_router)
 app.include_router(intel_router)
 app.include_router(content_router)
 app.include_router(chaos_router)
