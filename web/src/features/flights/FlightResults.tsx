@@ -11,7 +11,9 @@ import { Badge, Button, NumberField, Select } from "@/components/ui";
 import { Rail } from "@/components/layout/Page";
 import { Money } from "@/components/ui/Money";
 import { OtaLinks } from "@/components/ui/OtaLinks";
+import { BookingMark } from "@/components/ui/BookingMark";
 import { SourceTrustRow } from "@/components/ui/SourceBadge";
+import { useBookings, flightKey } from "@/stores/bookingsStore";
 import { cn } from "@/lib/cn";
 import type { AgentPlanResult, PlanOption } from "@/lib/types";
 import { BookingDialog } from "./BookingDialog";
@@ -384,6 +386,8 @@ function FlightCard({
     ota_links?: { name: string; url: string }[];
   };
   const notes = raw.preference_notes ?? [];
+  const key = flightKey(option.title, option.price_amount);
+  const booked = useBookings((s) => s.marks.some((m) => m.item_key === key));
 
   return (
     <motion.div
@@ -446,30 +450,43 @@ function FlightCard({
         <SourceTrustRow option={option} />
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
-        {option.bookable ? (
-          <Button size="sm" onClick={onBook}>
-            <ShoppingCart className="h-4 w-4" />
-            Simulate purchase
-          </Button>
-        ) : option.source_url ? (
-          <Button asChild variant="secondary" size="sm">
-            <a href={option.source_url} target="_blank" rel="noreferrer noopener">
-              <ExternalLink className="h-4 w-4" />
-              Open source page
-            </a>
-          </Button>
-        ) : (
-          <span
-            className="text-[0.65rem] text-[var(--muted)]"
-            title="Only Atlas fares can be carried into a booking flow"
-          >
-            Not bookable from this source
-          </span>
-        )}
-      </div>
+      {!booked && (
+        <>
+          <div className="mt-3 flex items-center gap-2">
+            {option.bookable ? (
+              <Button size="sm" onClick={onBook}>
+                <ShoppingCart className="h-4 w-4" />
+                Simulate purchase
+              </Button>
+            ) : option.source_url ? (
+              <Button asChild variant="secondary" size="sm">
+                <a href={option.source_url} target="_blank" rel="noreferrer noopener">
+                  <ExternalLink className="h-4 w-4" />
+                  Open source page
+                </a>
+              </Button>
+            ) : (
+              <span
+                className="text-[0.65rem] text-[var(--muted)]"
+                title="Only Atlas fares can be carried into a booking flow"
+              >
+                Not bookable from this source
+              </span>
+            )}
+          </div>
+          <OtaLinks links={raw.ota_links} label="Compare fares" />
+        </>
+      )}
 
-      <OtaLinks links={raw.ota_links} label="Compare fares" />
+      <BookingMark
+        kind="flight"
+        itemKey={key}
+        title={option.title}
+        provider={option.provider}
+        priceAmount={option.price_amount}
+        priceCurrency={option.price_currency}
+        snapshot={{ title: option.title, provider: option.provider, price_amount: option.price_amount, price_currency: option.price_currency, raw: option.raw }}
+      />
     </motion.div>
   );
 }

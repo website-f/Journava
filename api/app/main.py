@@ -55,6 +55,7 @@ from app.revenue import router as revenue_router
 from app.wargame import router as wargame_router
 from app.boardroom import router as boardroom_router
 from app.vision import router as vision_router
+from app.trip_bookings import router as trip_bookings_router
 from app.expenses import router as expenses_router
 from app.shared import router as shared_router
 from app.supplier.ai import router as supplier_ai_router
@@ -217,6 +218,7 @@ app.include_router(revenue_router)
 app.include_router(wargame_router)
 app.include_router(boardroom_router)
 app.include_router(vision_router)
+app.include_router(trip_bookings_router)
 app.include_router(expenses_router)
 
 

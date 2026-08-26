@@ -15,6 +15,7 @@ export { AgentPulse } from "./AgentPulse";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 export { Modal, Drawer } from "./Modal";
 export { OtaLinks } from "./OtaLinks";
+export { BookingMark } from "./BookingMark";
 export { Badge } from "./Badge";
 export { Collapsible } from "./Collapsible";
 export { OptionCard } from "./OptionCard";

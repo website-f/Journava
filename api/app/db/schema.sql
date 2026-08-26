@@ -464,6 +464,31 @@ CREATE TABLE IF NOT EXISTS discoveries (
 );
 CREATE INDEX IF NOT EXISTS discoveries_user_idx ON discoveries (user_id, created_at DESC);
 
+-- Consumer trip bookings — the traveller marks a flight/hotel as booked (most are
+-- booked externally via the OTA links). Content-keyed (item_key) rather than tied
+-- to one trip record, so a mark follows the option across the active trip and the
+-- saved/history snapshots. direction distinguishes an outbound vs return flight.
+CREATE TABLE IF NOT EXISTS trip_bookings (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id        UUID REFERENCES users(id) ON DELETE CASCADE,
+    trip_id        UUID,                             -- best-effort link to the active trip
+    item_kind      TEXT NOT NULL,                    -- flight | hotel
+    direction      TEXT NOT NULL DEFAULT '',         -- outbound | return (flights); '' for hotels
+    item_key       TEXT NOT NULL,                    -- stable content key from the option
+    title          TEXT,
+    provider       TEXT,
+    price_amount   NUMERIC(12,2),
+    price_currency TEXT,
+    booking_ref    TEXT,
+    status         TEXT NOT NULL DEFAULT 'booked',
+    check_in       DATE,
+    source         TEXT,                             -- external | atlas
+    snapshot       JSONB,                            -- option snapshot for "view details"
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS trip_bookings_uq ON trip_bookings (user_id, item_key, direction);
+CREATE INDEX IF NOT EXISTS trip_bookings_user_idx ON trip_bookings (user_id, created_at DESC);
+
 -- A published, brandable public page per business (the "direct hotel site"):
 -- logo + about, reachable at /h/{slug} with no account. Mirrors package_pages.
 CREATE TABLE IF NOT EXISTS org_profiles (

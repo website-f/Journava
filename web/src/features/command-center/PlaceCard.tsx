@@ -3,7 +3,9 @@ import { toast } from "sonner";
 import { ExternalLink, ShoppingCart, Video, Building2, CheckCircle } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { OtaLinks } from "@/components/ui/OtaLinks";
+import { BookingMark } from "@/components/ui/BookingMark";
 import { SourceBadge } from "@/components/ui/SourceBadge";
+import { useBookings, hotelKey } from "@/stores/bookingsStore";
 import { api } from "@/lib/api";
 import type { PlanOption } from "@/lib/types";
 
@@ -31,6 +33,8 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
   const isStay = option.kind === "hotel";
   const isDirect = option.source === "supplier";
   const canVideo = option.kind === "activity" || option.kind === "restaurant";
+  const bkey = isStay ? hotelKey(option.title) : "";
+  const booked = useBookings((s) => Boolean(bkey) && s.marks.some((m) => m.item_key === bkey));
   const [videoLoading, setVideoLoading] = useState(false);
 
   // Book-direct (supplier listing → a lead the property follows up on).
@@ -157,7 +161,7 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
         )}
       </div>
 
-      {(link || canVideo || (isDirect && raw.listing_id)) && (
+      {!(isStay && booked) && (link || canVideo || (isDirect && raw.listing_id)) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {isDirect && raw.listing_id && (
             <Button size="sm" onClick={() => void bookDirect()} loading={booking} disabled={sent}>
@@ -181,7 +185,19 @@ export function PlaceCard({ option, city }: { option: PlanOption; city?: string 
         </div>
       )}
 
-      {isStay && !isDirect && <OtaLinks links={raw.ota_links} label="Compare & book" />}
+      {isStay && !isDirect && !booked && <OtaLinks links={raw.ota_links} label="Compare & book" />}
+
+      {isStay && (
+        <BookingMark
+          kind="hotel"
+          itemKey={bkey}
+          title={option.title}
+          provider={option.provider}
+          priceAmount={option.price_amount}
+          priceCurrency={option.price_currency}
+          snapshot={{ title: option.title, provider: option.provider, price_amount: option.price_amount, price_currency: option.price_currency, raw: option.raw }}
+        />
+      )}
     </div>
   );
 }
