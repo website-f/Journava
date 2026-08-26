@@ -35,6 +35,7 @@ from app.monitor import router as monitor_router
 from app.policy import router as policy_router
 from app.runtime.router import router as runtime_router
 from app.agent_studio import router as studio_router
+from app.kb import router as kb_router
 from app.packages import config_router as package_config_router
 from app.packages import public_router as package_public_router
 from app.inbox import config_router as inbox_config_router
@@ -189,6 +190,7 @@ app.include_router(saved_router)
 app.include_router(collab_router)
 app.include_router(compare_router)
 app.include_router(studio_router)
+app.include_router(kb_router)
 app.include_router(package_config_router)
 app.include_router(package_public_router)
 app.include_router(inbox_config_router)

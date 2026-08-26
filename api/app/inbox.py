@@ -102,6 +102,15 @@ async def handle_inbound(org_id: str, channel: str, sender: str, name: str | Non
     await _capture_lead(org_id, channel, sender, name, text)
 
     system = await _qualifier_prompt(org_id)
+    # Ground the reply in the business's Knowledge Base so it answers accurately.
+    try:
+        from app.kb import kb_context
+
+        facts = await kb_context(org_id, text)
+        if facts:
+            system += "\n\nYour business's own facts (use these when relevant):\n" + facts
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("inbox kb inject failed: %s", exc)
     try:
         reply = (await llm.complete(
             [{"role": "system", "content": system}, {"role": "user", "content": text}],

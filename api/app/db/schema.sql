@@ -601,6 +601,19 @@ CREATE TABLE IF NOT EXISTS custom_agents (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS custom_agents_org_idx ON custom_agents (org_id, created_at DESC);
+
+-- Knowledge Base: the business's own facts (brochure text, policies, a website)
+-- that ground every custom agent + the inbox so they answer accurately about
+-- THIS business. Lightweight keyword retrieval over these rows — no vector DB.
+CREATE TABLE IF NOT EXISTS kb_entries (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id     TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    source     TEXT,                 -- url | text
+    content    TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS kb_org_idx ON kb_entries (org_id, created_at DESC);
 ALTER TABLE saved_results ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'result';
 -- When a proactive trip notification (e.g. a countdown) was last sent, so the
 -- reminder loop pings each trip once instead of every cycle.

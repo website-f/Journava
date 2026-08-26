@@ -253,11 +253,23 @@ async def run_agent(agent_id: str, body: RunRequest, request: Request) -> dict[s
         except Exception as exc:  # noqa: BLE001 — research is best-effort
             logger.info("studio run research failed: %s", exc)
 
+    # Ground the agent in the business's own facts (Knowledge Base) so it answers
+    # about THIS business, not generically.
+    kb_block = ""
+    try:
+        from app.kb import kb_context
+
+        facts = await kb_context(org, task)
+        if facts:
+            kb_block = "\n\nYour business's own facts (use these; they override generic knowledge):\n" + facts
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("kb inject failed: %s", exc)
+
     system = (
         agent["system_prompt"]
         + "\n\nYou are operating for the business as a deployed Journava agent. Be concrete "
         "and immediately useful; produce the actual deliverable (not a description of it). "
-        "Plain text, no markdown headers." + research_block
+        "Plain text, no markdown headers." + kb_block + research_block
     )
     try:
         output = await llm.complete(

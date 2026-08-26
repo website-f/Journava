@@ -74,6 +74,8 @@ export function ConsoleAgentStudio() {
         )}
       </header>
 
+      <KnowledgeCard />
+
       {creating && (
         <CreateAgent
           tools={tools}
@@ -107,6 +109,137 @@ export function ConsoleAgentStudio() {
           {agents.map((a) => (
             <AgentCard key={a.id} agent={a} onDeleted={() => void load()} />
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type KbEntry = { id: string; title: string; source: string; chars: number; preview: string };
+
+/** Train-your-AI: ingest the business's own facts (a website URL or pasted text)
+ *  so every agent + the inbox answer from real, business-specific knowledge. */
+function KnowledgeCard() {
+  const [entries, setEntries] = useState<KbEntry[]>([]);
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      setEntries((await api.get<{ entries: KbEntry[] }>("/studio/kb")).entries);
+    } catch {
+      /* ignore */
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const addUrl = async () => {
+    if (!url.trim()) return;
+    setBusy(true);
+    try {
+      await api.post("/studio/kb/url", { url });
+      setUrl("");
+      toast.success("Learned from the page.");
+      await load();
+    } catch {
+      toast.error("Couldn't read that page — paste the text instead.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const addText = async () => {
+    if (text.trim().length < 10) return;
+    setBusy(true);
+    try {
+      await api.post("/studio/kb/text", { title: title || "Note", content: text });
+      setTitle("");
+      setText("");
+      toast.success("Added to your AI's knowledge.");
+      await load();
+    } catch {
+      toast.error("Couldn't save that.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const del = async (id: string) => {
+    try {
+      await api.del(`/studio/kb/${id}`);
+      setEntries((e) => e.filter((x) => x.id !== id));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div className="surface-card mb-5 p-4">
+      <button className="flex w-full items-center justify-between" onClick={() => setOpen((v) => !v)}>
+        <span className="flex items-center gap-2 text-sm font-semibold">
+          <Compass className="h-4 w-4 text-[var(--brand-500)]" /> Train your AI on your business
+          {entries.length > 0 && (
+            <span className="rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-2 py-0.5 text-[0.65rem] text-[var(--brand-600)]">
+              {entries.length} source{entries.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </span>
+        <span className="text-xs text-[var(--muted)]">{open ? "Hide" : "Manage"}</span>
+      </button>
+      <p className="mt-1 text-xs text-[var(--muted)]">
+        Add your website or brochure and every agent + the inbox answers from your real facts.
+      </p>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className="min-w-0 flex-1 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm"
+              placeholder="https://your-hotel.com"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+            <Button size="sm" variant="secondary" loading={busy} onClick={() => void addUrl()}>
+              Learn from URL
+            </Button>
+          </div>
+          <div className="rounded-[var(--r-md)] border border-[var(--border)] p-2">
+            <input
+              className="mb-2 w-full rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-sm"
+              placeholder="Title (e.g. Rooms & rates)"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+            <textarea
+              rows={2}
+              className="w-full resize-none rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-sm"
+              placeholder="Paste facts about your business — room types, rates, amenities, policies…"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+            <div className="mt-2">
+              <Button size="sm" variant="secondary" loading={busy} onClick={() => void addText()}>
+                <Plus className="h-3.5 w-3.5" /> Add text
+              </Button>
+            </div>
+          </div>
+          {entries.length > 0 && (
+            <div className="space-y-1.5">
+              {entries.map((e) => (
+                <div key={e.id} className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] px-3 py-1.5">
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {e.title} <span className="text-[0.65rem] text-[var(--muted)]">· {e.source} · {e.chars} chars</span>
+                  </span>
+                  <button onClick={() => void del(e.id)} aria-label="Remove" className="rounded-full p-1 text-[var(--muted)] hover:text-[var(--danger)]">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
