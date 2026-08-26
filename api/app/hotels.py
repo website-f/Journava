@@ -12,6 +12,7 @@ double-booking guard the console uses, so two guests can't take the last room.
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import uuid
@@ -22,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth.deps import require_agency
-from app.core import db
+from app.core import db, llm
 from app.core.settings import settings
 from app.supplier import store as supplier_store
 
@@ -259,3 +260,75 @@ async def public_book(slug: str, body: PublicBookRequest) -> dict[str, Any]:
         "room": listing["title"],
         "property_name": listing["property_name"],
     }
+
+
+class AssistantRequest(BaseModel):
+    query: str
+
+
+_ASSISTANT_SYSTEM = """You are a friendly booking assistant on a hotel's own \
+website. Using ONLY the rooms in the catalogue, help the guest find the best fit \
+for what they ask (budget, guests, vibe, amenities, dates). Be concise and warm.
+
+Respond ONLY as JSON:
+{"answer": "2-3 sentence helpful reply that names the rooms you suggest and why", \
+"room_ids": ["id", ...up to 4, best first]}
+If nothing fits, say so kindly and return room_ids: []."""
+
+
+@public_router.post("/{slug}/assistant")
+async def public_assistant(slug: str, body: AssistantRequest) -> dict[str, Any]:
+    """An AI concierge for the guest, grounded in this hotel's own rooms only.
+    Returns a short answer plus the room ids it recommends (the site highlights
+    them). Degrades to a keyword match if the model is unavailable."""
+    profile = await _profile_by_slug(slug)
+    if not profile or not profile.get("published"):
+        return {"answer": "This hotel page is not available.", "room_ids": []}
+
+    properties = await supplier_store.list_properties(profile["org_id"])
+    catalogue: list[dict[str, Any]] = []
+    for prop in properties:
+        for lst in prop.get("listings", []):
+            if not lst.get("available"):
+                continue
+            catalogue.append({
+                "id": lst["id"],
+                "title": lst["title"],
+                "property": prop["name"],
+                "city": prop.get("city"),
+                "price": lst.get("price_amount"),
+                "currency": lst.get("price_currency"),
+                "capacity": lst.get("capacity"),
+                "amenities": (lst.get("amenities") or [])[:8],
+                "halal_friendly": prop.get("halal_friendly"),
+                "summary": (lst.get("description") or "")[:240],
+            })
+    valid_ids = {r["id"] for r in catalogue}
+    if not catalogue:
+        return {"answer": "There are no rooms published yet — please check back soon.", "room_ids": []}
+
+    query = (body.query or "").strip()
+    user = f"Guest asks: {query!r}\n\nRoom catalogue (JSON):\n{json.dumps(catalogue, ensure_ascii=False)}"
+    answer = ""
+    room_ids: list[str] = []
+    try:
+        raw = await llm.complete(
+            [{"role": "system", "content": _ASSISTANT_SYSTEM}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"}, agent="assistant",
+        )
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            answer = str(data.get("answer") or "").strip()
+            room_ids = [str(i) for i in (data.get("room_ids") or []) if str(i) in valid_ids][:4]
+    except Exception as exc:  # noqa: BLE001
+        logger.info("public assistant fell back: %s", exc)
+
+    if not answer:
+        # Keyword fallback so the assistant is never dead.
+        term = query.lower()
+        hits = [r for r in catalogue if any(w in f"{r['title']} {r['summary']} {' '.join(r['amenities'])}".lower() for w in term.split() if len(w) > 3)]
+        hits = hits or catalogue
+        room_ids = [r["id"] for r in hits[:4]]
+        answer = f"Here are {len(room_ids)} room(s) that could suit you." if room_ids else "I couldn't find a match — try different dates or budget."
+
+    return {"answer": answer, "room_ids": room_ids}

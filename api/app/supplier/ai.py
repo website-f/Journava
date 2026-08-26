@@ -61,6 +61,8 @@ class PublishRequest(BaseModel):
     perks: list[str] = []
     capacity: int = 5
     image_url: str | None = None
+    #: Full ordered gallery (drag-drop upload). image_url is kept as the cover.
+    image_urls: list[str] = []
     amenities: list[str] = []
     original_price: float | None = None
     discount_pct: int | None = None
@@ -153,17 +155,23 @@ async def draft_listing(body: DraftRequest, agency: dict = Depends(require_agenc
 async def publish(body: PublishRequest, agency: dict = Depends(require_agency)) -> dict[str, Any]:
     """Persist an AI draft as a live property + bookable room (org-scoped)."""
     org_id = agency["org_id"]
+    # The gallery: the owner's uploaded images if any, else fall back to the
+    # single AI-fetched cover so the listing is never blank. Cover = first image.
+    gallery = [u for u in (body.image_urls or []) if u]
+    if not gallery and body.image_url:
+        gallery = [body.image_url]
+    cover = gallery[0] if gallery else body.image_url
     prop = await supplier_store.create_property(
         org_id, name=body.name, kind=body.kind, city=body.city, country=body.country,
         description=body.description, halal_friendly=body.halal_friendly,
-        image_url=body.image_url, amenities=body.amenities, star_rating=body.star_rating,
+        image_url=cover, amenities=body.amenities, star_rating=body.star_rating,
     )
     if not prop:
         return {"error": "Could not create the property."}
     listing = await supplier_store.add_listing(
         org_id, prop["id"], title=body.room_title, price_amount=body.price_amount,
         price_currency=body.price_currency, capacity=body.capacity, perks=body.perks,
-        available=True, description=body.description, image_url=body.image_url,
+        available=True, description=body.description, image_url=cover, image_urls=gallery,
         original_price=body.original_price, discount_pct=body.discount_pct, amenities=body.amenities,
     )
     return {"property": prop, "listing": listing, "live": True, "city": body.city}

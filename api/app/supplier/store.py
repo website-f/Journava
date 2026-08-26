@@ -46,7 +46,7 @@ def _uuid(value: str) -> uuid.UUID | None:
 
 _LISTING_COLS = (
     "id, property_id, title, price_amount, price_currency, capacity, perks, available, "
-    "description, image_url, original_price, discount_pct, amenities"
+    "description, image_url, image_urls, original_price, discount_pct, amenities"
 )
 _PROPERTY_COLS = (
     "id, org_id, name, kind, city, country, description, halal_friendly, image_url, "
@@ -66,6 +66,7 @@ def _listing(row: dict[str, Any]) -> dict[str, Any]:
         "available": row["available"],
         "description": row.get("description"),
         "image_url": row.get("image_url"),
+        "image_urls": list(row.get("image_urls") or []),
         "original_price": float(row["original_price"]) if row.get("original_price") is not None else None,
         "discount_pct": row.get("discount_pct"),
         "amenities": list(row.get("amenities") or []),
@@ -179,8 +180,8 @@ async def add_listing(org_id: str, property_id: str, **fields: Any) -> dict[str,
         row = await conn.fetchrow(
             f"""INSERT INTO supplier_listings
                    (property_id, org_id, title, price_amount, price_currency, capacity,
-                    perks, available, description, image_url, original_price, discount_pct, amenities)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                    perks, available, description, image_url, image_urls, original_price, discount_pct, amenities)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
                RETURNING {_LISTING_COLS}""",  # noqa: S608 — fixed columns
             _uuid(property_id),
             _uuid(org_id),
@@ -192,6 +193,7 @@ async def add_listing(org_id: str, property_id: str, **fields: Any) -> dict[str,
             bool(fields.get("available", True)),
             fields.get("description"),
             fields.get("image_url"),
+            list(fields.get("image_urls") or []),
             fields.get("original_price"),
             fields.get("discount_pct"),
             list(fields.get("amenities") or []),
@@ -230,7 +232,7 @@ async def search_for_destination(destination: str) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT l.id, l.title, l.price_amount, l.price_currency, l.perks,
-                      l.description, l.image_url, l.original_price, l.discount_pct, l.amenities,
+                      l.description, l.image_url, l.image_urls, l.original_price, l.discount_pct, l.amenities,
                       p.id AS property_id, p.org_id, p.name AS property_name,
                       p.city, p.halal_friendly, p.star_rating, p.image_url AS property_image
                FROM supplier_listings l
@@ -260,6 +262,7 @@ async def search_for_destination(destination: str) -> list[dict[str, Any]]:
                 "city": r["city"],
                 "description": r.get("description"),
                 "image_url": r.get("image_url") or r.get("property_image"),
+                "image_urls": list(r.get("image_urls") or []),
                 "original_price": float(r["original_price"]) if r.get("original_price") is not None else None,
                 "discount_pct": r.get("discount_pct"),
                 "amenities": list(r.get("amenities") or []),

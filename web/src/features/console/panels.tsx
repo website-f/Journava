@@ -1,55 +1,15 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2, Calendar, Download, X,
+  TrendingUp, Plane, ShieldCheck, CreditCard, Leaf, AlertTriangle, CheckCircle2, Zap, Sparkles, FileCheck2, Building2, Calendar, Download, Plus, UserPlus, Globe, Mail,
 } from "@/components/ui/icons";
-import { Button, Badge, Select } from "@/components/ui";
+import { Button, Badge, Select, Modal, Drawer, Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui";
 import { Switch } from "@/components/ui/Switch";
 import { Money } from "@/components/ui/Money";
 import { API_BASE, api } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-
-/* ------------------------------------------------------------------ shared */
-
-function useGet<T>(path: string) {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const reload = useCallback(() => {
-    setLoading(true);
-    api.get<T>(path).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
-  }, [path]);
-  useEffect(() => { reload(); }, [reload]);
-  return { data, loading, reload };
-}
-
-function PageHead({ title, subtitle, icon: Icon }: { title: string; subtitle: string; icon: typeof Plane }) {
-  return (
-    <header className="mb-6 flex items-start gap-3">
-      <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-500)]">
-        <Icon className="h-5 w-5" />
-      </span>
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">{title}</h1>
-        <p className="mt-0.5 text-sm text-[var(--muted)]">{subtitle}</p>
-      </div>
-    </header>
-  );
-}
-
-function Card({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("surface-card p-5", className)}>{children}</div>;
-}
-
-function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: "success" | "warning" | "brand" }) {
-  const color = tone === "success" ? "text-[var(--success)]" : tone === "warning" ? "text-[var(--warning)]" : "text-[var(--brand-500)]";
-  return (
-    <div className="surface-card p-4">
-      <p className={cn("text-2xl font-bold", color)}>{value}</p>
-      <p className="mt-1 text-xs text-[var(--muted)]">{label}</p>
-    </div>
-  );
-}
+import { useGet, PageHead, Card, Section, Stat, Chip, Field, inputCls, ImageDropzone } from "./ui";
 
 /* --------------------------------------------------------------- Overview */
 
@@ -442,10 +402,6 @@ export function ConsolePolicy() {
   );
 }
 
-function Chip({ children }: { children: ReactNode }) {
-  return <span className="rounded-[var(--r-pill)] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1">{children}</span>;
-}
-
 /* -------------------------------------------------------------- Clients */
 
 type Client = { id: string; name: string; email: string | null; telegram_chat_id: string | null; whatsapp: string | null; channel: string; notes: string | null; source?: string; destination?: string | null; share_token?: string | null };
@@ -467,6 +423,7 @@ export function ConsoleClients() {
   const { data, loading, reload } = useGet<{ clients: Client[] }>("/agency/clients");
   const [form, setForm] = useState({ name: "", email: "", telegram_chat_id: "", whatsapp: "", channel: "telegram", notes: "" });
   const [adding, setAdding] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [runs, setRuns] = useState<Record<string, ClientRun>>({});
   const [busy, setBusy] = useState("");
 
@@ -476,7 +433,7 @@ export function ConsoleClients() {
   const addClient = async () => {
     if (!form.name.trim()) return toast.info("Name is required.");
     setAdding(true);
-    try { await api.post("/agency/clients", form); toast.success("Client added"); setForm({ name: "", email: "", telegram_chat_id: "", whatsapp: "", channel: "telegram", notes: "" }); reload(); }
+    try { await api.post("/agency/clients", form); toast.success("Client added"); setForm({ name: "", email: "", telegram_chat_id: "", whatsapp: "", channel: "telegram", notes: "" }); setAddOpen(false); reload(); }
     catch { toast.error("Could not add client"); } finally { setAdding(false); }
   };
   const buildPackage = async (id: string) => {
@@ -508,22 +465,37 @@ export function ConsoleClients() {
 
   return (
     <div>
-      <PageHead icon={Sparkles} title="Clients" subtitle="Plan a full package for a client, then send the PDF + an interactive link over Telegram." />
+      <PageHead
+        icon={Sparkles}
+        title="Clients"
+        subtitle="Plan a full package for a client, then send the PDF + an interactive link over Telegram."
+        actions={<Button size="sm" onClick={() => setAddOpen(true)}><UserPlus className="h-4 w-4" /> Add client</Button>}
+      />
 
       <PackagePageCard />
 
-      <Card className="mb-4">
-        <div className="mb-3 text-sm font-semibold">Add a client</div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <input className={inputCls} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <input className={inputCls} placeholder="Email (optional)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          <input className={inputCls} placeholder="Telegram chat id" value={form.telegram_chat_id} onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })} />
-          <input className={inputCls} placeholder="WhatsApp number (e.g. 60123456789)" value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} />
-          <Select value={form.channel} onValueChange={(v) => setForm({ ...form, channel: v })} options={[{ value: "telegram", label: "Deliver via Telegram" }, { value: "whatsapp", label: "Deliver via WhatsApp" }, { value: "both", label: "Telegram + WhatsApp" }]} aria-label="channel" />
-          <input className={inputCls} placeholder="Notes (party size, prefs)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+      <Modal
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title="Add a client"
+        description="Save a traveller so your agents can build and deliver packages for them."
+        icon={<UserPlus className="h-5 w-5" />}
+        footer={<>
+          <Button variant="ghost" onClick={() => setAddOpen(false)}>Cancel</Button>
+          <Button onClick={addClient} loading={adding}>Add client</Button>
+        </>}
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Name"><input className={inputCls} placeholder="e.g. Encik Rahman" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          <Field label="Email (optional)"><input className={inputCls} placeholder="name@email.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+          <Field label="Telegram chat id"><input className={inputCls} placeholder="123456789" value={form.telegram_chat_id} onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })} /></Field>
+          <Field label="WhatsApp number"><input className={inputCls} placeholder="60123456789" value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} /></Field>
+          <Field label="Delivery channel">
+            <Select value={form.channel} onValueChange={(v) => setForm({ ...form, channel: v })} options={[{ value: "telegram", label: "Deliver via Telegram" }, { value: "whatsapp", label: "Deliver via WhatsApp" }, { value: "both", label: "Telegram + WhatsApp" }]} aria-label="channel" />
+          </Field>
+          <Field label="Notes"><input className={inputCls} placeholder="Party size, preferences" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
         </div>
-        <div className="mt-2"><Button onClick={addClient} loading={adding}>Add client</Button></div>
-      </Card>
+      </Modal>
 
       {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
         : !clients.length ? <Card><p className="text-sm text-[var(--muted)]">No clients yet — add one above.</p></Card>
@@ -633,7 +605,7 @@ export function ConsoleInbox() {
 
   return (
     <div>
-      <PageHead icon={Sparkles} title="Inbox" subtitle="Inbound WhatsApp enquiries — auto-answered by your AI qualifier and captured as leads. Point Meta's webhook at /api/v1/webhooks/whatsapp to go live." />
+      <PageHead icon={Mail} title="Inbox" subtitle="Inbound WhatsApp enquiries — auto-answered by your AI qualifier and captured as leads. Point Meta's webhook at /api/v1/webhooks/whatsapp to go live." />
       <Card className="mb-4 border-[var(--brand-400)]/40">
         <div className="mb-2 text-sm font-semibold">Try it — simulate an inbound WhatsApp message</div>
         <div className="flex flex-wrap items-center gap-2">
@@ -801,10 +773,58 @@ export function ConsoleFinance() {
 
 type Booking = { id: string; property_name: string; room_title: string; guest_name: string; channel: string; check_in: string | null; check_out: string | null; nights: number; amount: number; currency: string; status: string; payment_status?: string | null };
 
+function NewBookingModal({
+  open, onOpenChange, listingOpts, onBooked,
+}: { open: boolean; onOpenChange: (o: boolean) => void; listingOpts: { value: string; label: string }[]; onBooked: () => void }) {
+  const [form, setForm] = useState({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
+  const [busy, setBusy] = useState(false);
+
+  const createBooking = async () => {
+    if (!form.listing_id || !form.guest_name.trim()) return toast.info("Pick a room and enter a guest name.");
+    setBusy(true);
+    try {
+      const r = await api.post<{ status: string; reason?: string; amount?: number; currency?: string }>("/bookings", form);
+      if (r.status === "blocked") toast.warning(r.reason ?? "Firewall blocked this booking.");
+      else toast.success(`Booked — ${r.currency} ${r.amount?.toLocaleString()} · manager notified`);
+      setForm({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
+      onBooked();
+      onOpenChange(false);
+    } catch { toast.error("Booking failed"); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="New booking"
+      description="Take a direct reservation — firewall-guarded, receipted, and posted to Finance."
+      icon={<Calendar className="h-5 w-5" />}
+      footer={<>
+        <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+        <Button onClick={createBooking} loading={busy}>Book &amp; notify</Button>
+      </>}
+    >
+      <div className="space-y-3">
+        <Field label="Room">
+          <Select value={form.listing_id} onValueChange={(v) => setForm({ ...form, listing_id: v })} options={listingOpts.length ? listingOpts : [{ value: "", label: "No rooms — add one under Listings" }]} placeholder="Choose a room" aria-label="room" />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Guest name"><input className={inputCls} placeholder="e.g. Aisyah Rahman" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} /></Field>
+          <Field label="Guest contact"><input className={inputCls} placeholder="Email or phone" value={form.guest_contact} onChange={(e) => setForm({ ...form, guest_contact: e.target.value })} /></Field>
+          <Field label="Check-in"><input type="date" className={inputCls} value={form.check_in} onChange={(e) => setForm({ ...form, check_in: e.target.value })} /></Field>
+          <Field label="Check-out"><input type="date" className={inputCls} value={form.check_out} onChange={(e) => setForm({ ...form, check_out: e.target.value })} /></Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function ConsoleBookings() {
   const { data, loading, reload } = useGet<{ bookings: Booking[] }>("/bookings");
   const props = useGet<{ properties: SupplierProperty[] }>("/supplier/properties");
   const bookings = data?.bookings ?? [];
+  const [modal, setModal] = useState(false);
+  const [busy, setBusy] = useState("");
 
   // Ops agent: keep every booking's status right for today's date on open.
   useEffect(() => {
@@ -814,24 +834,10 @@ export function ConsoleBookings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [form, setForm] = useState({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
-  const [busy, setBusy] = useState("");
-
   const listingOpts = (props.data?.properties ?? []).flatMap((p) =>
     (p.listings ?? []).map((l) => ({ value: l.id, label: `${p.name} — ${l.title}` })),
   );
 
-  const createBooking = async () => {
-    if (!form.listing_id || !form.guest_name.trim()) return toast.info("Pick a room and enter a guest name.");
-    setBusy("book");
-    try {
-      const r = await api.post<{ status: string; reason?: string; amount?: number; currency?: string }>("/bookings", form);
-      if (r.status === "blocked") toast.warning(r.reason ?? "Firewall blocked this booking.");
-      else toast.success(`Booked — ${r.currency} ${r.amount?.toLocaleString()} · manager notified`);
-      setForm({ listing_id: "", guest_name: "", guest_contact: "", check_in: "", check_out: "" });
-      reload();
-    } catch { toast.error("Booking failed"); } finally { setBusy(""); }
-  };
   const remind = async () => {
     setBusy("remind");
     try { const r = await api.post<{ sent: number }>("/bookings/remind-due", {}); toast.success(`${r.sent} check-in reminder(s) sent`); }
@@ -840,52 +846,44 @@ export function ConsoleBookings() {
 
   return (
     <div>
-      <PageHead icon={Building2} title="Bookings" subtitle="Direct reservations across channels — each one firewall-guarded, receipted, and posted to Finance." />
+      <PageHead
+        icon={Building2}
+        title="Bookings"
+        subtitle="Direct reservations across channels — each one firewall-guarded, receipted, and posted to Finance."
+        actions={<>
+          <Button size="sm" variant="secondary" onClick={remind} loading={busy === "remind"}><Calendar className="h-4 w-4" /> Check-in reminders</Button>
+          <Button size="sm" onClick={() => setModal(true)}><Plus className="h-4 w-4" /> New booking</Button>
+        </>}
+      />
 
-      {/* Quick booking */}
-      <Card className="mb-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold">New booking</span>
-          <Button size="sm" variant="secondary" onClick={remind} loading={busy === "remind"}><Calendar className="h-3.5 w-3.5" /> Send check-in reminders</Button>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <div><Select value={form.listing_id} onValueChange={(v) => setForm({ ...form, listing_id: v })} options={listingOpts.length ? listingOpts : [{ value: "", label: "No rooms — add one under Listings" }]} placeholder="Room" aria-label="room" /></div>
-          <input className={inputCls} placeholder="Guest name" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} />
-          <input className={inputCls} placeholder="Guest contact (email/phone)" value={form.guest_contact} onChange={(e) => setForm({ ...form, guest_contact: e.target.value })} />
-          <div className="flex gap-2">
-            <input type="date" className={inputCls} value={form.check_in} onChange={(e) => setForm({ ...form, check_in: e.target.value })} />
-            <input type="date" className={inputCls} value={form.check_out} onChange={(e) => setForm({ ...form, check_out: e.target.value })} />
-          </div>
-        </div>
-        <div className="mt-2"><Button onClick={createBooking} loading={busy === "book"}>Book &amp; notify</Button></div>
-      </Card>
+      <NewBookingModal open={modal} onOpenChange={setModal} listingOpts={listingOpts} onBooked={reload} />
 
       <BookingCalendar bookings={bookings} />
 
-      <Card className="overflow-x-auto p-0">
+      <Section title="All bookings" subtitle={`${bookings.length} reservation(s)`} icon={Building2} className="mt-4" bodyClassName="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
-              <th className="px-4 py-2">Guest</th><th className="px-4 py-2">Room</th><th className="px-4 py-2">Dates</th>
-              <th className="px-4 py-2">Channel</th><th className="px-4 py-2 text-right">Amount</th><th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2.5">Guest</th><th className="px-4 py-2.5">Room</th><th className="px-4 py-2.5">Dates</th>
+              <th className="px-4 py-2.5">Channel</th><th className="px-4 py-2.5 text-right">Amount</th><th className="px-4 py-2.5">Status</th>
             </tr>
           </thead>
           <tbody>
             {loading ? <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">Loading…</td></tr>
-              : !bookings.length ? <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">No bookings yet.</td></tr>
+              : !bookings.length ? <tr><td colSpan={6} className="px-4 py-10 text-center text-[var(--muted)]">No bookings yet — press <strong>New booking</strong> to take one.</td></tr>
                 : bookings.map((b) => (
-                  <tr key={b.id} className="border-b border-[var(--border)] last:border-0">
-                    <td className="px-4 py-2 font-medium">{b.guest_name}</td>
-                    <td className="px-4 py-2 text-[var(--muted)]">{b.room_title}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-xs text-[var(--muted)]">{b.check_in || "—"} → {b.check_out || "—"} ({b.nights}n)</td>
-                    <td className="px-4 py-2 text-xs">{b.channel}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right font-semibold"><Money amount={b.amount} currency={b.currency} /></td>
-                    <td className="px-4 py-2"><Badge variant={b.status === "cancelled" ? "warning" : "success"}>{b.status}</Badge></td>
+                  <tr key={b.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)]">
+                    <td className="px-4 py-2.5 font-medium">{b.guest_name}</td>
+                    <td className="px-4 py-2.5 text-[var(--muted)]">{b.room_title}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-xs text-[var(--muted)]">{b.check_in || "—"} → {b.check_out || "—"} ({b.nights}n)</td>
+                    <td className="px-4 py-2.5 text-xs">{b.channel}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold"><Money amount={b.amount} currency={b.currency} /></td>
+                    <td className="px-4 py-2.5"><Badge variant={b.status === "cancelled" ? "warning" : "success"}>{b.status}</Badge></td>
                   </tr>
                 ))}
           </tbody>
         </table>
-      </Card>
+      </Section>
     </div>
   );
 }
@@ -924,95 +922,193 @@ function BookingCalendar({ bookings }: { bookings: Booking[] }) {
   const [dayOpen, setDayOpen] = useState<string | null>(null);
 
   const covers = (b: Booking, ds: string): boolean => {
-    if (!b.check_in || b.status === "cancelled") return b.check_in === ds && b.status !== "cancelled";
+    if (b.status === "cancelled") return false;
+    if (!b.check_in) return false;
     if (!b.check_out) return ds === b.check_in;
     return ds >= b.check_in && ds < b.check_out;
   };
   const onDay = (ds: string) => bookings.filter((b) => covers(b, ds));
 
   const todayStr = ymd(new Date());
-  const cells: Date[] = [];
-  if (view === "month") {
-    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-    const start = startOfWeek(first);
-    for (let i = 0; i < 42; i++) cells.push(addDays(start, i));
-  } else {
-    const start = startOfWeek(anchor);
-    for (let i = 0; i < 7; i++) cells.push(addDays(start, i));
-  }
+  const weekStart = startOfWeek(anchor);
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
   const label = view === "month"
     ? anchor.toLocaleDateString(undefined, { month: "long", year: "numeric" })
-    : `Week of ${startOfWeek(anchor).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+    : `${weekDays[0].toLocaleDateString(undefined, { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
   const shift = (dir: number) => setAnchor((a) => (view === "month" ? new Date(a.getFullYear(), a.getMonth() + dir, 1) : addDays(a, dir * 7)));
 
-  return (
-    <Card className="mb-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="flex items-center gap-2 text-sm font-semibold"><Calendar className="h-4 w-4 text-[var(--brand-500)]" /> Booking calendar</span>
-        <span className="text-sm text-[var(--muted)]">{label}</span>
-        <div className="ml-auto flex items-center gap-1">
-          <div className="mr-1 flex rounded-[var(--r-md)] bg-[var(--bg)] p-0.5 text-xs">
-            {(["month", "week"] as const).map((v) => (
-              <button key={v} onClick={() => setView(v)} className={cn("rounded-[calc(var(--r-md)-2px)] px-2.5 py-1 capitalize", view === v ? "bg-[var(--surface)] font-semibold text-[var(--brand-600)] shadow-[var(--shadow-1)]" : "text-[var(--muted)]")}>{v}</button>
-            ))}
-          </div>
-          <Button size="sm" variant="ghost" onClick={() => shift(-1)}>‹</Button>
-          <Button size="sm" variant="ghost" onClick={() => setAnchor(new Date())}>Today</Button>
-          <Button size="sm" variant="ghost" onClick={() => shift(1)}>›</Button>
-        </div>
-      </div>
+  // Week view = an occupancy grid: one row per room, one column per day, each
+  // cell showing who is in that room-night. Rooms are derived from the bookings
+  // in view so an empty property doesn't clutter the board.
+  const roomKey = (b: Booking) => `${b.property_name}||${b.room_title}`;
+  const rooms = Array.from(
+    new Map(
+      bookings
+        .filter((b) => b.status !== "cancelled" && weekDays.some((d) => covers(b, ymd(d))))
+        .map((b) => [roomKey(b), { property: b.property_name, room: b.room_title }]),
+    ).entries(),
+  ).sort((a, b) => a[1].room.localeCompare(b[1].room));
 
+  const controls = (
+    <div className="flex items-center gap-1">
+      <div className="mr-1 flex rounded-[var(--r-md)] bg-[var(--bg)] p-0.5 text-xs">
+        {(["month", "week"] as const).map((v) => (
+          <button key={v} onClick={() => setView(v)} className={cn("rounded-[calc(var(--r-md)-2px)] px-2.5 py-1 capitalize transition-colors", view === v ? "bg-[var(--surface)] font-semibold text-[var(--brand-600)] shadow-[var(--shadow-1)]" : "text-[var(--muted)]")}>{v}</button>
+        ))}
+      </div>
+      <Button size="sm" variant="ghost" onClick={() => shift(-1)} aria-label="Previous">‹</Button>
+      <Button size="sm" variant="ghost" onClick={() => setAnchor(new Date())}>Today</Button>
+      <Button size="sm" variant="ghost" onClick={() => shift(1)} aria-label="Next">›</Button>
+    </div>
+  );
+
+  return (
+    <Section title="Booking calendar" subtitle={label} icon={Calendar} actions={controls}>
+      {view === "month" ? (
+        <MonthGrid anchor={anchor} todayStr={todayStr} onDay={onDay} onPick={setDayOpen} />
+      ) : (
+        <WeekBoard weekDays={weekDays} rooms={rooms} todayStr={todayStr} bookings={bookings} covers={covers} roomKey={roomKey} onPick={setDayOpen} />
+      )}
+
+      <Drawer
+        open={!!dayOpen}
+        onOpenChange={(o) => { if (!o) setDayOpen(null); }}
+        icon={<Calendar className="h-5 w-5" />}
+        title={dayOpen ? new Date(dayOpen).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }) : ""}
+        description={dayOpen ? `${onDay(dayOpen).length} booking(s) staying this night` : undefined}
+      >
+        <div className="space-y-2">
+          {dayOpen && onDay(dayOpen).map((b) => (
+            <div key={b.id} className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{b.guest_name}</span>
+                <span className={cn("rounded-[var(--r-pill)] px-2 py-0.5 text-[0.6rem] font-semibold capitalize", CAL_STATUS[b.status] ?? CAL_STATUS.confirmed)}>{b.status.replace(/_/g, " ")}</span>
+              </div>
+              <p className="text-xs text-[var(--muted)]">{b.room_title} · {b.property_name}</p>
+              <p className="mt-0.5 text-[0.65rem] text-[var(--muted)]">{b.check_in || "—"} → {b.check_out || "—"} · <Money amount={b.amount} currency={b.currency} />{b.payment_status ? ` · ${b.payment_status}` : ""}</p>
+            </div>
+          ))}
+          {dayOpen && !onDay(dayOpen).length && <p className="text-sm text-[var(--muted)]">No one is staying this night.</p>}
+        </div>
+      </Drawer>
+    </Section>
+  );
+}
+
+/** Month grid — 6 weeks of day cells; every cell is clickable to open the day. */
+function MonthGrid({
+  anchor, todayStr, onDay, onPick,
+}: { anchor: Date; todayStr: string; onDay: (ds: string) => Booking[]; onPick: (ds: string) => void }) {
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const start = startOfWeek(first);
+  const cells = Array.from({ length: 42 }, (_, i) => addDays(start, i));
+  return (
+    <>
       <div className="grid grid-cols-7 gap-1 text-center text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--muted)]">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="py-1">{d}</div>)}
       </div>
-      <div className={cn("grid grid-cols-7 gap-1", view === "week" && "grid-rows-1")}>
+      <div className="grid grid-cols-7 gap-1">
         {cells.map((d) => {
           const ds = ymd(d);
           const list = onDay(ds);
-          const inMonth = view === "week" || d.getMonth() === anchor.getMonth();
+          const inMonth = d.getMonth() === anchor.getMonth();
           return (
-            <div key={ds} className={cn("min-h-[5.5rem] rounded-[var(--r-sm)] border border-[var(--border)] p-1", !inMonth && "opacity-40", ds === todayStr && "ring-2 ring-[var(--brand-400)]")}>
-              <div className="mb-0.5 text-right text-[0.65rem] text-[var(--muted)]">{d.getDate()}</div>
+            <button
+              key={ds}
+              onClick={() => onPick(ds)}
+              className={cn(
+                "min-h-[5.5rem] rounded-[var(--r-sm)] border border-[var(--border)] p-1 text-left transition-colors hover:border-[var(--brand-400)] hover:bg-[var(--bg)]",
+                !inMonth && "opacity-40",
+                ds === todayStr && "ring-2 ring-[var(--brand-400)]",
+              )}
+            >
+              <div className={cn("mb-0.5 text-right text-[0.7rem]", ds === todayStr ? "font-bold text-[var(--brand-600)]" : "text-[var(--muted)]")}>{d.getDate()}</div>
               <div className="space-y-0.5">
                 {list.slice(0, 3).map((b) => (
                   <div key={b.id} className={cn("truncate rounded px-1 py-0.5 text-[0.6rem]", CAL_STATUS[b.status] ?? CAL_STATUS.confirmed)} title={`${b.guest_name} · ${b.room_title}`}>
                     {b.guest_name.split(" ")[0]} · {b.room_title}
                   </div>
                 ))}
-                {list.length > 3 && (
-                  <button onClick={() => setDayOpen(ds)} className="w-full rounded px-1 text-left text-[0.6rem] font-semibold text-[var(--brand-600)] hover:underline">
-                    +{list.length - 3} more
-                  </button>
-                )}
+                {list.length > 3 && <div className="px-1 text-[0.6rem] font-semibold text-[var(--brand-600)]">+{list.length - 3} more</div>}
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
+    </>
+  );
+}
 
-      {dayOpen && (
-        <div className="fixed inset-0 z-[80] flex justify-end bg-black/40 backdrop-blur-sm" onClick={() => setDayOpen(null)}>
-          <div className="h-full w-full max-w-sm overflow-y-auto bg-[var(--elevated)] p-5 shadow-[var(--shadow-3)]" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-[family-name:var(--font-display)] text-lg font-bold">{new Date(dayOpen).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</h3>
-              <button onClick={() => setDayOpen(null)} aria-label="Close" className="rounded-full p-1 text-[var(--muted)] hover:text-[var(--text)]"><X className="h-4 w-4" /></button>
-            </div>
-            <div className="space-y-2">
-              {onDay(dayOpen).map((b) => (
-                <div key={b.id} className="rounded-[var(--r-md)] border border-[var(--border)] p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold">{b.guest_name}</span>
-                    <span className={cn("rounded-[var(--r-pill)] px-2 py-0.5 text-[0.6rem] font-semibold capitalize", CAL_STATUS[b.status] ?? CAL_STATUS.confirmed)}>{b.status.replace(/_/g, " ")}</span>
-                  </div>
-                  <p className="text-xs text-[var(--muted)]">{b.room_title} · {b.property_name}</p>
-                  <p className="mt-0.5 text-[0.65rem] text-[var(--muted)]">{b.check_in || "—"} → {b.check_out || "—"} · <Money amount={b.amount} currency={b.currency} />{b.payment_status ? ` · ${b.payment_status}` : ""}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+/** Week board — rooms (rows) × days (cols) occupancy grid, so you see exactly who
+ *  is in each room each night. Empty cells are open availability. */
+function WeekBoard({
+  weekDays, rooms, todayStr, bookings, covers, roomKey, onPick,
+}: {
+  weekDays: Date[];
+  rooms: [string, { property: string; room: string }][];
+  todayStr: string;
+  bookings: Booking[];
+  covers: (b: Booking, ds: string) => boolean;
+  roomKey: (b: Booking) => string;
+  onPick: (ds: string) => void;
+}) {
+  const cols = { gridTemplateColumns: `minmax(8.5rem, 1.3fr) repeat(7, minmax(0, 1fr))` };
+  if (!rooms.length) {
+    return <p className="py-6 text-center text-sm text-[var(--muted)]">No stays this week. Use ‹ › to move weeks, or take a booking.</p>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[44rem]">
+        {/* header row */}
+        <div className="grid gap-1" style={cols}>
+          <div className="px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--muted)]">Room</div>
+          {weekDays.map((d) => {
+            const ds = ymd(d);
+            return (
+              <button
+                key={ds}
+                onClick={() => onPick(ds)}
+                className={cn("rounded-[var(--r-sm)] px-1 py-1 text-center transition-colors hover:bg-[var(--bg)]", ds === todayStr && "bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)]")}
+              >
+                <div className="text-[0.6rem] font-semibold uppercase text-[var(--muted)]">{d.toLocaleDateString(undefined, { weekday: "short" })}</div>
+                <div className={cn("text-sm", ds === todayStr ? "font-bold text-[var(--brand-600)]" : "font-medium")}>{d.getDate()}</div>
+              </button>
+            );
+          })}
         </div>
-      )}
-    </Card>
+        {/* room rows */}
+        <div className="mt-1 space-y-1">
+          {rooms.map(([key, info]) => (
+            <div key={key} className="grid items-stretch gap-1" style={cols}>
+              <div className="flex flex-col justify-center rounded-[var(--r-sm)] bg-[var(--bg)] px-2 py-1.5">
+                <span className="truncate text-xs font-semibold" title={info.room}>{info.room}</span>
+                <span className="truncate text-[0.6rem] text-[var(--muted)]" title={info.property}>{info.property}</span>
+              </div>
+              {weekDays.map((d) => {
+                const ds = ymd(d);
+                const b = bookings.find((x) => roomKey(x) === key && covers(x, ds));
+                return (
+                  <button
+                    key={ds}
+                    onClick={() => onPick(ds)}
+                    className={cn(
+                      "min-h-[2.75rem] rounded-[var(--r-sm)] border px-1 py-1 text-left transition-colors",
+                      b
+                        ? cn("border-transparent", CAL_STATUS[b.status] ?? CAL_STATUS.confirmed)
+                        : "border-dashed border-[var(--border)] hover:border-[var(--brand-400)] hover:bg-[var(--bg)]",
+                    )}
+                    title={b ? `${b.guest_name} · ${b.status}` : "Open"}
+                  >
+                    {b ? <span className="block truncate text-[0.65rem] font-semibold">{b.guest_name.split(" ")[0]}</span> : <span className="block text-center text-[0.6rem] text-[var(--muted)]">·</span>}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1166,15 +1262,13 @@ export function ConsoleNegotiate() {
 
 /* ------------------------------------------------------------- Listings */
 
-type SupplierListing = { id: string; title: string; price_amount: number | null; price_currency: string; capacity: number | null; perks: string[]; available: boolean; description?: string | null; image_url?: string | null; original_price?: number | null; discount_pct?: number | null; amenities?: string[] };
+type SupplierListing = { id: string; title: string; price_amount: number | null; price_currency: string; capacity: number | null; perks: string[]; available: boolean; description?: string | null; image_url?: string | null; image_urls?: string[]; original_price?: number | null; discount_pct?: number | null; amenities?: string[] };
 type SupplierProperty = { id: string; name: string; city: string; kind: string; halal_friendly: boolean; listings: SupplierListing[]; image_url?: string | null; star_rating?: number | null };
 type Visibility = { cities: string[]; live_rooms: number; appeared_in_searches: number; leads: number };
-type Draft = { name: string; city: string; kind: string; room_title: string; description: string; perks: string[]; suggested_price: number; price_currency: string; capacity: number; halal_friendly: boolean; image_url?: string | null; original_price?: number | null; discount_pct?: number; amenities?: string[]; star_rating?: number };
+type Draft = { name: string; city: string; kind: string; room_title: string; description: string; perks: string[]; suggested_price: number; price_currency: string; capacity: number; halal_friendly: boolean; image_url?: string | null; image_urls?: string[]; original_price?: number | null; discount_pct?: number; amenities?: string[]; star_rating?: number };
 type HotelProfile = { slug: string; name: string | null; logo_url: string | null; about: string | null; published: boolean; url: string };
 type Lead = { id: string; status: string; note: string | null; traveler_email: string | null; property_name: string | null; listing_title: string | null };
 type PriceRec = { recommended_price: number; currency: string; comp_low: number | null; comp_high: number | null; delta_pct: number; rationale: string; current_price: number | null; sourced: boolean; occupancy_pct?: number | null; demand_level?: string; drivers?: string[] };
-
-const inputCls = "w-full rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]";
 
 /** The business's own public, bookable hotel site (Booking.com-style, direct). */
 function HotelProfileCard() {
@@ -1195,27 +1289,129 @@ function HotelProfileCard() {
   };
   if (loading || !p) return null;
   return (
-    <Card className="mb-4 border-[var(--brand-400)]/40">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold">🏨 Your public hotel site</div>
+    <Section
+      icon={Globe}
+      title="Your public hotel site"
+      subtitle="A Booking.com-style page of your own — travellers book direct, no OTA fee."
+      actions={
         <Button size="sm" variant={p.published ? "secondary" : "primary"} loading={busy} onClick={() => void save({ published: !p.published })}>
           {p.published ? "Published" : "Publish"}
         </Button>
+      }
+    >
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          {logo ? <img src={logo} alt="logo" className="h-11 w-11 rounded-[var(--r-md)] object-cover" /> : <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[var(--bg)] text-[0.6rem] text-[var(--muted)]">logo</span>}
+          <Field label="Company / hotel name" className="flex-1"><input className={inputCls} placeholder="e.g. Kinabalu Bay Resort" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+        </div>
+        <Field label="Logo image URL"><input className={inputCls} placeholder="https://…" value={logo} onChange={(e) => setLogo(e.target.value)} /></Field>
+        <Field label="About"><textarea rows={2} className={cn(inputCls, "resize-none")} placeholder="Shown on your public page" value={about} onChange={(e) => setAbout(e.target.value)} /></Field>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" loading={busy} onClick={() => void save({})}>Save profile</Button>
+          <input readOnly className={cn(inputCls, "min-w-0 flex-1 font-[family-name:var(--font-mono)] text-xs")} value={p.url} />
+          <Button size="sm" variant="secondary" onClick={() => { void navigator.clipboard?.writeText(p.url); toast.success("Link copied"); }}>Copy</Button>
+          <a href={p.url} target="_blank" rel="noreferrer" className="text-xs text-[var(--brand-600)] underline">Open site</a>
+        </div>
       </div>
-      <p className="mb-2 text-xs text-[var(--muted)]">A Booking.com-style page of your own — travellers book your rooms direct, no OTA fee. Add your logo + about, publish, and share the link.</p>
-      <div className="flex flex-wrap items-center gap-2">
-        {logo ? <img src={logo} alt="logo" className="h-9 w-9 rounded object-cover" /> : <span className="grid h-9 w-9 place-items-center rounded bg-[var(--bg)] text-[0.6rem] text-[var(--muted)]">logo</span>}
-        <input className={cn(inputCls, "min-w-0 flex-1")} placeholder="Company / hotel name" value={name} onChange={(e) => setName(e.target.value)} />
+    </Section>
+  );
+}
+
+/** AI room composer — a right-hand off-canvas: drop several photos, add a hint,
+ *  and the mesh writes a full bookable listing. The uploaded photos become the
+ *  room's gallery; the first is the cover. */
+function ListingComposerDrawer({
+  open, onOpenChange, onPublished,
+}: { open: boolean; onOpenChange: (o: boolean) => void; onPublished: () => void }) {
+  const [hint, setHint] = useState({ name: "", city: "", room: "", notes: "", halal_friendly: true });
+  const [images, setImages] = useState<string[]>([]);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [busy, setBusy] = useState("");
+
+  const reset = () => { setHint({ name: "", city: "", room: "", notes: "", halal_friendly: true }); setImages([]); setDraft(null); };
+
+  const aiDraft = async () => {
+    if (!hint.city) return toast.info("Enter a city first.");
+    setBusy("draft");
+    try {
+      // Feed the first uploaded photo to the vision model so the copy matches the
+      // real room; otherwise the agent writes from the text hint alone.
+      const r = await api.post<{ draft: Draft }>("/supplier/ai/draft-listing", { ...hint, image: images[0] || undefined, kind: "hotel" });
+      setDraft(r.draft);
+    } catch { toast.error("AI draft failed"); } finally { setBusy(""); }
+  };
+  const publish = async () => {
+    if (!draft) return;
+    setBusy("publish");
+    const gallery = images.length ? images : draft.image_url ? [draft.image_url] : [];
+    try {
+      await api.post("/supplier/ai/publish", {
+        name: draft.name, city: draft.city, kind: draft.kind, halal_friendly: draft.halal_friendly,
+        room_title: draft.room_title, description: draft.description, price_amount: draft.suggested_price,
+        price_currency: draft.price_currency, perks: draft.perks, capacity: draft.capacity,
+        image_url: gallery[0] ?? draft.image_url, image_urls: gallery, amenities: draft.amenities,
+        original_price: draft.original_price, discount_pct: draft.discount_pct, star_rating: draft.star_rating,
+      });
+      toast.success("Published — live to travellers searching " + draft.city);
+      reset(); onPublished(); onOpenChange(false);
+    } catch { toast.error("Publish failed"); } finally { setBusy(""); }
+  };
+
+  const cover = images[0] || draft?.image_url || null;
+  return (
+    <Drawer
+      open={open}
+      onOpenChange={(o) => { if (!o) { onOpenChange(false); } else onOpenChange(true); }}
+      icon={<Sparkles className="h-5 w-5" />}
+      title="Add a room"
+      description="Drop photos, add a hint, and AI writes the whole bookable listing."
+      footer={draft ? <>
+        <Button variant="ghost" onClick={() => setDraft(null)}>Discard draft</Button>
+        <Button onClick={publish} loading={busy === "publish"}>Publish — go live</Button>
+      </> : undefined}
+    >
+      <div className="space-y-4">
+        <div>
+          <p className="mb-1.5 text-xs font-medium text-[var(--muted)]">Room photos</p>
+          <ImageDropzone value={images} onChange={setImages} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Property name"><input className={inputCls} placeholder="e.g. Kinabalu Bay Resort" value={hint.name} onChange={(e) => setHint({ ...hint, name: e.target.value })} /></Field>
+          <Field label="City"><input className={inputCls} placeholder="e.g. Kota Kinabalu" value={hint.city} onChange={(e) => setHint({ ...hint, city: e.target.value })} /></Field>
+          <Field label="Room / ticket"><input className={inputCls} placeholder="e.g. Deluxe Sea View" value={hint.room} onChange={(e) => setHint({ ...hint, room: e.target.value })} /></Field>
+          <Field label="Notes"><input className={inputCls} placeholder="Amenities, location…" value={hint.notes} onChange={(e) => setHint({ ...hint, notes: e.target.value })} /></Field>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-sm"><Switch checked={hint.halal_friendly} onCheckedChange={(c) => setHint({ ...hint, halal_friendly: c })} aria-label="halal" /> Halal-friendly</label>
+          <Button onClick={aiDraft} loading={busy === "draft"}><Sparkles className="h-4 w-4" /> {draft ? "Re-draft with AI" : "Draft with AI"}</Button>
+        </div>
+
+        {draft && (
+          <div className="overflow-hidden rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--bg)]">
+            {cover && (
+              <div className="relative">
+                <img src={cover} alt={draft.room_title} className="h-44 w-full object-cover" />
+                {images.length > 1 && <span className="absolute bottom-2 right-2 rounded-[var(--r-pill)] bg-black/60 px-2 py-0.5 text-[0.65rem] font-semibold text-white">{images.length} photos</span>}
+              </div>
+            )}
+            <div className="p-4">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <Badge variant="brand">AI draft</Badge>
+                <span className="font-semibold">{draft.room_title}</span>
+                {draft.star_rating ? <span className="text-xs text-[var(--warning)]">{"★".repeat(Math.max(1, Math.min(5, draft.star_rating)))}</span> : null}
+                <span className="ml-auto text-right">
+                  {draft.original_price && draft.original_price > draft.suggested_price ? <span className="mr-1 text-xs text-[var(--muted)] line-through">{draft.price_currency} {draft.original_price.toLocaleString()}</span> : null}
+                  <span className="text-sm font-semibold">{draft.price_currency} {draft.suggested_price.toLocaleString()}</span><span className="text-xs text-[var(--muted)]">/night</span>
+                  {draft.discount_pct ? <span className="ml-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold text-[var(--success)]">-{draft.discount_pct}%</span> : null}
+                </span>
+              </div>
+              <p className="text-sm text-[var(--muted)]">{draft.description}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">{(draft.amenities ?? draft.perks).map((p) => <Chip key={p}>{p}</Chip>)}</div>
+            </div>
+          </div>
+        )}
       </div>
-      <input className={cn(inputCls, "mt-2")} placeholder="Logo image URL" value={logo} onChange={(e) => setLogo(e.target.value)} />
-      <textarea rows={2} className={cn(inputCls, "mt-2 resize-none")} placeholder="About your hotel (shown on your public page)" value={about} onChange={(e) => setAbout(e.target.value)} />
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Button size="sm" loading={busy} onClick={() => void save({})}>Save profile</Button>
-        <input readOnly className={cn(inputCls, "min-w-0 flex-1 font-[family-name:var(--font-mono)] text-xs")} value={p.url} />
-        <Button size="sm" variant="secondary" onClick={() => { void navigator.clipboard?.writeText(p.url); toast.success("Link copied"); }}>Copy</Button>
-        <a href={p.url} target="_blank" rel="noreferrer" className="text-xs text-[var(--brand-600)] underline">Open site</a>
-      </div>
-    </Card>
+    </Drawer>
   );
 }
 
@@ -1224,36 +1420,12 @@ export function ConsoleListings() {
   const vis = useGet<Visibility>("/supplier/ai/visibility");
   const leads = useGet<{ leads: Lead[] }>("/supplier/leads");
 
-  const [hint, setHint] = useState({ name: "", city: "", room: "", notes: "", halal_friendly: true, image: "" });
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [composer, setComposer] = useState(false);
   const [busy, setBusy] = useState("");
   const [prices, setPrices] = useState<Record<string, PriceRec>>({});
   const [replies, setReplies] = useState<Record<string, string>>({});
 
-  const aiDraft = async () => {
-    if (!hint.city) return toast.info("Enter a city first.");
-    setBusy("draft");
-    try {
-      const r = await api.post<{ draft: Draft }>("/supplier/ai/draft-listing", { ...hint, image: hint.image || undefined, kind: "hotel" });
-      setDraft(r.draft);
-    } catch { toast.error("AI draft failed"); } finally { setBusy(""); }
-  };
-  const publish = async () => {
-    if (!draft) return;
-    setBusy("publish");
-    try {
-      await api.post("/supplier/ai/publish", {
-        name: draft.name, city: draft.city, kind: draft.kind, halal_friendly: draft.halal_friendly,
-        room_title: draft.room_title, description: draft.description, price_amount: draft.suggested_price,
-        price_currency: draft.price_currency, perks: draft.perks, capacity: draft.capacity,
-        image_url: draft.image_url, amenities: draft.amenities, original_price: draft.original_price,
-        discount_pct: draft.discount_pct, star_rating: draft.star_rating,
-      });
-      toast.success("Published — live to travellers searching " + draft.city);
-      setDraft(null); setHint({ name: "", city: "", room: "", notes: "", halal_friendly: true, image: "" });
-      props.reload(); vis.reload();
-    } catch { toast.error("Publish failed"); } finally { setBusy(""); }
-  };
+  const reloadRooms = () => { props.reload(); vis.reload(); };
   const aiPrice = async (id: string) => {
     setBusy("price:" + id);
     try {
@@ -1273,122 +1445,117 @@ export function ConsoleListings() {
 
   return (
     <div>
-      <PageHead icon={Building2} title="Listings" subtitle="Your agents write, price and publish rooms — live to travellers, no OTA in the middle." />
+      <PageHead
+        icon={Building2}
+        title="Listings"
+        subtitle="Your agents write, price and publish rooms — live to travellers, no OTA in the middle."
+        actions={<Button size="sm" onClick={() => setComposer(true)}><Plus className="h-4 w-4" /> Add room</Button>}
+      />
 
-      <HotelProfileCard />
+      <ListingComposerDrawer open={composer} onOpenChange={setComposer} onPublished={reloadRooms} />
 
-      <Card className="mb-4 border-l-4 border-[var(--brand-500)]">
-        <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Live to travellers</p>
-        <div className="mt-1 flex flex-wrap items-baseline gap-x-6 gap-y-1">
-          <span className="text-2xl font-bold text-[var(--brand-500)]">{v?.live_rooms ?? 0} rooms</span>
-          <span className="text-sm text-[var(--muted)]">surfaced in <strong className="text-[var(--text)]">{v?.appeared_in_searches ?? 0}</strong> traveller searches · <strong className="text-[var(--text)]">{v?.leads ?? 0}</strong> leads</span>
-        </div>
-        {!!v?.cities.length && <p className="mt-1 text-sm text-[var(--muted)]">Your direct rooms rank ahead of the OTAs when travellers search: {v.cities.join(", ")}.</p>}
-      </Card>
+      <Tabs defaultValue="rooms">
+        <TabsList>
+          <TabsTrigger value="rooms">Rooms</TabsTrigger>
+          <TabsTrigger value="site">Your site</TabsTrigger>
+          <TabsTrigger value="leads">Leads{leadList.length ? ` · ${leadList.length}` : ""}</TabsTrigger>
+        </TabsList>
 
-      {/* AI listing composer */}
-      <Card className="mb-4">
-        <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-[var(--brand-500)]" /> AI listing composer — describe it, or drop a photo URL, and AI writes the whole listing</div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <input className={inputCls} placeholder="Property name" value={hint.name} onChange={(e) => setHint({ ...hint, name: e.target.value })} />
-          <input className={inputCls} placeholder="City (e.g. Kota Kinabalu)" value={hint.city} onChange={(e) => setHint({ ...hint, city: e.target.value })} />
-          <input className={inputCls} placeholder="Room / ticket (e.g. Deluxe Sea View)" value={hint.room} onChange={(e) => setHint({ ...hint, room: e.target.value })} />
-          <input className={inputCls} placeholder="Notes (amenities, location…)" value={hint.notes} onChange={(e) => setHint({ ...hint, notes: e.target.value })} />
-          <input className={cn(inputCls, "sm:col-span-2")} placeholder="Photo URL (optional) — AI reads it to write the listing + uses it as the image" value={hint.image} onChange={(e) => setHint({ ...hint, image: e.target.value })} />
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm"><Switch checked={hint.halal_friendly} onCheckedChange={(c) => setHint({ ...hint, halal_friendly: c })} aria-label="halal" /> Halal-friendly</label>
-          <Button onClick={aiDraft} loading={busy === "draft"}><Sparkles className="h-4 w-4" /> Draft with AI</Button>
-        </div>
-
-        {draft && (
-          <div className="mt-4 overflow-hidden rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--bg)]">
-            {draft.image_url && <img src={draft.image_url} alt={draft.room_title} className="h-40 w-full object-cover" />}
-            <div className="p-4">
-              <div className="mb-1 flex flex-wrap items-center gap-2">
-                <Badge variant="brand">AI draft</Badge>
-                <span className="font-semibold">{draft.room_title}</span>
-                {draft.star_rating ? <span className="text-xs text-[var(--warning)]">{"★".repeat(Math.max(1, Math.min(5, draft.star_rating)))}</span> : null}
-                <span className="ml-auto text-right">
-                  {draft.original_price && draft.original_price > draft.suggested_price ? <span className="mr-1 text-xs text-[var(--muted)] line-through">{draft.price_currency} {draft.original_price.toLocaleString()}</span> : null}
-                  <span className="text-sm font-semibold">{draft.price_currency} {draft.suggested_price.toLocaleString()}</span><span className="text-xs text-[var(--muted)]">/night</span>
-                  {draft.discount_pct ? <span className="ml-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold text-[var(--success)]">-{draft.discount_pct}%</span> : null}
-                </span>
-              </div>
-              <p className="text-sm text-[var(--muted)]">{draft.description}</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">{(draft.amenities ?? draft.perks).map((p) => <Chip key={p}>{p}</Chip>)}</div>
-              <div className="mt-3 flex gap-2"><Button size="sm" onClick={publish} loading={busy === "publish"}>Publish — go live</Button><Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Discard</Button></div>
+        <TabsContent value="rooms" className="space-y-4">
+          <Card className="border-l-4 border-[var(--brand-500)]">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Live to travellers</p>
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+              <span className="text-2xl font-bold text-[var(--brand-500)]">{v?.live_rooms ?? 0} rooms</span>
+              <span className="text-sm text-[var(--muted)]">surfaced in <strong className="text-[var(--text)]">{v?.appeared_in_searches ?? 0}</strong> traveller searches · <strong className="text-[var(--text)]">{v?.leads ?? 0}</strong> leads</span>
             </div>
-          </div>
-        )}
-      </Card>
+            {!!v?.cities.length && <p className="mt-1 text-sm text-[var(--muted)]">Your direct rooms rank ahead of the OTAs when travellers search: {v.cities.join(", ")}.</p>}
+          </Card>
 
-      {/* Properties + rooms */}
-      <h3 className="mb-2 text-sm font-semibold">Your properties</h3>
-      {props.loading ? <p className="text-sm text-[var(--muted)]">Loading…</p>
-        : !properties.length ? <Card><p className="text-sm text-[var(--muted)]">No properties yet — draft your first room above.</p></Card>
-          : properties.map((prop) => (
-            <Card key={prop.id} className="mb-3">
-              <div className="mb-2 flex items-center gap-2">
-                <span className="font-semibold">{prop.name}</span>
-                <span className="text-xs text-[var(--muted)]">{prop.city}</span>
-                {prop.halal_friendly && <Badge variant="success">halal-friendly</Badge>}
-              </div>
-              <div className="space-y-2">
-                {(prop.listings ?? []).map((l) => (
-                  <div key={l.id} className="overflow-hidden rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)]">
-                    <div className="flex gap-3 p-3">
-                      {l.image_url && <img src={l.image_url} alt={l.title} className="h-20 w-28 shrink-0 rounded-[var(--r-sm)] object-cover" />}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start gap-2">
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{l.title}</span>
-                          <span className="shrink-0 text-right">
-                            {l.original_price && l.original_price > (l.price_amount ?? 0) ? <span className="mr-1 text-xs text-[var(--muted)] line-through"><Money amount={l.original_price} currency={l.price_currency} /></span> : null}
-                            <span className="text-sm font-semibold"><Money amount={l.price_amount ?? 0} currency={l.price_currency} /></span><span className="text-xs text-[var(--muted)]">/night</span>
-                            {l.discount_pct ? <span className="ml-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold text-[var(--success)]">-{l.discount_pct}%</span> : null}
-                          </span>
+          {props.loading ? <Card><p className="text-sm text-[var(--muted)]">Loading…</p></Card>
+            : !properties.length ? (
+              <Card>
+                <div className="py-4 text-center">
+                  <p className="text-sm text-[var(--muted)]">No rooms yet.</p>
+                  <Button size="sm" className="mt-3" onClick={() => setComposer(true)}><Plus className="h-4 w-4" /> Add your first room</Button>
+                </div>
+              </Card>
+            )
+              : properties.map((prop) => (
+                <Section
+                  key={prop.id}
+                  icon={Building2}
+                  title={prop.name}
+                  subtitle={prop.city}
+                  actions={prop.halal_friendly ? <Badge variant="success">halal-friendly</Badge> : undefined}
+                  bodyClassName="space-y-2"
+                >
+                  {(prop.listings ?? []).map((l) => {
+                    const gallery = l.image_urls?.length ? l.image_urls : l.image_url ? [l.image_url] : [];
+                    return (
+                      <div key={l.id} className="overflow-hidden rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)]">
+                        <div className="flex gap-3 p-3">
+                          {gallery[0] && (
+                            <div className="relative h-20 w-28 shrink-0">
+                              <img src={gallery[0]} alt={l.title} className="h-full w-full rounded-[var(--r-sm)] object-cover" />
+                              {gallery.length > 1 && <span className="absolute bottom-1 right-1 rounded-[var(--r-pill)] bg-black/60 px-1.5 py-0.5 text-[0.55rem] font-semibold text-white">+{gallery.length - 1}</span>}
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start gap-2">
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{l.title}</span>
+                              <span className="shrink-0 text-right">
+                                {l.original_price && l.original_price > (l.price_amount ?? 0) ? <span className="mr-1 text-xs text-[var(--muted)] line-through"><Money amount={l.original_price} currency={l.price_currency} /></span> : null}
+                                <span className="text-sm font-semibold"><Money amount={l.price_amount ?? 0} currency={l.price_currency} /></span><span className="text-xs text-[var(--muted)]">/night</span>
+                                {l.discount_pct ? <span className="ml-1 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_16%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold text-[var(--success)]">-{l.discount_pct}%</span> : null}
+                              </span>
+                            </div>
+                            {l.description && <p className="mt-0.5 line-clamp-2 text-xs text-[var(--muted)]">{l.description}</p>}
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              {(l.amenities ?? l.perks ?? []).slice(0, 5).map((a) => <span key={a} className="rounded-[var(--r-pill)] bg-[var(--surface)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{a}</span>)}
+                              <Button size="sm" variant="secondary" className="ml-auto" onClick={() => aiPrice(l.id)} loading={busy === "price:" + l.id}><TrendingUp className="h-3.5 w-3.5" /> AI price</Button>
+                            </div>
+                          </div>
                         </div>
-                        {l.description && <p className="mt-0.5 line-clamp-2 text-xs text-[var(--muted)]">{l.description}</p>}
-                        <div className="mt-1 flex flex-wrap items-center gap-1">
-                          {(l.amenities ?? l.perks ?? []).slice(0, 5).map((a) => <span key={a} className="rounded-[var(--r-pill)] bg-[var(--surface)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{a}</span>)}
-                          <Button size="sm" variant="secondary" className="ml-auto" onClick={() => aiPrice(l.id)} loading={busy === "price:" + l.id}><TrendingUp className="h-3.5 w-3.5" /> AI price</Button>
-                        </div>
-                      </div>
-                    </div>
-                    {prices[l.id] && (
-                      <div className="mx-3 mb-3 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-2 text-sm">
-                        <span className="font-semibold text-[var(--brand-500)]">Recommend {prices[l.id].currency} {prices[l.id].recommended_price.toLocaleString()}</span>
-                        {prices[l.id].delta_pct ? <span className={cn("ml-2 text-xs", prices[l.id].delta_pct > 0 ? "text-[var(--success)]" : "text-[var(--warning)]")}>{prices[l.id].delta_pct > 0 ? "+" : ""}{prices[l.id].delta_pct}%</span> : null}
-                        {prices[l.id].comp_low != null && <span className="ml-2 text-xs text-[var(--muted)]">comp {prices[l.id].currency} {prices[l.id].comp_low}–{prices[l.id].comp_high}</span>}
-                        {prices[l.id].occupancy_pct != null && <span className="ml-2 text-xs text-[var(--muted)]">occ {prices[l.id].occupancy_pct}%</span>}
-                        {prices[l.id].demand_level && <span className={cn("ml-2 rounded-[var(--r-pill)] px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase", prices[l.id].demand_level === "high" ? "bg-[color-mix(in_srgb,var(--danger,#dc2626)_16%,transparent)] text-[var(--danger,#dc2626)]" : prices[l.id].demand_level === "low" ? "bg-[color-mix(in_srgb,var(--success)_16%,transparent)] text-[var(--success)]" : "bg-[var(--bg)] text-[var(--muted)]")}>{prices[l.id].demand_level} demand</span>}
-                        <p className="mt-0.5 text-xs text-[var(--muted)]">{prices[l.id].rationale}{!prices[l.id].sourced ? " (estimate)" : ""}</p>
-                        {(prices[l.id].drivers ?? []).length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {prices[l.id].drivers!.map((d) => <span key={d} className="rounded-[var(--r-pill)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{d}</span>)}
+                        {prices[l.id] && (
+                          <div className="mx-3 mb-3 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] p-2 text-sm">
+                            <span className="font-semibold text-[var(--brand-500)]">Recommend {prices[l.id].currency} {prices[l.id].recommended_price.toLocaleString()}</span>
+                            {prices[l.id].delta_pct ? <span className={cn("ml-2 text-xs", prices[l.id].delta_pct > 0 ? "text-[var(--success)]" : "text-[var(--warning)]")}>{prices[l.id].delta_pct > 0 ? "+" : ""}{prices[l.id].delta_pct}%</span> : null}
+                            {prices[l.id].comp_low != null && <span className="ml-2 text-xs text-[var(--muted)]">comp {prices[l.id].currency} {prices[l.id].comp_low}–{prices[l.id].comp_high}</span>}
+                            {prices[l.id].occupancy_pct != null && <span className="ml-2 text-xs text-[var(--muted)]">occ {prices[l.id].occupancy_pct}%</span>}
+                            {prices[l.id].demand_level && <span className={cn("ml-2 rounded-[var(--r-pill)] px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase", prices[l.id].demand_level === "high" ? "bg-[color-mix(in_srgb,var(--danger,#dc2626)_16%,transparent)] text-[var(--danger,#dc2626)]" : prices[l.id].demand_level === "low" ? "bg-[color-mix(in_srgb,var(--success)_16%,transparent)] text-[var(--success)]" : "bg-[var(--bg)] text-[var(--muted)]")}>{prices[l.id].demand_level} demand</span>}
+                            <p className="mt-0.5 text-xs text-[var(--muted)]">{prices[l.id].rationale}{!prices[l.id].sourced ? " (estimate)" : ""}</p>
+                            {(prices[l.id].drivers ?? []).length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {prices[l.id].drivers!.map((d) => <span key={d} className="rounded-[var(--r-pill)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{d}</span>)}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ))}
+                    );
+                  })}
+                </Section>
+              ))}
+        </TabsContent>
 
-      {/* Leads */}
-      <h3 className="mb-2 mt-6 text-sm font-semibold">Leads from travellers</h3>
-      {!leadList.length ? <Card><p className="text-sm text-[var(--muted)]">No leads yet — they arrive when a traveller books your direct room.</p></Card>
-        : leadList.map((ld) => (
-          <Card key={ld.id} className="mb-2">
-            <div className="flex items-center gap-2">
-              <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{ld.listing_title || ld.property_name || "Enquiry"}</p><p className="truncate text-xs text-[var(--muted)]">{ld.traveler_email || "traveller"} · {ld.note || "no note"}</p></div>
-              <Badge variant={ld.status === "new" ? "brand" : "success"}>{ld.status}</Badge>
-              <Button size="sm" variant="secondary" onClick={() => aiReply(ld.id)} loading={busy === "reply:" + ld.id}><Sparkles className="h-3.5 w-3.5" /> AI reply</Button>
-            </div>
-            {replies[ld.id] && <p className="mt-2 whitespace-pre-wrap rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">{replies[ld.id]}</p>}
-          </Card>
-        ))}
+        <TabsContent value="site">
+          <HotelProfileCard />
+        </TabsContent>
+
+        <TabsContent value="leads" className="space-y-2">
+          {!leadList.length ? <Card><p className="text-sm text-[var(--muted)]">No leads yet — they arrive when a traveller books your direct room.</p></Card>
+            : leadList.map((ld) => (
+              <Card key={ld.id}>
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{ld.listing_title || ld.property_name || "Enquiry"}</p><p className="truncate text-xs text-[var(--muted)]">{ld.traveler_email || "traveller"} · {ld.note || "no note"}</p></div>
+                  <Badge variant={ld.status === "new" ? "brand" : "success"}>{ld.status}</Badge>
+                  <Button size="sm" variant="secondary" onClick={() => aiReply(ld.id)} loading={busy === "reply:" + ld.id}><Sparkles className="h-3.5 w-3.5" /> AI reply</Button>
+                </div>
+                {replies[ld.id] && <p className="mt-2 whitespace-pre-wrap rounded-[var(--r-md)] bg-[var(--bg)] p-3 text-sm">{replies[ld.id]}</p>}
+              </Card>
+            ))}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

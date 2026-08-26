@@ -13,6 +13,7 @@ export { ErrorBoundary } from "./ErrorBoundary";
 export { EmptyState } from "./EmptyState";
 export { AgentPulse } from "./AgentPulse";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
+export { Modal, Drawer } from "./Modal";
 export { Badge } from "./Badge";
 export { Collapsible } from "./Collapsible";
 export { OptionCard } from "./OptionCard";

@@ -391,6 +391,9 @@ CREATE INDEX IF NOT EXISTS supplier_leads_org_idx ON supplier_leads (org_id, cre
 -- Booking.com-style richness on listings + properties (idempotent upgrade).
 ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS image_url TEXT;
+-- Gallery: several images per room (drag-drop upload). image_url stays as the
+-- cover/first image for back-compat; image_urls holds the full ordered set.
+ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS image_urls TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS original_price NUMERIC(12,2);
 ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS discount_pct INTEGER;
 ALTER TABLE supplier_listings ADD COLUMN IF NOT EXISTS amenities TEXT[] NOT NULL DEFAULT '{}';

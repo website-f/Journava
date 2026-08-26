@@ -484,6 +484,30 @@ h4 {
   animation: journava-out 120ms var(--ease);
 }
 
+/* Off-canvas drawer (Modal.tsx <Drawer>) — slides in from the right edge. */
+@keyframes journava-slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes journava-slide-out-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.radix-sheet[data-state="open"] {
+  animation: journava-slide-in-right var(--dur-slow) var(--ease-spring);
+}
+.radix-sheet[data-state="closed"] {
+  animation: journava-slide-out-right var(--dur) var(--ease);
+}
+
 /* Brain Graph — staggered node/edge entrance ("brain growing" demo effect) */
 @keyframes journava-brain-node {
   from { opacity: 0; transform: scale(0.7); }

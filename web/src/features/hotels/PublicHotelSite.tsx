@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { MapPin, Sparkles, CheckCircle2, X, Users, Search } from "@/components/ui/icons";
+import { MapPin, Sparkles, CheckCircle2, X, Users, Search, Bot } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/cn";
 
 type Room = {
   id: string;
@@ -15,6 +16,7 @@ type Room = {
   discount_pct: number | null;
   description: string | null;
   image_url: string | null;
+  image_urls?: string[];
   amenities: string[];
   capacity: number | null;
   halal_friendly?: boolean;
@@ -40,6 +42,8 @@ export function PublicHotelSite() {
   const [maxPrice, setMaxPrice] = useState("");
   const [guests, setGuests] = useState("");
   const [booking, setBooking] = useState<Room | null>(null);
+  const [details, setDetails] = useState<Room | null>(null);
+  const [highlight, setHighlight] = useState<string[]>([]);
 
   useEffect(() => {
     api.get<Site>(`/hotels/${slug}`).then(setSite).catch(() => setSite({ found: false }));
@@ -121,37 +125,221 @@ export function PublicHotelSite() {
         <p className="mb-3 text-sm text-[var(--muted)]">{rooms.length} room{rooms.length === 1 ? "" : "s"} available</p>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {rooms.map((r) => (
-            <div key={r.id} className="surface-card flex flex-col overflow-hidden p-0">
-              <div className="relative h-40 w-full overflow-hidden bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)]">
-                {r.image_url && <img src={r.image_url} alt={r.title} loading="lazy" className="h-full w-full object-cover" />}
-                {r.discount_pct ? <span className="absolute left-2 top-2 rounded-[var(--r-pill)] bg-[var(--success)] px-2 py-0.5 text-[0.65rem] font-bold text-white">-{r.discount_pct}%</span> : null}
-                {r.halal_friendly && <span className="absolute right-2 top-2 rounded-[var(--r-pill)] bg-black/50 px-2 py-0.5 text-[0.6rem] font-semibold text-white backdrop-blur-sm">halal-friendly</span>}
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col p-3">
-                <p className="truncate text-sm font-semibold">{r.title}</p>
-                <p className="flex items-center gap-1 text-[0.7rem] text-[var(--muted)]"><MapPin className="h-3 w-3" />{r.property_name} · {r.city}{r.star_rating ? ` · ${"★".repeat(Math.min(5, r.star_rating))}` : ""}</p>
-                {r.description && <p className="mt-1 line-clamp-2 text-xs text-[var(--muted)]">{r.description}</p>}
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {(r.amenities ?? []).slice(0, 4).map((a) => <span key={a} className="rounded-[var(--r-pill)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{a}</span>)}
-                </div>
-                <div className="mt-auto flex items-end justify-between gap-2 pt-3">
-                  <div>
-                    {r.original_price && r.original_price > (r.price_amount ?? 0) ? <span className="mr-1 text-xs text-[var(--muted)] line-through">{r.price_currency} {r.original_price.toLocaleString()}</span> : null}
-                    <span className="text-base font-bold text-[var(--brand-600)]">{r.price_currency} {(r.price_amount ?? 0).toLocaleString()}</span>
-                    <span className="text-[0.65rem] text-[var(--muted)]">/night</span>
+          {rooms.map((r) => {
+            const shots = r.image_urls?.length ? r.image_urls : r.image_url ? [r.image_url] : [];
+            return (
+              <div key={r.id} className={cn("surface-card flex flex-col overflow-hidden p-0 transition-shadow", highlight.includes(r.id) && "ring-2 ring-[var(--brand-400)]")}>
+                <button onClick={() => setDetails(r)} className="relative block h-40 w-full overflow-hidden bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-left">
+                  {shots[0] && <img src={shots[0]} alt={r.title} loading="lazy" className="h-full w-full object-cover transition-transform hover:scale-[1.03]" />}
+                  {r.discount_pct ? <span className="absolute left-2 top-2 rounded-[var(--r-pill)] bg-[var(--success)] px-2 py-0.5 text-[0.65rem] font-bold text-white">-{r.discount_pct}%</span> : null}
+                  {r.halal_friendly && <span className="absolute right-2 top-2 rounded-[var(--r-pill)] bg-black/50 px-2 py-0.5 text-[0.6rem] font-semibold text-white backdrop-blur-sm">halal-friendly</span>}
+                  {shots.length > 1 && <span className="absolute bottom-2 right-2 rounded-[var(--r-pill)] bg-black/55 px-2 py-0.5 text-[0.6rem] font-semibold text-white">📷 {shots.length}</span>}
+                </button>
+                <div className="flex min-w-0 flex-1 flex-col p-3">
+                  <p className="truncate text-sm font-semibold">{r.title}</p>
+                  <p className="flex items-center gap-1 text-[0.7rem] text-[var(--muted)]"><MapPin className="h-3 w-3" />{r.property_name} · {r.city}{r.star_rating ? ` · ${"★".repeat(Math.min(5, r.star_rating))}` : ""}</p>
+                  {r.description && <p className="mt-1 line-clamp-2 text-xs text-[var(--muted)]">{r.description}</p>}
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {(r.amenities ?? []).slice(0, 4).map((a) => <span key={a} className="rounded-[var(--r-pill)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{a}</span>)}
                   </div>
-                  <Button size="sm" onClick={() => setBooking(r)}>Book</Button>
+                  <div className="mt-auto flex items-end justify-between gap-2 pt-3">
+                    <div>
+                      {r.original_price && r.original_price > (r.price_amount ?? 0) ? <span className="mr-1 text-xs text-[var(--muted)] line-through">{r.price_currency} {r.original_price.toLocaleString()}</span> : null}
+                      <span className="text-base font-bold text-[var(--brand-600)]">{r.price_currency} {(r.price_amount ?? 0).toLocaleString()}</span>
+                      <span className="text-[0.65rem] text-[var(--muted)]">/night</span>
+                    </div>
+                    <Button size="sm" onClick={() => setDetails(r)}>View details</Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         {rooms.length === 0 && <p className="py-10 text-center text-sm text-[var(--muted)]">No rooms match your filters.</p>}
       </main>
 
+      {details && (
+        <RoomDetails
+          room={details}
+          onClose={() => setDetails(null)}
+          onBook={() => { setBooking(details); }}
+        />
+      )}
       {booking && <BookDialog slug={slug} room={booking} onClose={() => setBooking(null)} />}
+
+      <RoomAssistant
+        slug={slug}
+        onHighlight={setHighlight}
+        onOpenRoom={(id) => {
+          const r = (site.rooms ?? []).find((x) => x.id === id);
+          if (r) setDetails(r);
+        }}
+      />
     </div>
+  );
+}
+
+/**
+ * Booking.com-style details "page" — a full-screen overlay with a photo gallery,
+ * the full description, every amenity, and a reserve panel. Book from here.
+ */
+function RoomDetails({ room, onClose, onBook }: { room: Room; onClose: () => void; onBook: () => void }) {
+  const shots = room.image_urls?.length ? room.image_urls : room.image_url ? [room.image_url] : [];
+  const [active, setActive] = useState(0);
+  const hero = shots[active] ?? null;
+  return (
+    <div className="fixed inset-0 z-[70] overflow-y-auto bg-[var(--bg)]">
+      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+        <button onClick={onClose} aria-label="Back" className="rounded-full p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--text)]"><X className="h-5 w-5" /></button>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{room.title}</p>
+          <p className="truncate text-xs text-[var(--muted)]">{room.property_name} · {room.city}</p>
+        </div>
+        <span className="ml-auto shrink-0 text-right">
+          <span className="text-lg font-bold text-[var(--brand-600)]">{room.price_currency} {(room.price_amount ?? 0).toLocaleString()}</span>
+          <span className="text-xs text-[var(--muted)]">/night</span>
+        </span>
+      </div>
+
+      <div className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-6 lg:grid-cols-[1.6fr_1fr]">
+        <div>
+          {/* Gallery */}
+          <div className="overflow-hidden rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface)]">
+            <div className="relative aspect-[16/10] w-full bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)]">
+              {hero && <img src={hero} alt={room.title} className="h-full w-full object-cover" />}
+              {room.discount_pct ? <span className="absolute left-3 top-3 rounded-[var(--r-pill)] bg-[var(--success)] px-2.5 py-1 text-xs font-bold text-white">-{room.discount_pct}% direct</span> : null}
+            </div>
+            {shots.length > 1 && (
+              <div className="flex gap-2 overflow-x-auto p-2">
+                {shots.map((s, i) => (
+                  <button key={i} onClick={() => setActive(i)} className={cn("h-16 w-24 shrink-0 overflow-hidden rounded-[var(--r-sm)] border-2", i === active ? "border-[var(--brand-500)]" : "border-transparent opacity-70 hover:opacity-100")}>
+                    <img src={s} alt={`view ${i + 1}`} className="h-full w-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <h2 className="mt-5 font-[family-name:var(--font-display)] text-2xl font-bold tracking-tight">{room.title}</h2>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-[var(--muted)]">
+            <MapPin className="h-4 w-4" />{room.property_name} · {room.city}
+            {room.star_rating ? <span className="text-[var(--warning)]">· {"★".repeat(Math.min(5, room.star_rating))}</span> : null}
+            {room.capacity ? <span>· sleeps {room.capacity}</span> : null}
+          </p>
+          {room.description && <p className="mt-4 whitespace-pre-line text-sm leading-relaxed text-[var(--text)]">{room.description}</p>}
+
+          {(room.amenities ?? []).length > 0 && (
+            <>
+              <h3 className="mt-6 text-sm font-semibold">What this room offers</h3>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {room.amenities.map((a) => (
+                  <span key={a} className="flex items-center gap-1.5 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
+                    <CheckCircle2 className="h-4 w-4 text-[var(--brand-500)]" /> {a}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Reserve panel */}
+        <aside className="lg:sticky lg:top-20 lg:self-start">
+          <div className="surface-card p-5">
+            <div className="flex items-baseline gap-2">
+              {room.original_price && room.original_price > (room.price_amount ?? 0) ? <span className="text-sm text-[var(--muted)] line-through">{room.price_currency} {room.original_price.toLocaleString()}</span> : null}
+              <span className="text-2xl font-bold text-[var(--brand-600)]">{room.price_currency} {(room.price_amount ?? 0).toLocaleString()}</span>
+              <span className="text-sm text-[var(--muted)]">/night</span>
+            </div>
+            <p className="mt-1 text-xs text-[var(--success)]">Direct rate · no OTA booking fee</p>
+            <Button className="mt-4 w-full" onClick={onBook}><Sparkles className="h-4 w-4" /> Reserve this room</Button>
+            {room.halal_friendly && <p className="mt-3 text-center text-xs text-[var(--muted)]">✅ Halal-friendly property</p>}
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * On-site AI concierge — a floating launcher that opens a chat panel. It answers
+ * only from this hotel's own rooms (server-side), highlights the ones it suggests
+ * back on the page, and lets the guest jump straight into a room's details.
+ */
+type ChatMsg = { role: "user" | "ai"; text: string; rooms?: string[] };
+function RoomAssistant({ slug, onHighlight, onOpenRoom }: { slug: string; onHighlight: (ids: string[]) => void; onOpenRoom: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msgs, setMsgs] = useState<ChatMsg[]>([{ role: "ai", text: "Hi! Tell me what you're after — budget, how many guests, sea view, honeymoon… and I'll find the right room." }]);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, open]);
+
+  const ask = async () => {
+    const query = q.trim();
+    if (!query || busy) return;
+    setMsgs((m) => [...m, { role: "user", text: query }]);
+    setQ("");
+    setBusy(true);
+    try {
+      const r = await api.post<{ answer: string; room_ids: string[] }>(`/hotels/${slug}/assistant`, { query });
+      setMsgs((m) => [...m, { role: "ai", text: r.answer, rooms: r.room_ids }]);
+      onHighlight(r.room_ids ?? []);
+    } catch {
+      setMsgs((m) => [...m, { role: "ai", text: "Sorry — I couldn't reach the concierge just now. Please try again." }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {!open && (
+        <button
+          onClick={() => setOpen(true)}
+          className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-[var(--r-pill)] bg-[var(--brand-500)] px-4 py-3 text-sm font-semibold text-white shadow-[var(--shadow-3)] transition-transform hover:bg-[var(--brand-600)] active:scale-95"
+        >
+          <Bot className="h-5 w-5" weight="duotone" /> Ask AI
+        </button>
+      )}
+      {open && (
+        <div className="fixed bottom-5 right-5 z-[60] flex h-[32rem] max-h-[calc(100dvh-2.5rem)] w-[calc(100vw-2.5rem)] max-w-sm flex-col overflow-hidden rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] shadow-[var(--shadow-3)]">
+          <div className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-3">
+            <span className="grid h-8 w-8 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-500)]"><Bot className="h-4 w-4" weight="duotone" /></span>
+            <div className="min-w-0"><p className="text-sm font-semibold">Booking assistant</p><p className="text-[0.7rem] text-[var(--muted)]">Answers from this hotel's rooms</p></div>
+            <button onClick={() => setOpen(false)} aria-label="Close" className="ml-auto rounded-full p-1 text-[var(--muted)] hover:text-[var(--text)]"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+            {msgs.map((m, i) => (
+              <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+                <div className={cn("max-w-[85%] rounded-[var(--r-lg)] px-3 py-2 text-sm", m.role === "user" ? "bg-[var(--brand-500)] text-white" : "bg-[var(--bg)] text-[var(--text)]")}>
+                  {m.text}
+                  {!!m.rooms?.length && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.rooms.map((id) => (
+                        <button key={id} onClick={() => { onOpenRoom(id); setOpen(false); }} className="rounded-[var(--r-pill)] border border-[var(--brand-400)] bg-[var(--surface)] px-2 py-0.5 text-xs font-medium text-[var(--brand-600)] hover:bg-[var(--bg)]">View room →</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {busy && <p className="text-xs text-[var(--muted)]">Thinking…</p>}
+            <div ref={endRef} />
+          </div>
+          <div className="flex items-center gap-2 border-t border-[var(--border)] p-3">
+            <input
+              className="min-w-0 flex-1 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-[var(--brand-400)]"
+              placeholder="e.g. sea view for 2 under RM400"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void ask(); }}
+            />
+            <Button size="sm" loading={busy} onClick={() => void ask()}>Ask</Button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
