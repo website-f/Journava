@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Sparkles, Plus, Trash2, Loader2, X, Compass, ArrowRight, Users, CheckCircle2, Copy, Zap } from "@/components/ui/icons";
 import { Button, Skeleton } from "@/components/ui";
@@ -494,16 +494,26 @@ function AgentCard({ agent, onDeleted }: { agent: Agent; onDeleted: () => void }
   };
 
   return (
-    <div className={cn("surface-card flex flex-col p-4", open && "sm:col-span-2 lg:col-span-3")}>
+    <div className={cn("surface-card flex flex-col p-4 transition-shadow", open && "sm:col-span-2 lg:col-span-3", running && "ring-1 ring-[var(--brand-400)]")}>
       <div className="flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-2xl">
+        <span className={cn("relative grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-2xl", running && "ring-2 ring-[var(--brand-400)]")}>
           {agent.emoji}
+          {/* Live heartbeat while this agent is actually running. */}
+          {running && (
+            <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-75" />
+              <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-[var(--brand-500)] ring-2 ring-[var(--surface)]" />
+            </span>
+          )}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold">{agent.name}</p>
+          <p className="flex items-center gap-1.5 truncate font-semibold">
+            {agent.name}
+            {running && <span className="shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide text-[var(--brand-600)]">Running</span>}
+          </p>
           <p className="line-clamp-2 text-xs text-[var(--muted)]">{agent.tagline || agent.role}</p>
         </div>
-        <button onClick={() => void del()} aria-label="Delete agent" className="shrink-0 rounded-full p-1 text-[var(--muted)] hover:text-[var(--danger)]">
+        <button onClick={() => void del()} disabled={running} aria-label="Delete agent" className="shrink-0 rounded-full p-1 text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-30">
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
@@ -520,9 +530,20 @@ function AgentCard({ agent, onDeleted }: { agent: Agent; onDeleted: () => void }
       )}
 
       <div className="mt-3 flex items-center gap-2">
-        <Button variant={open ? "secondary" : "primary"} size="sm" className="flex-1" onClick={() => setOpen((v) => !v)}>
-          {open ? "Close" : "Run this agent"}
-        </Button>
+        {running ? (
+          // Locked + heartbeat while a task is in flight — no re-trigger, no close.
+          <span className="flex flex-1 items-center justify-center gap-2 rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-3 py-2 text-sm font-semibold text-[var(--brand-600)]">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--brand-500)]" />
+            </span>
+            Running…
+          </span>
+        ) : (
+          <Button variant={open ? "secondary" : "primary"} size="sm" className="flex-1" onClick={() => setOpen((v) => !v)}>
+            {open ? "Close" : "Run this agent"}
+          </Button>
+        )}
         {agent.runs > 0 && <span className="text-[0.65rem] text-[var(--muted)]">{agent.runs} run{agent.runs === 1 ? "" : "s"}</span>}
       </div>
 
@@ -577,6 +598,14 @@ type ActionItem = { owner: string; action: string };
 type Meeting = { id?: string; topic?: string; summary?: string; transcript: Turn[]; decisions: string[]; action_items: ActionItem[]; marketing_draft?: string; created_at?: string };
 type BoardroomData = { settings: { enabled: boolean; focus: string | null }; participants: Participant[]; meetings: Meeting[] };
 
+function fmtMeetingDate(value?: string): string {
+  if (!value) return "Meeting";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? "Meeting"
+    : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 /**
  * Autonomous Boardroom — the org's agents (built-in Revenue/Bookings/Marketing
  * leads + every custom agent) convene by themselves, speak to the real numbers,
@@ -588,6 +617,10 @@ function Boardroom() {
   const [latest, setLatest] = useState<Meeting | null>(null);
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
+  // WhatsApp-style chat canvas: fixed height, newest at the bottom. `shown`
+  // windows the meeting history so a long backlog paginates (load earlier at top).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [shown, setShown] = useState(2);
 
   const load = async () => {
     try {
@@ -599,6 +632,12 @@ function Boardroom() {
     }
   };
   useEffect(() => { void load(); }, []);
+  // Pin to the newest turn on first load + whenever a new meeting lands (not when
+  // the user loads earlier history, so scrolling up stays put).
+  useEffect(() => {
+    const c = scrollRef.current;
+    if (c) c.scrollTop = c.scrollHeight;
+  }, [latest?.id]);
 
   const convene = async () => {
     setBusy(true);
@@ -621,6 +660,8 @@ function Boardroom() {
 
   const participants = data?.participants ?? [];
   const enabled = data?.settings.enabled ?? false;
+  const chrono = [...(data?.meetings ?? [])].reverse(); // oldest → newest, like a chat
+  const visible = chrono.slice(Math.max(0, chrono.length - shown));
 
   return (
     <Section
@@ -662,19 +703,43 @@ function Boardroom() {
                 <p className="text-sm"><span className="font-semibold">Chair's readout — </span>{latest.summary}</p>
               </div>
             )}
-            {!!latest.transcript.length && (
-              <div className="space-y-2">
-                {latest.transcript.map((t, i) => (
-                  <div key={i} className="flex gap-2.5">
-                    <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--bg)] text-base">{t.emoji}</span>
-                    <div className="min-w-0 flex-1 rounded-[var(--r-md)] bg-[var(--bg)] px-3 py-2">
-                      <p className="text-[0.7rem] font-semibold">{t.speaker}</p>
-                      <p className="text-sm text-[var(--muted)]">{t.text}</p>
-                    </div>
+            {/* Chat canvas — fixed height, newest at the bottom; scroll up for
+                earlier turns, "Load earlier" pages in older meetings. */}
+            <div
+              ref={scrollRef}
+              className="max-h-[60vh] min-h-[15rem] space-y-3 overflow-y-auto overscroll-contain rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3"
+            >
+              {shown < chrono.length && (
+                <div className="flex justify-center pb-1">
+                  <button
+                    onClick={() => setShown((n) => n + 3)}
+                    className="rounded-[var(--r-pill)] border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-xs font-medium text-[var(--muted)] hover:text-[var(--brand-600)]"
+                  >
+                    ↑ Load earlier meetings
+                  </button>
+                </div>
+              )}
+              {visible.map((m, mi) => (
+                <div key={m.id ?? mi} className="space-y-2">
+                  <div className="flex items-center gap-2 py-1">
+                    <span className="h-px flex-1 bg-[var(--border)]" />
+                    <span className="rounded-[var(--r-pill)] bg-[var(--surface)] px-2.5 py-0.5 text-[0.6rem] font-medium text-[var(--muted)]">
+                      {m.topic ? `${m.topic} · ` : ""}{fmtMeetingDate(m.created_at)}
+                    </span>
+                    <span className="h-px flex-1 bg-[var(--border)]" />
                   </div>
-                ))}
-              </div>
-            )}
+                  {m.transcript.map((t, i) => (
+                    <div key={i} className="flex gap-2.5">
+                      <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--surface)] text-base ring-1 ring-[var(--border)]">{t.emoji}</span>
+                      <div className="min-w-0 flex-1 rounded-[var(--r-md)] rounded-tl-sm bg-[var(--surface)] px-3 py-2 shadow-[var(--shadow-1)]">
+                        <p className="text-[0.7rem] font-semibold">{t.speaker}</p>
+                        <p className="mt-0.5 whitespace-pre-wrap text-sm text-[var(--muted)]">{t.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               {!!latest.decisions.length && (
                 <div>
@@ -706,7 +771,6 @@ function Boardroom() {
                 <p className="whitespace-pre-wrap text-sm">{latest.marketing_draft}</p>
               </div>
             )}
-            {(data?.meetings.length ?? 0) > 1 && <p className="text-[0.7rem] text-[var(--muted)]">{data!.meetings.length} meetings on record.</p>}
           </div>
         ) : (
           <p className="text-sm text-[var(--muted)]">No meetings yet — press <strong>Convene now</strong> and your agents will meet and produce a plan. Turn on <strong>Autopilot</strong> to have them convene on their own.</p>

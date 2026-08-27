@@ -197,6 +197,32 @@ export function ConsoleWarRoom() {
         subtitle="Game out a business shock against your real numbers — an AI strategist returns the impact, your best moves, and the likely counter-move."
       />
 
+      {/* What it's for — the War Room wasn't explained; make the purpose and the
+          flow obvious before the user picks anything. */}
+      <div className="mb-4 rounded-[var(--r-lg)] border border-[var(--border)] bg-[color-mix(in_srgb,var(--brand-400)_7%,transparent)] p-4">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <ShieldAlert className="h-4 w-4 text-[var(--brand-500)]" weight="duotone" /> What the War Room is for
+        </p>
+        <p className="mt-1 max-w-3xl text-sm text-[var(--muted)]">
+          Rehearse a sudden shock — a competitor slashing rates, a typhoon, a demand surge, a bad review going viral —
+          <strong className="text-[var(--text)]"> against your live rooms, rates and bookings</strong>. An AI strategist plays it
+          out and hands you the likely damage, your best counter-moves, and the rival's probable response — so you have a
+          plan <em>before</em> it happens for real.
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {[
+            { n: 1, t: "Pick a shock", d: "Choose a scenario or describe your own." },
+            { n: 2, t: "War-game it", d: "The strategist models it against your real numbers." },
+            { n: 3, t: "Get your play", d: "Ranked options + the recommended move." },
+          ].map((s) => (
+            <div key={s.n} className="flex items-start gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[var(--brand-500)] text-[0.65rem] font-bold text-white">{s.n}</span>
+              <span className="min-w-0"><span className="block text-xs font-semibold">{s.t}</span><span className="block text-[0.7rem] text-[var(--muted)]">{s.d}</span></span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <Section icon={AlertTriangle} title="Pick a disruption" subtitle="Choose a scenario or describe your own." className="mb-4">
         <div className="flex flex-wrap gap-2">
           {scenarios.map((s) => {
@@ -227,14 +253,54 @@ export function ConsoleWarRoom() {
         </div>
       </Section>
 
+      {/* Simulating — a visible "the strategist is working" state. */}
+      {busy && (
+        <div className="mb-4 rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface)] p-6">
+          <div className="flex items-center gap-3">
+            <span className="relative flex h-11 w-11 items-center justify-center">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-400)] opacity-40" />
+              <span className="relative grid h-11 w-11 place-items-center rounded-full bg-[var(--brand-500)] text-white"><Scales className="h-5 w-5" /></span>
+            </span>
+            <div>
+              <p className="text-sm font-semibold">War-gaming the scenario…</p>
+              <p className="text-xs text-[var(--muted)]">Modelling impact · generating options · red-teaming the counter-move</p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            {[72, 92, 58].map((w, i) => (
+              <div key={i} className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--bg)]">
+                <div className="h-full animate-pulse rounded-full bg-[color-mix(in_srgb,var(--brand-400)_50%,transparent)]" style={{ width: `${w}%` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {res && (
         <div className="space-y-4">
           <Section icon={AlertTriangle} title={res.scenario_label || "Scenario"} tone="brand">
             <p className="text-sm">{res.situation}</p>
+            {/* Revenue-at-risk gauge — the headline damage, shown as a meter. */}
+            {(() => {
+              const pct = Math.max(0, Math.min(100, Math.round(res.impact?.revenue_at_risk_pct ?? 0)));
+              const color = pct >= 50 ? "var(--danger)" : pct >= 25 ? "var(--warning)" : "var(--success)";
+              return (
+                <div className="mt-3 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-[var(--muted)]">Revenue at risk</span>
+                    <span className="font-bold" style={{ color }}>{pct}%</span>
+                  </div>
+                  <div className="mt-1.5 h-3 w-full overflow-hidden rounded-full bg-[var(--border)]">
+                    <div className="h-full rounded-full transition-[width] duration-700" style={{ width: `${pct}%`, background: `linear-gradient(90deg, var(--warning), ${color})` }} />
+                  </div>
+                  <div className="mt-1 flex justify-between text-[0.6rem] uppercase tracking-wide text-[var(--muted)]"><span>manageable</span><span>severe</span></div>
+                </div>
+              );
+            })()}
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat label="Revenue at risk" value={`${res.impact?.revenue_at_risk_pct ?? 0}%`} tone="warning" />
               <Stat label="Live rooms" value={res.stats?.live_rooms ?? 0} />
               <Stat label="Avg rate" value={<Money amount={res.stats?.avg_nightly_rate ?? 0} currency={cur} />} />
+              <Stat label="Bookings" value={res.stats?.bookings ?? 0} />
               <Stat label="Booked revenue" value={<Money amount={res.stats?.booked_revenue ?? 0} currency={cur} />} />
             </div>
             {res.impact?.summary && <p className="mt-3 text-sm text-[var(--muted)]">{res.impact.summary}</p>}
