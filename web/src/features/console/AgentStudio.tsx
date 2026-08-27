@@ -39,6 +39,9 @@ export function ConsoleAgentStudio() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [tools, setTools] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
+  // Shared so a boardroom meeting lights up every participant card's heartbeat —
+  // the agents are "chatting" there, not via their own Run panel.
+  const [boardroomBusy, setBoardroomBusy] = useState(false);
 
   const load = async () => {
     try {
@@ -76,7 +79,7 @@ export function ConsoleAgentStudio() {
         )}
       </header>
 
-      <Boardroom />
+      <Boardroom onBusy={setBoardroomBusy} />
 
       <KnowledgeCard />
 
@@ -111,7 +114,7 @@ export function ConsoleAgentStudio() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {agents.map((a) => (
-            <AgentCard key={a.id} agent={a} onDeleted={() => void load()} />
+            <AgentCard key={a.id} agent={a} meeting={boardroomBusy} onDeleted={() => void load()} />
           ))}
         </div>
       )}
@@ -465,11 +468,13 @@ function CreateAgent({
   );
 }
 
-function AgentCard({ agent, onDeleted }: { agent: Agent; onDeleted: () => void }) {
+function AgentCard({ agent, onDeleted, meeting = false }: { agent: Agent; onDeleted: () => void; meeting?: boolean }) {
   const [open, setOpen] = useState(false);
   const [task, setTask] = useState("");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
+  // Active = running its own task OR in a live boardroom meeting.
+  const active = running || meeting;
 
   const run = async () => {
     if (!task.trim()) return;
@@ -494,12 +499,12 @@ function AgentCard({ agent, onDeleted }: { agent: Agent; onDeleted: () => void }
   };
 
   return (
-    <div className={cn("surface-card flex flex-col p-4 transition-shadow", open && "sm:col-span-2 lg:col-span-3", running && "ring-1 ring-[var(--brand-400)]")}>
+    <div className={cn("surface-card flex flex-col p-4 transition-shadow", open && "sm:col-span-2 lg:col-span-3", active && "ring-1 ring-[var(--brand-400)]")}>
       <div className="flex items-start gap-3">
-        <span className={cn("relative grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-2xl", running && "ring-2 ring-[var(--brand-400)]")}>
+        <span className={cn("relative grid h-11 w-11 shrink-0 place-items-center rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-2xl", active && "ring-2 ring-[var(--brand-400)]")}>
           {agent.emoji}
-          {/* Live heartbeat while this agent is actually running. */}
-          {running && (
+          {/* Live heartbeat while this agent is running a task OR in a meeting. */}
+          {active && (
             <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-75" />
               <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-[var(--brand-500)] ring-2 ring-[var(--surface)]" />
@@ -509,7 +514,11 @@ function AgentCard({ agent, onDeleted }: { agent: Agent; onDeleted: () => void }
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 truncate font-semibold">
             {agent.name}
-            {running && <span className="shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide text-[var(--brand-600)]">Running</span>}
+            {running ? (
+              <span className="shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide text-[var(--brand-600)]">Running</span>
+            ) : meeting ? (
+              <span className="shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide text-[var(--brand-600)]">In meeting</span>
+            ) : null}
           </p>
           <p className="line-clamp-2 text-xs text-[var(--muted)]">{agent.tagline || agent.role}</p>
         </div>
@@ -612,7 +621,7 @@ function fmtMeetingDate(value?: string): string {
  * and a Chair records decisions, action items and a ready-to-post marketing
  * draft. Flip Autopilot on and it convenes on the schedule, unattended.
  */
-function Boardroom() {
+function Boardroom({ onBusy }: { onBusy?: (busy: boolean) => void }) {
   const [data, setData] = useState<BoardroomData | null>(null);
   const [latest, setLatest] = useState<Meeting | null>(null);
   const [topic, setTopic] = useState("");
@@ -638,6 +647,8 @@ function Boardroom() {
     const c = scrollRef.current;
     if (c) c.scrollTop = c.scrollHeight;
   }, [latest?.id]);
+  // Let the parent light up every participant card's heartbeat while we meet.
+  useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
 
   const convene = async () => {
     setBusy(true);
@@ -679,7 +690,19 @@ function Boardroom() {
           <p className="mb-1.5 text-xs font-medium text-[var(--muted)]">{participants.length} in the room{enabled ? " · convenes on schedule" : ""} — build more in Agent Studio and they all get a seat</p>
           <div className="flex flex-wrap gap-1.5">
             {participants.map((p) => (
-              <span key={p.name} className="inline-flex items-center gap-1.5 rounded-[var(--r-pill)] bg-[var(--bg)] px-2.5 py-1 text-xs">
+              <span
+                key={p.name}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-[var(--r-pill)] px-2.5 py-1 text-xs transition-colors",
+                  busy ? "bg-[color-mix(in_srgb,var(--brand-400)_16%,transparent)] text-[var(--brand-600)]" : "bg-[var(--bg)]",
+                )}
+              >
+                {busy && (
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--brand-500)] opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--brand-500)]" />
+                  </span>
+                )}
                 <span>{p.emoji}</span> {p.name}
                 {p.role === "custom" && <span className="text-[0.6rem] text-[var(--muted)]">· yours</span>}
               </span>
