@@ -22,7 +22,7 @@ import { usePlanStore } from "@/stores/planStore";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
-type MapPlace = { title: string; kind: string; day_index: number; starts_at: string | null; lng: number; lat: number };
+type MapPlace = { title: string; kind: string; day_index: number; starts_at: string | null; lng: number; lat: number; approx?: boolean };
 type MapLeg = { meters: number; minutes: number; mode: "walk" | "transit" };
 type MapDay = { day: number; places: MapPlace[]; legs: MapLeg[] };
 type MapPayload = {
@@ -44,12 +44,15 @@ const KIND_COLORS: Record<string, string> = {
   transport: "#0891B2",
 };
 
-function markerEl(index: number, color: string): HTMLElement {
+function markerEl(index: number, color: string, approx = false): HTMLElement {
   const el = document.createElement("div");
   el.style.cssText = "width:28px;height:28px;cursor:pointer;";
   const bubble = document.createElement("div");
+  // Approximate stops (the geocoder couldn't pin them exactly) get a dashed
+  // border + slight transparency so they read as "roughly here", not exact.
   bubble.style.cssText =
-    `width:28px;height:28px;border-radius:50%;background:${color};border:2px solid #fff;` +
+    `width:28px;height:28px;border-radius:50%;background:${color};` +
+    `border:2px ${approx ? "dashed" : "solid"} #fff;${approx ? "opacity:.72;" : ""}` +
     "display:grid;place-items:center;font:600 13px/1 system-ui;color:#fff;" +
     "box-shadow:0 2px 6px rgba(0,0,0,.3);transition:transform .15s ease;";
   bubble.textContent = String(index + 1);
@@ -181,9 +184,9 @@ export function TripMap({ className }: TripMapProps) {
         const color = KIND_COLORS[p.kind] ?? KIND_COLORS.activity;
         const popup = new maplibregl.Popup({ offset: 18, closeButton: false }).setHTML(
           `<div style="font:600 13px system-ui">${i + 1}. ${p.title}</div>` +
-            `<div style="font:11px system-ui;color:#667;margin-top:2px">${p.starts_at ? p.starts_at + " · " : ""}${p.kind}</div>`,
+            `<div style="font:11px system-ui;color:#667;margin-top:2px">${p.starts_at ? p.starts_at + " · " : ""}${p.kind}${p.approx ? " · approx. location" : ""}</div>`,
         );
-        const marker = new maplibregl.Marker({ element: markerEl(i, color) })
+        const marker = new maplibregl.Marker({ element: markerEl(i, color, p.approx) })
           .setLngLat([p.lng, p.lat])
           .setPopup(popup)
           .addTo(map);
@@ -302,7 +305,10 @@ export function TripMap({ className }: TripMapProps) {
                       <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--brand-500)] text-[0.7rem] font-bold text-white">{i + 1}</span>
                       <div className="min-w-0 flex-1 pb-0.5">
                         <p className="truncate text-sm font-medium leading-tight">{p.title}</p>
-                        <p className="text-[0.65rem] capitalize text-[var(--muted)]">{p.starts_at ? `${p.starts_at} · ` : ""}{p.kind}</p>
+                        <p className="text-[0.65rem] capitalize text-[var(--muted)]">
+                          {p.starts_at ? `${p.starts_at} · ` : ""}{p.kind}
+                          {p.approx ? <span className="lowercase"> · approx. location</span> : null}
+                        </p>
                       </div>
                     </div>
                     {leg && (

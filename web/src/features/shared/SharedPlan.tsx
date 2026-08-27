@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, Sparkles, Calendar, Clock, MapPin, Users2, Wallet, Plane, Utensils, Compass, Bus, Building2 } from "@/components/ui/icons";
+import { Plus, Sparkles, Calendar, Clock, MapPin, Users2, Wallet, Plane, Utensils, Compass, Bus, Building2, ExternalLink } from "@/components/ui/icons";
 import { Button, Spinner } from "@/components/ui";
+import { PlaceImage, mapsSearchUrl } from "@/components/ui/PlaceImage";
 import { api, API_BASE } from "@/lib/api";
 import { useAuth } from "@/providers/AuthProvider";
 import { TripExtraPanels } from "@/features/command-center/ScopedResults";
@@ -191,26 +192,57 @@ export function SharedPlan() {
                               ?? (it.details as Record<string, unknown> | undefined)?.address
                               ?? (it.details as Record<string, unknown> | undefined)?.area;
                             const cost = it.cost_amount ? `${it.cost_currency ?? ""} ${Math.round(Number(it.cost_amount)).toLocaleString()}`.trim() : "";
+                            const isPlace = ["activity", "meal", "restaurant", "hotel"].includes(String(it.kind));
+                            const href = mapsSearchUrl(it.title, meta.destination);
                             return (
                               <li key={i} className="relative">
                                 <span className="absolute -left-[1.36rem] top-1 grid h-5 w-5 place-items-center rounded-full bg-[var(--brand-500)] text-white ring-4 ring-[var(--surface)]">
                                   <Icon className="h-3 w-3" weight="fill" />
                                 </span>
-                                <div className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <p className="text-sm font-semibold leading-snug">{it.title}</p>
-                                    {it.starts_at && (
-                                      <span className="shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] px-2 py-0.5 text-[0.7rem] font-semibold tabular-nums text-[var(--brand-600)]">
-                                        {it.starts_at}{it.ends_at ? `–${it.ends_at}` : ""}
-                                      </span>
+                                <div className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-2.5">
+                                  <div className="flex gap-3">
+                                    {isPlace && (
+                                      <a
+                                        href={href}
+                                        target="_blank"
+                                        rel="noreferrer noopener"
+                                        aria-label={`See ${it.title} on the map`}
+                                        className="relative block h-16 w-16 shrink-0 overflow-hidden rounded-[var(--r-md)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)]"
+                                      >
+                                        <PlaceImage
+                                          query={it.title}
+                                          city={meta.destination}
+                                          alt={it.title}
+                                          className="h-full w-full object-cover"
+                                          fallback={<span className="grid h-full w-full place-items-center text-[var(--brand-500)]"><Icon className="h-6 w-6" weight="fill" /></span>}
+                                        />
+                                      </a>
                                     )}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <a
+                                          href={href}
+                                          target="_blank"
+                                          rel="noreferrer noopener"
+                                          className="group inline-flex items-start gap-1 text-sm font-semibold leading-snug hover:text-[var(--brand-600)]"
+                                        >
+                                          <span className="min-w-0">{it.title}</span>
+                                          <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 text-[var(--muted)] transition-colors group-hover:text-[var(--brand-600)]" />
+                                        </a>
+                                        {it.starts_at && (
+                                          <span className="shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--brand-400)_14%,transparent)] px-2 py-0.5 text-[0.7rem] font-semibold tabular-nums text-[var(--brand-600)]">
+                                            {it.starts_at}{it.ends_at ? `–${it.ends_at}` : ""}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.7rem] text-[var(--muted)]">
+                                        <span className="font-medium">{KIND_LABEL[String(it.kind)] ?? "Stop"}</span>
+                                        {loc ? <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{String(loc)}</span> : null}
+                                        {cost ? <span className="font-medium text-[var(--text)]">{cost}</span> : null}
+                                      </div>
+                                      {it.reasoning && <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">{it.reasoning}</p>}
+                                    </div>
                                   </div>
-                                  <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.7rem] text-[var(--muted)]">
-                                    <span className="font-medium">{KIND_LABEL[String(it.kind)] ?? "Stop"}</span>
-                                    {loc ? <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{String(loc)}</span> : null}
-                                    {cost ? <span className="font-medium text-[var(--text)]">{cost}</span> : null}
-                                  </div>
-                                  {it.reasoning && <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">{it.reasoning}</p>}
                                 </div>
                               </li>
                             );

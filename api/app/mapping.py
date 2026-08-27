@@ -11,6 +11,7 @@ Every geocode is cached (24h), so a second load of the same trip is instant.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
@@ -59,6 +60,24 @@ def _clean_title(title: str) -> str:
         if idx > 0:
             t = t[:idx]
     return t.strip(" -·–—")
+
+
+def _anchor(name: str) -> str | None:
+    """A broader query for an over-specific title — its first two words, which
+    are usually the real landmark ("Kansai Airport Halal Ramen" → "Kansai
+    Airport", "Minoo Park Waterfall Trail" → "Minoo Park")."""
+    words = [w for w in name.split() if w]
+    return " ".join(words[:2]) if len(words) >= 3 else None
+
+
+def _near_city(center: list[float], seed: str) -> list[float]:
+    """A deterministic point a short hop from the city centre — the last-resort
+    location for a stop the geocoder can't find, so it still appears on the map
+    (flagged approximate) instead of silently vanishing."""
+    h = int(hashlib.md5(seed.encode("utf-8")).hexdigest(), 16)
+    dlng = ((h % 1000) / 1000.0 - 0.5) * 0.04  # ~±2 km E–W
+    dlat = (((h // 1000) % 1000) / 1000.0 - 0.5) * 0.04  # ~±2 km N–S
+    return [center[0] + dlng, center[1] + dlat]
 
 router = APIRouter(prefix=f"{settings.api_prefix}/trip", tags=["trip"])
 
@@ -260,9 +279,20 @@ async def trip_map(body: MapRequest) -> dict[str, Any]:
             if not pt:
                 await asyncio.sleep(0.4)
                 pt = await _try(name)
+            # Still nothing? Try the broader landmark anchor ("Kansai Airport
+            # Halal Ramen" → "Kansai Airport"), which usually resolves.
+            if not pt:
+                anchor = _anchor(name)
+                if anchor and anchor.lower() != name.lower():
+                    pt = await _geocode(f"{anchor}, {city_name}", key, proximity)
+        approx = False
         if not pt:
-            logger.info("map: could not locate %r near %s", name, city_name)
-            return None
+            # Never drop a stop: an AI-suggested venue may not exist in the
+            # geocoder, but the map must still show the SAME stops as the
+            # itinerary. Pin it near the city centre and flag it approximate.
+            logger.info("map: approximating %r near %s (no geocode)", name, city_name)
+            pt = _near_city(city, item.title)
+            approx = True
         day = item.day_index if isinstance(item.day_index, int) and item.day_index > 0 else 1
         return {
             "title": item.title,
@@ -271,6 +301,7 @@ async def trip_map(body: MapRequest) -> dict[str, Any]:
             "starts_at": item.starts_at,
             "lng": pt[0],
             "lat": pt[1],
+            "approx": approx,
         }
 
     located = [p for p in await asyncio.gather(*[locate(it) for it in body.items]) if p]

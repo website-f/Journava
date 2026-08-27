@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { MapPin, Sparkles, CheckCircle2, X, Users, Search, Bot, Building2, ChevronDown } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
+import { PlaceImage } from "@/components/ui/PlaceImage";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -177,10 +178,20 @@ export function PublicHotelSite() {
                   {shots[0] ? (
                     <img src={shots[0]} alt={r.title} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />
                   ) : (
-                    <span className="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-[color-mix(in_srgb,var(--brand-400)_22%,transparent)] to-[color-mix(in_srgb,var(--brand-500)_10%,transparent)] text-[var(--brand-600)]">
-                      <Building2 className="h-8 w-8 opacity-70" />
-                      <span className="text-[0.65rem] font-medium opacity-70">{r.property_name}</span>
-                    </span>
+                    // No uploaded photo → fetch a representative one for the property,
+                    // falling back to a branded placeholder if none is found.
+                    <PlaceImage
+                      query={r.property_name || r.title}
+                      city={r.city}
+                      alt={r.title}
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                      fallback={
+                        <span className="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-[color-mix(in_srgb,var(--brand-400)_22%,transparent)] to-[color-mix(in_srgb,var(--brand-500)_10%,transparent)] text-[var(--brand-600)]">
+                          <Building2 className="h-8 w-8 opacity-70" />
+                          <span className="text-[0.65rem] font-medium opacity-70">{r.property_name}</span>
+                        </span>
+                      }
+                    />
                   )}
                   {r.discount_pct ? <span className="absolute left-2 top-2 rounded-[var(--r-pill)] bg-[var(--success)] px-2 py-0.5 text-[0.65rem] font-bold text-white shadow">-{r.discount_pct}%</span> : null}
                   {r.halal_friendly && <span className="absolute right-2 top-2 rounded-[var(--r-pill)] bg-black/50 px-2 py-0.5 text-[0.6rem] font-semibold text-white backdrop-blur-sm">halal-friendly</span>}

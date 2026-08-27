@@ -34,6 +34,9 @@ _PUBLIC_EXACT = {
     f"{settings.api_prefix}/auth/login",
     f"{settings.api_prefix}/auth/refresh",
     f"{settings.api_prefix}/auth/logout",
+    # Keyless, read-only image proxy (Openverse/Wikipedia). Public so the no-auth
+    # shared-plan and hotel storefront pages can show per-place thumbnails.
+    f"{settings.api_prefix}/places/image",
 }
 
 
