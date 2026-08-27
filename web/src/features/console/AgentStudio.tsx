@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Sparkles, Plus, Trash2, Loader2, X, Compass, ArrowRight, Users, CheckCircle2, Copy, Zap } from "@/components/ui/icons";
+import { Sparkles, Plus, Trash2, Loader2, Compass, ArrowRight, Users, CheckCircle2, Copy, Zap } from "@/components/ui/icons";
 import { Button, Skeleton } from "@/components/ui";
+import { Modal } from "@/components/ui/Modal";
 import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
@@ -388,13 +389,14 @@ function CreateAgent({
   };
 
   return (
-    <div className="surface-card mb-5 p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Describe the role</h3>
-        <button onClick={onClose} aria-label="Close" className="rounded-full p-1 text-[var(--muted)] hover:text-[var(--text)]">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+    <Modal
+      open
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title="New agent"
+      description="Describe a role — the Architect builds a working AI agent in seconds."
+      icon={<Sparkles className="h-5 w-5" weight="fill" />}
+    >
+      <label className="mb-1.5 block text-sm font-semibold">Describe the role</label>
       <textarea
         value={role}
         onChange={(e) => setRole(e.target.value)}
@@ -464,7 +466,7 @@ function CreateAgent({
           </div>
         </div>
       )}
-    </div>
+    </Modal>
   );
 }
 
