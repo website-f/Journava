@@ -159,7 +159,7 @@ export function SharedPlan() {
             </div>
           </div>
 
-          <main className="mx-auto -mt-8 w-full max-w-5xl px-4 pb-16">
+          <main className="mx-auto w-full max-w-5xl px-4 pb-16 pt-6">
             {token && (
               <div className="mb-6">
                 <GroupVote token={token} results={state.results} />

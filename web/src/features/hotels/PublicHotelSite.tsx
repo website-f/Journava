@@ -106,7 +106,7 @@ export function PublicHotelSite() {
           className="pointer-events-none absolute inset-0 opacity-25"
           style={{ backgroundImage: "radial-gradient(circle at 88% 12%, rgba(255,255,255,0.55) 0, transparent 42%), radial-gradient(circle at 10% 90%, rgba(255,255,255,0.28) 0, transparent 40%)" }}
         />
-        <div className="relative mx-auto flex w-full max-w-5xl items-start gap-3 px-4 pb-16 pt-8 sm:pb-20">
+        <div className="relative mx-auto flex w-full max-w-5xl items-start gap-3 px-4 pb-8 pt-8">
           {p.logo_url ? (
             <img src={p.logo_url} alt={p.name ?? ""} className="h-14 w-14 shrink-0 rounded-[var(--r-lg)] object-cover ring-2 ring-white/40" />
           ) : (
@@ -130,9 +130,9 @@ export function PublicHotelSite() {
         </div>
       </header>
 
-      <main className="mx-auto -mt-10 w-full max-w-5xl px-4 pb-16">
-        {/* Search / filter card, overlapping the hero */}
-        <div className="rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-3 shadow-[var(--shadow-2)]">
+      <main className="mx-auto w-full max-w-5xl px-4 pb-16 pt-5">
+        {/* Search / filter card — sits cleanly below the hero (no overlap). */}
+        <div className="rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-3 shadow-[var(--shadow-1)]">
           <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
             <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3">
               <Search className="h-4 w-4 text-[var(--muted)]" />

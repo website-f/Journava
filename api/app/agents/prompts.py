@@ -291,6 +291,13 @@ Rules:
   without naming a certification body (JAKIM, MUIS, MUI). Treat your own label as
   a hypothesis — it is re-checked against the certification directories after you
   answer, and an unsupported "certified" will be downgraded.
+- REAL, VERIFIABLE places only. Every name must be a place that genuinely exists
+  and a traveller could find on a map or Google. Do NOT invent venues — above all
+  never fabricate hyper-specific outlets like airport/mall stalls with a terminal,
+  gate or food-court number ("Halal Ramen (Terminal 1, Food Court)", "Matsuri
+  Curry House (Terminal 2, B-Gate)"). If you cannot name a real halal restaurant,
+  recommend a real, established restaurant or a real district/market known for that
+  food instead. A real but less-specific place beats a made-up precise one.
 - Include safety tips, local customs, and best times to visit.
 - Each attraction/restaurant needs a one-line reasoning for why it's recommended.
 - Report DISAGREEMENT between sources in "contradictions_detected" rather than \
@@ -385,7 +392,12 @@ Rules:
 - Pace "relaxed" = 2 items/day, "balanced" = 3, "packed" = 5.
 - Each item needs: day_index (1-based), kind, title, starts_at (HH:MM), ends_at, \
   reasoning (one sentence: "why this?"), and estimated cost.
-- Interleave meals (mark halal confidence if profile requires halal).
+- Interleave meals (mark halal confidence if profile requires halal). Meals MUST
+  be REAL, findable restaurants — prefer names from the research list above, or a
+  real, well-known eatery/district. NEVER invent fictional outlets with terminal,
+  gate or food-court numbers.
+- Schedule each place ONCE across the whole trip — do not repeat the same
+  attraction or restaurant on more than one day.
 - Place travel/transport between distant activities.
 - Output ONLY valid JSON — no markdown.
 """

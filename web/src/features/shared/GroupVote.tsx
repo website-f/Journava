@@ -23,12 +23,16 @@ export function GroupVote({ token, results }: { token: string; results: PlanResu
     const out: VotableItem[] = [];
     const research = (results.research?.options ?? []) as { title?: string; kind?: string }[];
     const itin = (results.itinerary?.items ?? []) as { title?: string; kind?: string }[];
+    // Normalise hard so the same place from research AND the itinerary (or minor
+    // whitespace/unicode variants) collapses to one row — no duplicate votes.
+    const norm = (t: string) => t.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
     for (const o of [...research, ...itin]) {
       const kind = o.kind ?? "";
       if (kind !== "activity" && kind !== "restaurant" && kind !== "meal") continue;
       const title = (o.title ?? "").trim();
-      if (!title || seen.has(title.toLowerCase())) continue;
-      seen.add(title.toLowerCase());
+      const key = norm(title);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
       out.push({ title, kind });
     }
     return out.slice(0, 30);
