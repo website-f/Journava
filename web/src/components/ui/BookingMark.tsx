@@ -25,7 +25,7 @@ type MonitorResult = {
  * Flights carry a direction (outbound/return); hotels carry a check-in date.
  */
 export function BookingMark({
-  kind, itemKey, title, provider, priceAmount, priceCurrency, snapshot,
+  kind, itemKey, title, provider, priceAmount, priceCurrency, snapshot, canMark = true,
 }: {
   kind: "flight" | "hotel";
   itemKey: string;
@@ -34,6 +34,8 @@ export function BookingMark({
   priceAmount?: number | null;
   priceCurrency?: string | null;
   snapshot?: unknown;
+  /** Show the manual "Mark booked" control. False for Atlas (booked via purchase). */
+  canMark?: boolean;
 }) {
   const marks = useBookings((s) => s.marks);
   const load = useBookings((s) => s.load);
@@ -95,9 +97,12 @@ export function BookingMark({
 
       {kind === "flight" && mine.length > 0 && (
         <div className="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-2.5">
-          <div className="flex items-center justify-between gap-2">
+          {/* Stack on a narrow card so the label and button never collide; the
+              button goes full-width on mobile (a proper tap target) and only
+              sits inline once there's room. */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-xs font-medium">Flight status &amp; delays</span>
-            <Button size="sm" variant="secondary" onClick={() => void checkStatus()} loading={checking}>Check for delays</Button>
+            <Button size="sm" variant="secondary" className="w-full sm:w-auto" onClick={() => void checkStatus()} loading={checking}>Check for delays</Button>
           </div>
           {status && (status.reason ? (
             <p className="mt-1.5 text-xs text-[var(--muted)]">{status.reason}</p>
@@ -126,7 +131,7 @@ export function BookingMark({
         </div>
       )}
 
-      {mine.length === 0 && (
+      {canMark && mine.length === 0 && (
         <button
           onClick={() => setForm({ direction: "outbound", check_in: "", ref: "" })}
           className="inline-flex items-center gap-1.5 rounded-[var(--r-pill)] border border-dashed border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--muted)] transition-colors hover:border-[var(--brand-400)] hover:text-[var(--brand-600)]"

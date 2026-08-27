@@ -195,12 +195,15 @@ export function ClarifyDialog({
               )}
             </div>
 
-            <div className="mt-6 flex items-center justify-end gap-2">
+            {/* Sticky footer so the primary action is ALWAYS visible — the tall
+                inline calendar used to push it below the fold, which (with the
+                calendar's own removed "Done") is what read as "stuck". */}
+            <div className="sticky bottom-0 -mx-6 -mb-6 mt-6 flex items-center justify-end gap-2 border-t border-[var(--border)] bg-[var(--elevated)] px-6 py-4">
               <Button variant="ghost" onClick={onCancel}>
                 Cancel
               </Button>
               <Button disabled={!ready} onClick={submit}>
-                Continue
+                Plan my trip
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </div>

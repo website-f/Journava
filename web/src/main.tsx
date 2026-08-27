@@ -22,14 +22,21 @@ createRoot(document.getElementById("root")!).render(
           <App />
         </AuthProvider>
       </BrowserRouter>
-      {/* Top-CENTER + a safe-area offset so mobile toasts sit fully on-screen
-          under the notch/top bar (top-right clipped off the edge). Toned down —
-          no richColors — and constrained so they read as a native banner. */}
+      {/* Top-CENTER, dropped BELOW the glass top bar (safe-area inset + the bar's
+          own height) so a mobile toast never overlaps the header or hides under
+          the notch. Toned down — no richColors — and width-capped so it reads as
+          a native banner. `jv-toast*` classes style the surface + round close. */}
       <Toaster
         position="top-center"
         closeButton
-        offset="calc(env(safe-area-inset-top) + 0.75rem)"
-        toastOptions={{ style: { maxWidth: "calc(100vw - 1.5rem)", borderRadius: "var(--r-md)" } }}
+        gap={8}
+        offset="calc(var(--safe-top) + var(--top-bar) + 0.5rem)"
+        mobileOffset="calc(var(--safe-top) + var(--top-bar) + 0.5rem)"
+        toastOptions={{
+          className: "jv-toast",
+          closeButtonAriaLabel: "Dismiss",
+          style: { maxWidth: "min(26rem, calc(100vw - 1.5rem))" },
+        }}
       />
       <ConfirmDialogHost />
     </QueryClientProvider>

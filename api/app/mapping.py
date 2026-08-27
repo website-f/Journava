@@ -84,26 +84,23 @@ class MapRequest(BaseModel):
 
 
 def _osm_style() -> dict[str, Any]:
-    """A self-contained MapLibre raster style — no key.
+    """A self-contained MapLibre raster style — NO API key, free to use.
 
-    Uses Carto's Voyager basemap (OSM data) over their global CDN with three
-    subdomains, instead of tile.openstreetmap.org. OSM's own tile server is
-    rate-limited and discouraged for apps, which made panning/zoom feel slow and
-    unresponsive; Carto's CDN serves parallel, cached tiles so the map is snappy.
+    Uses OpenStreetMap's standard raster tiles. This replaces Carto's Voyager
+    CDN, which now stamps "API KEY REQUIRED" over keyless tiles. A raster source
+    (not a vector style like OpenFreeMap) is deliberate: it renders reliably
+    everywhere and keeps the itinerary pin overlay working. A MapTiler key in the
+    vault still upgrades to MapTiler's richer vector styles when present.
     """
     return {
         "version": 8,
         "sources": {
             "osm": {
                 "type": "raster",
-                "tiles": [
-                    "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-                    "https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-                    "https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-                ],
+                "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
                 "tileSize": 256,
-                "maxzoom": 20,
-                "attribution": "© OpenStreetMap contributors © CARTO",
+                "maxzoom": 19,
+                "attribution": "© OpenStreetMap contributors",
             }
         },
         "layers": [{"id": "osm", "type": "raster", "source": "osm"}],

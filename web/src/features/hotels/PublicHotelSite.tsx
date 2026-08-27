@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { MapPin, Sparkles, CheckCircle2, X, Users, Search, Bot } from "@/components/ui/icons";
+import { MapPin, Sparkles, CheckCircle2, X, Users, Search, Bot, Building2, ChevronDown } from "@/components/ui/icons";
 import { Button } from "@/components/ui";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -41,6 +41,7 @@ export function PublicHotelSite() {
   const [q, setQ] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [guests, setGuests] = useState("");
+  const [sort, setSort] = useState<"recommended" | "price_asc" | "price_desc">("recommended");
   const [booking, setBooking] = useState<Room | null>(null);
   const [details, setDetails] = useState<Room | null>(null);
   const [highlight, setHighlight] = useState<string[]>([]);
@@ -66,13 +67,22 @@ export function PublicHotelSite() {
     const term = q.trim().toLowerCase();
     const cap = Number(guests) || 0;
     const cap$ = Number(maxPrice) || 0;
-    return all.filter((r) => {
+    const filtered = all.filter((r) => {
       if (term && !`${r.title} ${r.property_name} ${r.city}`.toLowerCase().includes(term)) return false;
       if (cap && (r.capacity ?? 99) < cap) return false;
       if (cap$ && (r.price_amount ?? 0) > cap$) return false;
       return true;
     });
-  }, [site, q, guests, maxPrice]);
+    const price = (r: Room) => r.price_amount ?? Number.POSITIVE_INFINITY;
+    if (sort === "price_asc") return [...filtered].sort((a, b) => price(a) - price(b));
+    if (sort === "price_desc") return [...filtered].sort((a, b) => price(b) - price(a));
+    return filtered;
+  }, [site, q, guests, maxPrice, sort]);
+
+  const cheapest = useMemo(() => {
+    const priced = (site?.rooms ?? []).map((r) => r.price_amount).filter((n): n is number => typeof n === "number" && n > 0);
+    return priced.length ? Math.min(...priced) : null;
+  }, [site]);
 
   if (site === null) return <Centered>Loading…</Centered>;
   if (!site.found) {
@@ -87,63 +97,104 @@ export function PublicHotelSite() {
 
   return (
     <div className="min-h-[100dvh] bg-[var(--bg)] text-[var(--text)]">
-      {/* Hotel header */}
-      <header className="border-b border-[var(--border)] bg-[var(--surface)]">
-        <div className="mx-auto flex w-full max-w-5xl items-center gap-3 px-4 py-4">
+      {/* Hero — a Trip.com-style banner: brand gradient, the property identity,
+          and a search card that overlaps the fold. */}
+      <header className="relative overflow-hidden bg-gradient-to-br from-[var(--brand-600)] to-[var(--brand-400)] text-white">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 opacity-25"
+          style={{ backgroundImage: "radial-gradient(circle at 88% 12%, rgba(255,255,255,0.55) 0, transparent 42%), radial-gradient(circle at 10% 90%, rgba(255,255,255,0.28) 0, transparent 40%)" }}
+        />
+        <div className="relative mx-auto flex w-full max-w-5xl items-start gap-3 px-4 pb-16 pt-8 sm:pb-20">
           {p.logo_url ? (
-            <img src={p.logo_url} alt={p.name ?? ""} className="h-11 w-11 rounded-[var(--r-md)] object-cover" />
+            <img src={p.logo_url} alt={p.name ?? ""} className="h-14 w-14 shrink-0 rounded-[var(--r-lg)] object-cover ring-2 ring-white/40" />
           ) : (
-            <span className="grid h-11 w-11 place-items-center rounded-[var(--r-md)] bg-[var(--brand-500)] text-white"><MapPin className="h-5 w-5" /></span>
+            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-[var(--r-lg)] bg-white/20 ring-2 ring-white/40"><Building2 className="h-6 w-6" /></span>
           )}
-          <div className="min-w-0">
-            <h1 className="truncate font-[family-name:var(--font-display)] text-xl font-bold">{p.name}</h1>
-            <p className="truncate text-xs text-[var(--muted)]">{p.about}</p>
+          <div className="min-w-0 flex-1">
+            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-white/80">Book direct</p>
+            <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl font-bold leading-tight tracking-tight sm:text-3xl">{p.name}</h1>
+            {p.about && <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-white/85">{p.about}</p>}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-[var(--r-pill)] bg-white/15 px-2.5 py-1 text-[0.7rem] font-semibold ring-1 ring-white/25">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Direct rates · no booking fee
+              </span>
+              {(site.cities ?? []).slice(0, 3).map((c) => (
+                <span key={c} className="inline-flex items-center gap-1 rounded-[var(--r-pill)] bg-white/10 px-2.5 py-1 text-[0.7rem] font-medium ring-1 ring-white/20">
+                  <MapPin className="h-3 w-3" /> {c}
+                </span>
+              ))}
+            </div>
           </div>
-          <span className="ml-auto hidden shrink-0 rounded-[var(--r-pill)] bg-[color-mix(in_srgb,var(--success)_14%,transparent)] px-2.5 py-1 text-[0.7rem] font-semibold text-[var(--success)] sm:block">
-            Direct rates · no booking fee
-          </span>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl px-4 py-6">
-        {/* Filters */}
-        <div className="mb-5 grid gap-2 rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface)] p-3 sm:grid-cols-[1fr_auto_auto]">
-          <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3">
-            <Search className="h-4 w-4 text-[var(--muted)]" />
-            <input className="w-full bg-transparent py-2 text-sm outline-none" placeholder="Search rooms" value={q} onChange={(e) => setQ(e.target.value)} />
-          </label>
-          <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3">
-            <Users className="h-4 w-4 text-[var(--muted)]" />
-            <input type="number" min={1} className="w-20 bg-transparent py-2 text-sm outline-none" placeholder="Guests" value={guests} onChange={(e) => setGuests(e.target.value)} />
-          </label>
-          <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3">
-            <span className="text-xs text-[var(--muted)]">Max/night</span>
-            <input type="number" min={0} className="w-24 bg-transparent py-2 text-sm outline-none" placeholder="Any" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
-          </label>
+      <main className="mx-auto -mt-10 w-full max-w-5xl px-4 pb-16">
+        {/* Search / filter card, overlapping the hero */}
+        <div className="rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-3 shadow-[var(--shadow-2)]">
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+            <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3">
+              <Search className="h-4 w-4 text-[var(--muted)]" />
+              <input className="w-full bg-transparent py-2.5 text-sm outline-none" placeholder="Search rooms, area…" value={q} onChange={(e) => setQ(e.target.value)} />
+            </label>
+            <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3">
+              <Users className="h-4 w-4 text-[var(--muted)]" />
+              <input type="number" min={1} className="w-full bg-transparent py-2.5 text-sm outline-none sm:w-24" placeholder="Guests" value={guests} onChange={(e) => setGuests(e.target.value)} />
+            </label>
+            <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] px-3">
+              <span className="text-xs text-[var(--muted)]">Max/night</span>
+              <input type="number" min={0} className="w-full bg-transparent py-2.5 text-sm outline-none sm:w-24" placeholder="Any" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
+            </label>
+          </div>
+          {(q || guests || maxPrice) && (
+            <button onClick={() => { setQ(""); setGuests(""); setMaxPrice(""); }} className="mt-2 text-xs font-medium text-[var(--muted)] hover:text-[var(--brand-600)]">
+              Clear filters
+            </button>
+          )}
         </div>
 
-        <p className="mb-3 text-sm text-[var(--muted)]">{rooms.length} room{rooms.length === 1 ? "" : "s"} available</p>
+        {/* Results toolbar: count + sort */}
+        <div className="mb-4 mt-5 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm">
+            <span className="font-semibold">{rooms.length}</span> <span className="text-[var(--muted)]">room{rooms.length === 1 ? "" : "s"}{cheapest != null ? ` · from ${site.rooms?.[0]?.price_currency ?? "MYR"} ${cheapest.toLocaleString()}/night` : ""}</span>
+          </p>
+          <label className="flex items-center gap-2 rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs">
+            <ChevronDown className="h-3.5 w-3.5 text-[var(--muted)]" />
+            <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="bg-transparent font-medium outline-none">
+              <option value="recommended">Recommended</option>
+              <option value="price_asc">Price: low to high</option>
+              <option value="price_desc">Price: high to low</option>
+            </select>
+          </label>
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {rooms.map((r) => {
             const shots = r.image_urls?.length ? r.image_urls : r.image_url ? [r.image_url] : [];
             return (
-              <div key={r.id} className={cn("surface-card flex flex-col overflow-hidden p-0 transition-shadow", highlight.includes(r.id) && "ring-2 ring-[var(--brand-400)]")}>
-                <button onClick={() => setDetails(r)} className="relative block h-40 w-full overflow-hidden bg-[color-mix(in_srgb,var(--brand-400)_12%,transparent)] text-left">
-                  {shots[0] && <img src={shots[0]} alt={r.title} loading="lazy" className="h-full w-full object-cover transition-transform hover:scale-[1.03]" />}
-                  {r.discount_pct ? <span className="absolute left-2 top-2 rounded-[var(--r-pill)] bg-[var(--success)] px-2 py-0.5 text-[0.65rem] font-bold text-white">-{r.discount_pct}%</span> : null}
+              <div key={r.id} className={cn("surface-card group flex flex-col overflow-hidden p-0 transition-shadow hover:shadow-[var(--shadow-2)]", highlight.includes(r.id) && "ring-2 ring-[var(--brand-400)]")}>
+                <button onClick={() => setDetails(r)} className="relative block aspect-[4/3] w-full overflow-hidden text-left">
+                  {shots[0] ? (
+                    <img src={shots[0]} alt={r.title} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />
+                  ) : (
+                    <span className="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-[color-mix(in_srgb,var(--brand-400)_22%,transparent)] to-[color-mix(in_srgb,var(--brand-500)_10%,transparent)] text-[var(--brand-600)]">
+                      <Building2 className="h-8 w-8 opacity-70" />
+                      <span className="text-[0.65rem] font-medium opacity-70">{r.property_name}</span>
+                    </span>
+                  )}
+                  {r.discount_pct ? <span className="absolute left-2 top-2 rounded-[var(--r-pill)] bg-[var(--success)] px-2 py-0.5 text-[0.65rem] font-bold text-white shadow">-{r.discount_pct}%</span> : null}
                   {r.halal_friendly && <span className="absolute right-2 top-2 rounded-[var(--r-pill)] bg-black/50 px-2 py-0.5 text-[0.6rem] font-semibold text-white backdrop-blur-sm">halal-friendly</span>}
                   {shots.length > 1 && <span className="absolute bottom-2 right-2 rounded-[var(--r-pill)] bg-black/55 px-2 py-0.5 text-[0.6rem] font-semibold text-white">📷 {shots.length}</span>}
                 </button>
                 <div className="flex min-w-0 flex-1 flex-col p-3">
                   <p className="truncate text-sm font-semibold">{r.title}</p>
-                  <p className="flex items-center gap-1 text-[0.7rem] text-[var(--muted)]"><MapPin className="h-3 w-3" />{r.property_name} · {r.city}{r.star_rating ? ` · ${"★".repeat(Math.min(5, r.star_rating))}` : ""}</p>
+                  <p className="mt-0.5 flex items-center gap-1 truncate text-[0.7rem] text-[var(--muted)]"><MapPin className="h-3 w-3 shrink-0" />{r.property_name} · {r.city}{r.star_rating ? ` · ${"★".repeat(Math.min(5, r.star_rating))}` : ""}</p>
                   {r.description && <p className="mt-1 line-clamp-2 text-xs text-[var(--muted)]">{r.description}</p>}
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {(r.amenities ?? []).slice(0, 4).map((a) => <span key={a} className="rounded-[var(--r-pill)] bg-[var(--bg)] px-1.5 py-0.5 text-[0.6rem] text-[var(--muted)]">{a}</span>)}
                   </div>
                   <div className="mt-auto flex items-end justify-between gap-2 pt-3">
-                    <div>
+                    <div className="min-w-0">
                       {r.original_price && r.original_price > (r.price_amount ?? 0) ? <span className="mr-1 text-xs text-[var(--muted)] line-through">{r.price_currency} {r.original_price.toLocaleString()}</span> : null}
                       <span className="text-base font-bold text-[var(--brand-600)]">{r.price_currency} {(r.price_amount ?? 0).toLocaleString()}</span>
                       <span className="text-[0.65rem] text-[var(--muted)]">/night</span>

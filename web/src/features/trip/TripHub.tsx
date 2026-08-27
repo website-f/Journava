@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Briefcase,
-  History as HistoryIcon,
   ArrowLeft,
   Plane,
   Clock,
@@ -101,12 +100,16 @@ export function TripHub() {
   );
 }
 
+// "Recent" (searches + bookings) sits SECOND — right after Trips — so it's a
+// single tap away on mobile instead of the last chip you have to scroll to. Its
+// URL value stays `history` so existing deep links (/trip?tab=history and the
+// /history redirect) keep working.
 const TRIP_TABS = [
   { value: "trips", label: "Trips", icon: Briefcase },
+  { value: "history", label: "Recent", icon: Clock },
   { value: "shared", label: "Shared with me", icon: Users2 },
   { value: "orders", label: "Orders", icon: ShoppingCart },
   { value: "payments", label: "Payments", icon: CreditCard },
-  { value: "history", label: "History", icon: HistoryIcon },
 ] as const;
 
 function TripTabs({ onOpen }: { onOpen: (r: PlanResults) => void }) {

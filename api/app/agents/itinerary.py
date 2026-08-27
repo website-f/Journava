@@ -97,7 +97,36 @@ class ItineraryAgent(BaseAgent):
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Skipping malformed itinerary item: %s", exc)
-        return items
+
+        return self._dedupe_places(items)
+
+    # Kinds where the same named stop must NOT reappear on another day — the LLM
+    # loves to repeat a highlight ("Osaka Castle" on day 1 AND day 3). Flights
+    # (outbound/return), stays and transport legitimately recur, so they're left.
+    _DEDUPE_KINDS = {"activity", "meal", "restaurant"}
+
+    @staticmethod
+    def _dedupe_places(items: list[ItineraryItem]) -> list[ItineraryItem]:
+        """Drop repeat visits to the same place across days, keeping the earliest."""
+        import re
+
+        def norm(title: str) -> str:
+            t = str(title or "").strip().lower()
+            t = re.sub(r"^day\s*\d+\s*[:\-–]\s*", "", t)  # strip a "Day N:" prefix
+            return " ".join(t.split())
+
+        ordered = sorted(items, key=lambda it: (int(it.day_index or 1), str(it.starts_at or "")))
+        seen: set[str] = set()
+        out: list[ItineraryItem] = []
+        for it in ordered:
+            if it.kind in ItineraryAgent._DEDUPE_KINDS:
+                key = norm(it.title)
+                if key and key in seen:
+                    continue
+                if key:
+                    seen.add(key)
+            out.append(it)
+        return out
 
     @staticmethod
     def _mock_items(request: TripRequest, pace: str) -> list[dict[str, Any]]:

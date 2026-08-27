@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -83,6 +83,9 @@ const SOURCE_MATCH: Record<SourceFilter, (o: PlanOption) => boolean> = {
 export function FlightResults({ result }: { result: AgentPlanResult }) {
   const [booking, setBooking] = useState<PlanOption | null>(null);
   const addBooking = useBookings((s) => s.add);
+  const marks = useBookings((s) => s.marks);
+  const loadBookings = useBookings((s) => s.load);
+  useEffect(() => { void loadBookings(); }, [loadBookings]);
 
   // Post-search filters (applied client-side over the returned options).
   const [maxBudget, setMaxBudget] = useState<number | null>(null);
@@ -150,6 +153,17 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
     ...group,
     options: filtered.filter(group.match),
   })).filter((group) => group.options.length > 0);
+
+  // Once THIS leg (outbound/return) is booked, the decision is made: collapse the
+  // whole list to just the booked card and hide every other fare (Atlas AND
+  // Camofox). The delay-check on that card is the only way alternatives return
+  // (agents suggest a replacement if it's disrupted). Unmark to compare again.
+  const bookedDir = isReturn ? "return" : "outbound";
+  const bookedMark = marks.find((m) => m.item_kind === "flight" && (m.direction || "outbound") === bookedDir);
+  const bookedOption = bookedMark
+    ? options.find((o) => flightKey(o.title, o.price_amount) === bookedMark.item_key)
+    : null;
+  const collapsed = Boolean(bookedOption);
 
   // How many the search returned per source — powers the Source dropdown labels.
   const sourceCounts = useMemo(() => {
@@ -241,8 +255,9 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
         ))}
       </div>
 
-      {/* Post-search filters — narrow the results by budget, stops and more. */}
-      {options.length > 0 && (
+      {/* Post-search filters — narrow the results by budget, stops and more.
+          Hidden once the leg is booked (only the booked card shows). */}
+      {options.length > 0 && !collapsed && (
         <div className="surface-card flex flex-wrap items-end gap-3 p-3">
           <label className="block">
             <span className="mb-1 block text-[0.65rem] font-medium text-[var(--muted)]">
@@ -334,35 +349,60 @@ export function FlightResults({ result }: { result: AgentPlanResult }) {
         </ul>
       )}
 
-      {groups.map((group) => (
-        <div key={group.key}>
+      {/* Booked → just the one locked card for this leg. */}
+      {collapsed && bookedOption ? (
+        <div>
           <div className="mb-3">
-            <h4 className="text-[0.9375rem] font-semibold tracking-[-0.01em]">{group.title}</h4>
-            <p className="mt-0.5 text-xs text-[var(--muted)]">{group.blurb}</p>
+            <h4 className="flex items-center gap-2 text-[0.9375rem] font-semibold tracking-[-0.01em]">
+              Your {bookedDir === "return" ? "return" : "outbound"} flight
+            </h4>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">
+              Booked — the other fares are hidden. Use “Check for delays” below; if it’s disrupted your
+              agents suggest a replacement. Unmark to compare all fares again.
+            </p>
           </div>
-          {/* Rail on phones, 2-up grid from md — same primitive as Stays/Food/Places
-              so every card strip in the app snaps and aligns identically. */}
-          <Rail card="17rem" cols={2} colsLg={2} aria-label={group.title}>
-            {group.options.map((option, index) => (
-              <FlightCard
-                key={option.id}
-                option={option}
-                index={index}
-                badges={badgesFor.get(option.id) ?? []}
-                onBook={() => setBooking(option)}
-              />
-            ))}
+          <Rail card="17rem" cols={2} colsLg={2} aria-label="Booked flight">
+            <FlightCard
+              option={bookedOption}
+              index={0}
+              badges={badgesFor.get(bookedOption.id) ?? []}
+              onBook={() => setBooking(bookedOption)}
+            />
           </Rail>
         </div>
-      ))}
+      ) : (
+        <>
+          {groups.map((group) => (
+            <div key={group.key}>
+              <div className="mb-3">
+                <h4 className="text-[0.9375rem] font-semibold tracking-[-0.01em]">{group.title}</h4>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">{group.blurb}</p>
+              </div>
+              {/* Rail on phones, 2-up grid from md — same primitive as Stays/Food/Places
+                  so every card strip in the app snaps and aligns identically. */}
+              <Rail card="17rem" cols={2} colsLg={2} aria-label={group.title}>
+                {group.options.map((option, index) => (
+                  <FlightCard
+                    key={option.id}
+                    option={option}
+                    index={index}
+                    badges={badgesFor.get(option.id) ?? []}
+                    onBook={() => setBooking(option)}
+                  />
+                ))}
+              </Rail>
+            </div>
+          ))}
 
-      {groups.length === 0 && options.length > 0 && (
-        <div className="surface-card p-6 text-center text-sm text-[var(--muted)]">
-          No flights match these filters.{" "}
-          <button onClick={resetFilters} className="text-[var(--brand-500)] hover:underline">
-            Reset filters
-          </button>
-        </div>
+          {groups.length === 0 && options.length > 0 && (
+            <div className="surface-card p-6 text-center text-sm text-[var(--muted)]">
+              No flights match these filters.{" "}
+              <button onClick={resetFilters} className="text-[var(--brand-500)] hover:underline">
+                Reset filters
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Every page the research agent actually read. */}
@@ -538,6 +578,9 @@ function FlightCard({
         provider={option.provider}
         priceAmount={option.price_amount}
         priceCurrency={option.price_currency}
+        // Atlas fares are "booked" by Simulate purchase (which records the mark),
+        // so they never show a manual "Mark booked" — only Camofox/other sources do.
+        canMark={option.source !== "atlas"}
         snapshot={{ title: option.title, provider: option.provider, price_amount: option.price_amount, price_currency: option.price_currency, raw: option.raw }}
       />
     </motion.div>

@@ -1160,8 +1160,13 @@ function TripHeader({
   const share = async () => {
     setSharing(true);
     try {
-      const r = await api.post<{ url: string }>("/trip/share", { results });
-      const url = r.url.startsWith("http") ? r.url : `${window.location.origin}${r.url}`;
+      const r = await api.post<{ token?: string; url: string }>("/trip/share", { results });
+      // Build the link from the ORIGIN the user is actually on. The backend's
+      // absolute URL falls back to a container default (public_base_url →
+      // 127.0.0.1:8401), which leaked un-openable localhost links on the live
+      // site. The token/path is all we take from the response.
+      const path = r.token ? `/s/${r.token}` : r.url.startsWith("http") ? new URL(r.url).pathname : r.url;
+      const url = `${window.location.origin}${path}`;
       await navigator.clipboard?.writeText(url).catch(() => {});
       toast.success("Public link copied — anyone can open this plan.");
     } catch {
@@ -1565,6 +1570,11 @@ function ItinerarySection({
 
   const persist = async (next: ItineraryItem[]) => {
     setItems(next);
+    // Keep the PARENT trip in sync too — the map, budget and (the reported bug)
+    // the offline PDF export all read `results.itinerary.items`. Without this the
+    // export POSTs a stale itinerary, so re-downloading after a reorder/move/edit
+    // wouldn't reflect the change. `setItems` alone only updates this component.
+    setTrip({ ...results, itinerary: { ...results.itinerary, items: next } });
     try {
       await api.post("/trip/itinerary", { items: next });
     } catch {

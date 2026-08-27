@@ -27,8 +27,13 @@ export function SavedResults() {
     try {
       const r = await api.get<{ scope: string; results: PlanResults }>(`/saved/${id}`);
       usePlanStore.getState().setResults(r.results, r.scope);
-      toast.success("Loaded — pick up where you left off.");
-      navigate("/");
+      // Land ON the reopened plan, not the home screen. The Command Center shows
+      // the answer view when the URL scope matches the active result's scope, so
+      // deep-link straight to `/?scope=<slug>` (using the slug the store actually
+      // resolved) — otherwise a bare `/` drops to Home with a stray "pick up where
+      // you left" toast and the plan hidden behind it.
+      const slug = usePlanStore.getState().activeScope ?? r.scope;
+      navigate(`/?scope=${encodeURIComponent(slug)}`);
     } catch {
       toast.error("Couldn't re-open that result.");
     } finally {

@@ -66,8 +66,11 @@ export function ShareCollabDialog({
     try {
       // Share this specific saved trip's snapshot (not whatever's active).
       const full = await api.get<{ results: PlanResults }>(`/saved/${savedId}`);
-      const res = await api.post<{ url: string }>("/trip/share", { results: full.results });
-      const url = res.url.startsWith("http") ? res.url : `${window.location.origin}${res.url}`;
+      const res = await api.post<{ token?: string; url: string }>("/trip/share", { results: full.results });
+      // Always build from the current origin — the backend's absolute URL can be
+      // a localhost container default (public_base_url), un-openable by guests.
+      const path = res.token ? `/s/${res.token}` : res.url.startsWith("http") ? new URL(res.url).pathname : res.url;
+      const url = `${window.location.origin}${path}`;
       setLink(url);
       await navigator.clipboard?.writeText(url).catch(() => {});
       toast.success("Public link copied — anyone can open it read-only.");

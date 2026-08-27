@@ -66,6 +66,37 @@ export function DateRangePicker({
 
   const hasValue = Boolean(value.start);
 
+  // Inline mode (e.g. the "when?" clarify step): show the calendar directly and
+  // ALWAYS visible — no toggle field and, crucially, no "Done" button. Hiding it
+  // behind a field + a Done that only collapsed the panel was read as a freeze
+  // (nothing happened; the real submit is the parent's own button). Picks flow
+  // straight to `onChange`; the parent's Continue button commits.
+  if (inline) {
+    return (
+      <div ref={wrap} className={cn("w-full", className)}>
+        <div className="rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--elevated)] p-3">
+          <div className="flex justify-center">
+            <Calendar mode={mode} value={value} onChange={onChange} min={min} />
+          </div>
+          <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-2">
+            <span className={cn("text-xs font-medium", !hasValue && "text-[var(--muted)]")}>
+              {label(value, mode, hasValue ? placeholder : "Tap a start and end date")}
+            </span>
+            {hasValue && (
+              <button
+                type="button"
+                onClick={() => onChange({})}
+                className="text-xs text-[var(--muted)] hover:text-[var(--text)]"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={wrap} className={cn("relative", className)}>
       <button
