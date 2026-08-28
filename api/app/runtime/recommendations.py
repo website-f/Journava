@@ -128,6 +128,7 @@ async def build(user_id: str | None = None, limit: int = 5) -> list[dict[str, An
     thumbnail so the home reads like a travel magazine, not a history log."""
     import asyncio
 
+    from app.tools.imagery import destination_image
     from app.tools.photos import place_photo
 
     try:
@@ -176,8 +177,29 @@ async def build(user_id: str | None = None, limit: int = 5) -> list[dict[str, An
 
     # Resolve a photo thumbnail for each, in parallel (keyless Wikipedia lead
     # image; cached). A miss just leaves the card image-less.
+    #
+    # Ask Wikipedia for the DESTINATION, not a descriptive phrase. The old query
+    # was f"{destination} travel landmark", which went to Openverse's free-text
+    # search and took results[0] — so "Tokyo travel landmark" returned a picture
+    # of the Statue of Liberty, the most famous "landmark" in the index. A city
+    # name against Wikipedia's lead image is unambiguous; Openverse stays as the
+    # fallback for anything Wikipedia has no page for.
+    # Wikipedia's lead image for a COUNTRY is usually its flag or a locator map,
+    # which is a poor travel-card thumbnail ("Thailand" returned Flag_of_Thailand).
+    # Reject those and let Openverse supply an actual photograph instead.
+    _NOT_A_PHOTO = ("flag_of", "coat_of_arms", "location_", "map_of", "locator", ".svg")
+
+    def _usable(url: str | None) -> bool:
+        return bool(url) and not any(bad in url.lower() for bad in _NOT_A_PHOTO)
+
+    async def _card_photo(destination: str) -> str | None:
+        wiki = await destination_image(destination)
+        if _usable(wiki):
+            return wiki
+        return await place_photo(destination) or wiki
+
     images = await asyncio.gather(
-        *(place_photo(f"{c['destination']} travel landmark") for c in cards),
+        *(_card_photo(c["destination"]) for c in cards),
         return_exceptions=True,
     )
     for card, img in zip(cards, images):

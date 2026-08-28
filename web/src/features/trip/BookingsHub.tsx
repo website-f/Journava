@@ -149,7 +149,11 @@ export function BookingsHub({ mode }: { mode: "pending" | "payments" }) {
               </span>
             </div>
 
-            <div className="flex w-full justify-end gap-2 sm:w-auto">
+            {/* Three nowrap buttons don't fit a 430px card. Wrapping is the fix;
+                stretching them is not — `flex-1` sets basis:0, so each pill
+                shrinks under its own label and the text spills past the border.
+                Natural widths + wrap keeps every label inside its pill. */}
+            <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:flex-nowrap">
               {mode === "pending" ? (
                 <Button size="sm" onClick={() => setResume(b)}>
                   {meta.next ?? "Resume"}
